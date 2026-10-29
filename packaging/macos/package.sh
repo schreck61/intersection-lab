@@ -6,7 +6,8 @@
 # a DMG and, when credentials are available, notarize and staple both.
 #
 # Environment (all optional; without them the result is ad-hoc signed and unnotarized):
-#   MACOS_SIGN_IDENTITY   e.g. "Developer ID Application: Jane Doe (TEAMID1234)"
+#   MACOS_SIGN_IDENTITY   e.g. "Developer ID Application: Jane Doe (TEAMID1234)", or its
+#                         certificate's SHA-1 hash
 #   Notarization with an App Store Connect API key (preferred):
 #     APPLE_API_KEY_PATH  path to the AuthKey_XXXX.p8 file
 #     APPLE_API_KEY_ID    key ID
@@ -71,12 +72,20 @@ sign() {
 }
 
 notarize() {
+    local auth out status id
     if [ -n "${APPLE_API_KEY_PATH:-}" ]; then
-        xcrun notarytool submit "$1" --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY_ID" \
-            --issuer "$APPLE_API_ISSUER" --wait --timeout 30m
+        auth=(--key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER")
     else
-        xcrun notarytool submit "$1" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
-            --password "$APPLE_APP_PASSWORD" --wait --timeout 30m
+        auth=(--apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD")
+    fi
+    out=$(xcrun notarytool submit "$1" "${auth[@]}" --output-format json --wait --timeout 30m) || true
+    echo "$out"
+    status=$(plutil -extract status raw - <<< "$out" 2> /dev/null || echo unknown)
+    if [ "$status" != "Accepted" ]; then
+        # Show Apple's log, which lists each problem it found.
+        echo "error: notarization of $1 failed (status: $status)" >&2
+        id=$(plutil -extract id raw - <<< "$out" 2> /dev/null) && xcrun notarytool log "$id" "${auth[@]}" >&2
+        return 1
     fi
 }
 
@@ -95,6 +104,7 @@ if $can_notarize; then
     ditto -c -k --keepParent "$APP" "$WORK/app.zip"
     notarize "$WORK/app.zip"
     xcrun stapler staple "$APP"
+    spctl --assess --type execute --verbose=2 "$APP"
 fi
 
 echo "==> Building $DMG"

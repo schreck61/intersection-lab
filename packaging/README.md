@@ -33,55 +33,74 @@ To test the pipeline without releasing, run the *Release* workflow manually
 (Actions → Release → Run workflow): it builds everything and attaches the packages to
 the run as artifacts.
 
-Signing is optional per platform: without its secrets a platform's packages are built
-unsigned (macOS ad-hoc), so the pipeline works before certificates are set up.
+Signing is optional per platform: without its secrets or variables a platform's packages
+are built unsigned (macOS ad-hoc), so the pipeline works before certificates are set up
+and on forks. Signing happens only on tag builds, which are the only runs allowed into
+the `release` environment that holds the signing settings.
 
 ## Signing setup
 
-Add these under the repository's **Settings → Secrets and variables → Actions**.
+All signing settings live on a GitHub environment named `release` (*Settings →
+Environments*), limited to the tag pattern `v*`, so only release tags can reach them.
+The macOS and Windows jobs run in that environment on tag builds.
 
 ### macOS (Developer ID + notarization)
 
 | Name | Kind | Value |
 |---|---|---|
-| `MACOS_CERTIFICATE` | secret | Base64 of your *Developer ID Application* certificate and private key exported as `.p12` |
-| `MACOS_CERTIFICATE_PASSWORD` | secret | The password you gave the `.p12` export |
-| `APPLE_API_KEY` | secret | Base64 of an App Store Connect API key (`AuthKey_XXXX.p8`) |
-| `APPLE_API_KEY_ID` | secret | That key's ID |
-| `APPLE_API_ISSUER` | secret | Your App Store Connect issuer ID |
+| `MACOS_CERT_P12` | secret | Base64 of your *Developer ID Application* certificate and private key exported as `.p12` |
+| `MACOS_CERT_PASSWORD` | secret | The password you gave the `.p12` export |
+| `APPLE_TEAM_ID` | secret | Your Apple Developer team ID (picks the matching identity) |
+| `NOTARY_KEY_P8` | secret | The text of an App Store Connect API key (`AuthKey_XXXX.p8`) |
+| `NOTARY_KEY_ID` | secret | That key's ID |
+| `NOTARY_ISSUER_ID` | secret | Your App Store Connect issuer ID |
 
 1. In Keychain Access, select the *Developer ID Application: …* certificate (with its
    private key), *File → Export Items…*, save as `.p12` with a password, then
-   `base64 -i cert.p12 | pbcopy` and paste into `MACOS_CERTIFICATE`.
+   `base64 -i cert.p12 | pbcopy` and paste into `MACOS_CERT_P12`.
 2. In App Store Connect, *Users and Access → Integrations → App Store Connect API*,
-   create a team key with *Developer* access, download the `.p8` once, then
-   `base64 -i AuthKey_XXXX.p8 | pbcopy` into `APPLE_API_KEY`; copy the key ID and issuer ID.
+   create a team key with *Developer* access, download the `.p8` once, and paste its
+   contents into `NOTARY_KEY_P8`; copy the key ID and issuer ID.
 
-The workflow imports the certificate into a temporary keychain, signs with the hardened
-runtime, notarizes the app and the DMG with `notarytool`, staples both, and deletes the
-keychain and key afterwards.
+The workflow imports the certificate into a temporary keychain, signs by certificate
+hash with the hardened runtime, notarizes the app and the DMG with `notarytool` (printing
+Apple's log if a submission is rejected), staples both, and deletes the keychain and key
+afterwards. The Developer ID certificate expires; renew it and update `MACOS_CERT_P12`
+before then.
 
 ### Windows (Azure Trusted Signing)
 
-| Name | Kind | Value |
-|---|---|---|
-| `AZURE_TENANT_ID` | secret | Microsoft Entra tenant ID |
-| `AZURE_CLIENT_ID` | secret | App registration (service principal) client ID |
-| `AZURE_CLIENT_SECRET` | secret | That app registration's client secret |
-| `AZURE_SIGNING_ENDPOINT` | variable | Your account's region endpoint, e.g. `https://eus.codesigning.azure.net` |
-| `AZURE_SIGNING_ACCOUNT` | variable | Trusted Signing account name |
-| `AZURE_SIGNING_PROFILE` | variable | Certificate profile name |
+The workflow signs in to Azure with GitHub's OIDC token (no client secret is stored), so
+everything here is a **variable**, set on the repository or on the `release` environment:
+
+| Name | Value |
+|---|---|
+| `AZURE_TENANT_ID` | Microsoft Entra tenant ID |
+| `AZURE_CLIENT_ID` | App registration (service principal) client ID |
+| `AZURE_SUBSCRIPTION_ID` | Subscription that holds the signing account |
+| `AZURE_SIGNING_ENDPOINT` | Your account's region endpoint, e.g. `https://eus.codesigning.azure.net` |
+| `AZURE_SIGNING_ACCOUNT` | Trusted Signing account name |
+| `AZURE_SIGNING_PROFILE` | Certificate profile name |
 
 1. In the Azure portal, create a *Trusted Signing* account (Microsoft has since renamed
    the service *Artifact Signing*), complete identity validation for yourself, and
    create a *Public Trust* certificate profile.
-2. Create an app registration with a client secret and give it the *Trusted Signing
-   Certificate Profile Signer* role on the account.
-3. Fill in the secrets and variables above.
+2. Create an app registration and give it the *Trusted Signing Certificate Profile
+   Signer* role on the account.
+3. In GitHub, create an environment named `release` (*Settings → Environments*) and
+   limit its deployment branches and tags to the tag pattern `v*`.
+4. On the app registration, add a federated credential for GitHub Actions with entity
+   type *Environment* and environment `release`. Azure matches the subject exactly, so
+   copy the one GitHub issues for this repository, e.g.
+   `repo:schreck61@2614386/intersection-lab@1438640626:environment:release` (repositories
+   with immutable subjects include owner and repository IDs; older ones use
+   `repo:schreck61/intersection-lab:environment:release`).
+5. Fill in the variables above.
 
-The workflow signs `intersection-lab.exe` before packaging (so the zip and the MSI both
-carry the signed executable) and then signs the MSI, with SHA-256 digests and an RFC 3161
-timestamp. If Microsoft retires `azure/trusted-signing-action`, switch the two signing
+Only tag builds run the Windows jobs in the `release` environment, so only they can sign;
+manual runs build the same packages unsigned. The workflow signs `intersection-lab.exe`
+before packaging (so the zip and the MSI both carry the signed executable) and then signs
+the MSI, with SHA-256 digests and an RFC 3161 timestamp. If Microsoft retires `azure/trusted-signing-action`, switch the two signing
 steps to its successor action; the inputs are the same.
 
 ### Linux

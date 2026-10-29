@@ -5,8 +5,9 @@
 # draft GitHub Release when a version tag (v1.2.3) is pushed. Run it manually
 # (workflow_dispatch) to build and download the artifacts without releasing.
 #
-# Signing is optional: each platform signs only when its secrets are configured (see
-# packaging/README.md), so the pipeline also works before certificates are set up.
+# Signing is optional: each platform signs only when its secrets or variables are
+# configured (see packaging/README.md), so the pipeline also works before certificates
+# are set up. Windows signs only on tag builds (see the `release` environment below).
 name: Release
 
 on:
@@ -45,39 +46,50 @@ jobs:
     name: macOS (universal)
     needs: check
     runs-on: macos-14
+    # The signing secrets live on the `release` environment (v* tags only); manual runs
+    # build an ad-hoc signed, unnotarized DMG outside it.
+    environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'release' || '' }}
     env:
-      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      SIGN: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.MACOS_CERT_P12 != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - name: Import Developer ID certificate
-        if: env.MACOS_CERTIFICATE != ''
+        if: env.SIGN == 'true'
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          CERT_PW: ${{ secrets.MACOS_CERT_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          # Throwaway keychain, deleted at the end of the job.
           keychain="$RUNNER_TEMP/signing.keychain-db"
-          password=$(openssl rand -base64 24)
-          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          password=$(uuidgen)
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
           security create-keychain -p "$password" "$keychain"
           security set-keychain-settings -lut 21600 "$keychain"
           security unlock-keychain -p "$password" "$keychain"
-          security import "$RUNNER_TEMP/cert.p12" -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
-          security set-key-partition-list -S apple-tool:,apple: -k "$password" "$keychain" > /dev/null
-          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$CERT_PW" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" login.keychain
           rm "$RUNNER_TEMP/cert.p12"
-          identity=$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -1)
+          # Sign by certificate hash, picking the team's Developer ID Application identity.
+          identity=$(security find-identity -v -p codesigning "$keychain" \
+            | awk -v team="${TEAM_ID:+($TEAM_ID)}" '/Developer ID Application/ && (team == "" || index($0, team)) {print $2; exit}')
           if [ -z "$identity" ]; then echo "::error::no Developer ID Application identity in the certificate"; exit 1; fi
           echo "MACOS_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
       - name: App Store Connect API key (notarization)
-        if: env.APPLE_API_KEY != ''
+        if: env.SIGN == 'true'
+        env:
+          NOTARY_KEY: ${{ secrets.NOTARY_KEY_P8 }}
         run: |
-          echo "$APPLE_API_KEY" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          echo "$NOTARY_KEY" > "$RUNNER_TEMP/AuthKey.p8"
           echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
       - name: Build, sign, notarize, package
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.NOTARY_ISSUER_ID }}
         run: packaging/macos/package.sh
       - name: Remove signing material
         if: always()
@@ -102,8 +114,14 @@ jobs:
           - arch: arm64
             target: aarch64-pc-windows-msvc
     runs-on: windows-latest
+    # Azure trusts this repository's OIDC token only from the `release` environment,
+    # which is limited to v* tags; manual runs build unsigned packages outside it.
+    environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'release' || '' }}
+    permissions:
+      contents: read
+      id-token: write
     env:
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      SIGN: ${{ startsWith(github.ref, 'refs/tags/v') && vars.AZURE_CLIENT_ID != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -111,13 +129,21 @@ jobs:
           targets: ${{ matrix.target }}
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }} --bin intersection-lab
+      - name: Azure login (OIDC)
+        if: env.SIGN == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       - name: Sign executable (Azure Trusted Signing)
-        if: env.AZURE_CLIENT_ID != ''
+        if: env.SIGN == 'true'
         uses: azure/trusted-signing-action@v0
         with:
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          # Authenticate through the Azure CLI session from azure/login.
+          exclude-environment-credential: true
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
           endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
           trusted-signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
@@ -138,12 +164,12 @@ jobs:
         shell: pwsh
         run: packaging/windows/package.ps1 -Arch ${{ matrix.arch }}
       - name: Sign installer (Azure Trusted Signing)
-        if: env.AZURE_CLIENT_ID != ''
+        if: env.SIGN == 'true'
         uses: azure/trusted-signing-action@v0
         with:
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          exclude-environment-credential: true
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
           endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
           trusted-signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
