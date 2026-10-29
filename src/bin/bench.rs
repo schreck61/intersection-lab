@@ -4,12 +4,12 @@
 //!        bench sensors <layout> [minutes] [seeds]   (sensor-package study)
 
 use std::time::Instant;
-use trafficsim::control::CtrlKind;
-use trafficsim::run_scenario;
-use trafficsim::sim::demand::{DemandConfig, Pattern};
-use trafficsim::sim::network::{LayoutKind, Network};
-use trafficsim::sim::sensors::{Conditions, SensorConfig};
-use trafficsim::sim::ControlMode;
+use intersection_lab::control::CtrlKind;
+use intersection_lab::run_scenario;
+use intersection_lab::sim::demand::{DemandConfig, Pattern};
+use intersection_lab::sim::network::{LayoutKind, Network};
+use intersection_lab::sim::sensors::{Conditions, SensorConfig};
+use intersection_lab::sim::ControlMode;
 
 /// How much does each sensor package help each sensor-driven controller, with ideal
 /// and field-realistic sensors, across weather, and with failed loop detectors?

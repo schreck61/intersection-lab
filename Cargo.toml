@@ -1,5 +1,6 @@
 [package]
-name = "trafficsim"
+name = "intersection-lab"
+default-run = "intersection-lab"
 version = "0.1.0"
 edition = "2024"
 

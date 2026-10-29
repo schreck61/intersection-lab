@@ -1,9 +1,9 @@
 //! Calibration: saturation flow and start-up lost time of a queued through lane.
 //! Compares the simulated discharge with the HCM base saturation flow (1,900 pc/h/ln).
-use trafficsim::control::CtrlKind;
-use trafficsim::sim::demand::DemandConfig;
-use trafficsim::sim::network::{LayoutKind, Network, Turn};
-use trafficsim::sim::{ControlMode, Sim};
+use intersection_lab::control::CtrlKind;
+use intersection_lab::sim::demand::DemandConfig;
+use intersection_lab::sim::network::{LayoutKind, Network, Turn};
+use intersection_lab::sim::{ControlMode, Sim};
 use std::collections::HashMap;
 
 fn main() {
@@ -16,7 +16,7 @@ fn main() {
         d.mix = mix;
         d.ped_rate = 0.0;
         let mut sim = Sim::with_demand(net, ControlMode::Signal, CtrlKind::Fixed, d, 1);
-        let m = sim.net.movement_for(sim.net.leg_index(trafficsim::sim::network::Compass::W).unwrap(), Turn::T).unwrap();
+        let m = sim.net.movement_for(sim.net.leg_index(intersection_lab::sim::network::Compass::W).unwrap(), Turn::T).unwrap();
         let mut prev_ri: HashMap<u64, usize> = HashMap::new();
         let mut green_start = None;
         // (lane, position in queue discharge, time since green)

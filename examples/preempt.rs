@@ -1,8 +1,8 @@
 //! Emergency vehicles: with and without preemption, spawned against a red.
-use trafficsim::control::CtrlKind;
-use trafficsim::sim::network::{LayoutKind, Turn};
-use trafficsim::sim::vtypes::VKind;
-use trafficsim::sim::{ControlMode, Sim};
+use intersection_lab::control::CtrlKind;
+use intersection_lab::sim::network::{LayoutKind, Turn};
+use intersection_lab::sim::vtypes::VKind;
+use intersection_lab::sim::{ControlMode, Sim};
 fn main() {
     for pre in [false, true] {
         let mut total = 0.0;

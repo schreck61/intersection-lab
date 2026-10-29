@@ -1,9 +1,9 @@
 //! Pedestrian safety treatments: leading pedestrian interval (LPI) and a blank-out
 //! "NO TURN ON RED" sign lit while pedestrians are present. Reports vehicle/pedestrian
 //! near-misses (a vehicle crossing within ~1.5 s of a walking pedestrian) and delay.
-use trafficsim::control::CtrlKind;
-use trafficsim::sim::network::LayoutKind;
-use trafficsim::sim::{ControlMode, Sim};
+use intersection_lab::control::CtrlKind;
+use intersection_lab::sim::network::LayoutKind;
+use intersection_lab::sim::{ControlMode, Sim};
 
 fn main() {
     let seeds: u64 = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(8);

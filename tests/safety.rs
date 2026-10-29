@@ -1,9 +1,9 @@
 //! Regression tests: every layout/control combination must run collision-free and
 //! serve (nearly) all demand at default volumes.
 
-use trafficsim::control::CtrlKind;
-use trafficsim::sim::network::LayoutKind;
-use trafficsim::sim::{ControlMode, Sim};
+use intersection_lab::control::CtrlKind;
+use intersection_lab::sim::network::LayoutKind;
+use intersection_lab::sim::{ControlMode, Sim};
 
 #[test]
 fn all_scenarios_safe_and_flowing() {

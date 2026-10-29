@@ -4,11 +4,11 @@
 //! per-intersection person delay (incl. unserved).
 //!
 //! usage: corridor [layout] [n] [minutes] [seeds] [demand-scale]
-use trafficsim::control::CtrlKind;
-use trafficsim::sim::demand::DemandConfig;
-use trafficsim::sim::network::{LayoutKind, Network};
-use trafficsim::sim::world::World;
-use trafficsim::sim::ControlMode;
+use intersection_lab::control::CtrlKind;
+use intersection_lab::sim::demand::DemandConfig;
+use intersection_lab::sim::network::{LayoutKind, Network};
+use intersection_lab::sim::world::World;
+use intersection_lab::sim::ControlMode;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

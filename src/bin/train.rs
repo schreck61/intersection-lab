@@ -10,13 +10,13 @@
 //! usage: train [layout|all] [episodes] [episode-seconds] [dqn|hybrid|both]
 
 use std::time::Instant;
-use trafficsim::control::hybrid::{self, Hybrid};
-use trafficsim::control::rl::{self, RlController};
-use trafficsim::control::{Controller, CtrlKind, make};
-use trafficsim::sim::demand::{DemandConfig, Pattern};
-use trafficsim::sim::network::{LayoutKind, Network};
-use trafficsim::sim::rng::Rng;
-use trafficsim::sim::{ControlMode, Sim};
+use intersection_lab::control::hybrid::{self, Hybrid};
+use intersection_lab::control::rl::{self, RlController};
+use intersection_lab::control::{Controller, CtrlKind, make};
+use intersection_lab::sim::demand::{DemandConfig, Pattern};
+use intersection_lab::sim::network::{LayoutKind, Network};
+use intersection_lab::sim::rng::Rng;
+use intersection_lab::sim::{ControlMode, Sim};
 
 fn random_demand(net: &Network, rng: &mut Rng) -> DemandConfig {
     let mut d = DemandConfig::default_for(net);

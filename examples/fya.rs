@@ -1,8 +1,8 @@
 //! Left-turn phasing: permissive flashing yellow arrow vs protected-only vs automatic
 //! switching by the volume cross-product, across demand levels.
-use trafficsim::control::CtrlKind;
-use trafficsim::sim::network::{LayoutKind, Turn};
-use trafficsim::sim::{ControlMode, LeftMode, Sim};
+use intersection_lab::control::CtrlKind;
+use intersection_lab::sim::network::{LayoutKind, Turn};
+use intersection_lab::sim::{ControlMode, LeftMode, Sim};
 
 fn main() {
     let seeds: u64 = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(6);

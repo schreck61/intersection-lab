@@ -1,7 +1,7 @@
 //! Safety sweep: every layout x control x seed, report in-box overlaps.
-use trafficsim::control::CtrlKind;
-use trafficsim::sim::network::LayoutKind;
-use trafficsim::sim::{ControlMode, Sim};
+use intersection_lab::control::CtrlKind;
+use intersection_lab::sim::network::LayoutKind;
+use intersection_lab::sim::{ControlMode, Sim};
 fn main() {
     let seeds: u64 = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(4);
     let scale: f64 = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(1.0);
@@ -10,11 +10,11 @@ fn main() {
     let opts = std::env::args().nth(3).unwrap_or_default();
     let peds = opts.split(',').any(|a| a == "peds");
     let left = if opts.split(',').any(|a| a == "prot") {
-        trafficsim::sim::LeftMode::Protected
+        intersection_lab::sim::LeftMode::Protected
     } else if opts.split(',').any(|a| a == "auto") {
-        trafficsim::sim::LeftMode::Auto
+        intersection_lab::sim::LeftMode::Auto
     } else {
-        trafficsim::sim::LeftMode::Fya
+        intersection_lab::sim::LeftMode::Fya
     };
     let mut jobs = vec![];
     for kind in LayoutKind::ALL {
