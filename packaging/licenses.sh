@@ -30,6 +30,9 @@ if [ -n "$fonts_dir" ]; then
     } >> "$tmp"
 fi
 
+# Some crates ship CRLF license files; normalise so the output is identical everywhere.
+tr -d '\r' < "$tmp" > "$tmp.lf" && mv "$tmp.lf" "$tmp"
+
 if [ "${1:-}" = "--check" ]; then
     if ! diff -q "$tmp" "$out" > /dev/null; then
         echo "$out is out of date: run packaging/licenses.sh and commit the result" >&2
