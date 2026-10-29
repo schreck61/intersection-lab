@@ -278,11 +278,27 @@ impl Scene {
                     r += 4.0;
                 }
             }
-            // Lane lines.
+            // Turn bay: upstream of it the lane is painted median with a taper.
+            let bay = leg.in_lanes.first().map(|&l| net.links[l].bay_start).unwrap_or(0.0);
+            let rb = if bay > 0.0 { net.in_len - bay } else { far };
+            if bay > 0.0 {
+                let taper = 18.0;
+                self.poly(&[p(rb + taper, 0.2), p(far, 0.2), p(far, w - 0.15), p(rb + taper, w - 0.15)], MEDIAN);
+                self.tri(p(rb, 0.2), p(rb + taper, 0.2), p(rb + taper, w - 0.15), MEDIAN);
+                self.quad_line(p(rb, 0.2), p(rb + taper, w - 0.15), 0.14, YELLOW);
+                self.quad_line(p(rb + taper, w - 0.15), p(far, w - 0.15), 0.12, YELLOW);
+                let mut r = rb + taper + 2.0;
+                while r < far - 3.0 {
+                    self.quad_line(p(r, 0.4), p(r + 2.2, w - 0.4), 0.18, shade(YELLOW, 0.85));
+                    r += 4.0;
+                }
+            }
+            // Lane lines (solid near the stop line: no lane changes there).
             for k in 1..leg.lane_moves.len() {
                 let lat = k as f64 * w;
-                self.quad_line(p(r0, lat), p(r0 + 30.0, lat), 0.14, WHITE);
-                self.dashed(p(r0 + 30.0, lat), p(far, lat), 0.14, 3.0, 9.0, WHITE);
+                let end = if k == 1 && bay > 0.0 { rb } else { far };
+                self.quad_line(p(r0, lat), p(r0 + 25.0, lat), 0.14, WHITE);
+                self.dashed(p(r0 + 25.0, lat), p(end, lat), 0.14, 3.0, 9.0, WHITE);
             }
             for k in 1..leg.n_out {
                 let lat = -(leg.med_out + k as f64 * w);
@@ -491,15 +507,25 @@ pub struct DrawCtx<'a> {
 
 impl DrawCtx<'_> {
     pub fn body(&self, v: &Vehicle) -> Vec<(V2, V2, f64, f64)> {
-        self.sim.body_lagged(v, self.sim.lag(v, self.alpha))
+        let off = self.sim.lc_offset(v, self.alpha);
+        let mut b = self.sim.body_lagged(v, self.sim.lag(v, self.alpha));
+        if off.len() > 1e-6 {
+            // Changing lanes: slide across, nosing toward the new lane.
+            let k = off.len().min(3.5) / 3.5;
+            for seg in b.iter_mut() {
+                seg.0 = seg.0 + off;
+                seg.1 = (seg.1 - off.norm() * (0.12 * k)).norm();
+            }
+        }
+        b
     }
 
     pub fn front(&self, v: &Vehicle) -> V2 {
-        self.sim.point_behind(v, self.sim.lag(v, self.alpha))
+        self.sim.point_behind(v, self.sim.lag(v, self.alpha)) + self.sim.lc_offset(v, self.alpha)
     }
 
     pub fn center(&self, v: &Vehicle) -> V2 {
-        self.sim.point_behind(v, self.sim.lag(v, self.alpha) + v.len() * 0.5)
+        self.sim.point_behind(v, self.sim.lag(v, self.alpha) + v.len() * 0.5) + self.sim.lc_offset(v, self.alpha)
     }
 }
 

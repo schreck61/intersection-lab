@@ -15,7 +15,13 @@ use crate::sim::vtypes::VKind;
 pub struct Predictive {
     horizon: f64,
     next_plan: f64,
-    max_green: f64,
+    /// Longest green the planner will extend a stage to (s).
+    pub max_green: f64,
+    /// Weight of the super-linear penalty on long waits (fairness).
+    pub fairness: f64,
+    /// Relative cost adjustment for plans that keep the current stage (negative
+    /// favours longer greens, positive favours switching sooner).
+    pub hold_bias: f64,
     names: Vec<String>,
     bars: Vec<(String, f64, bool)>,
     note: String,
@@ -37,6 +43,8 @@ impl Predictive {
             horizon: 90.0,
             next_plan: 0.0,
             max_green: 60.0,
+            fairness: 0.004,
+            hold_bias: 0.0,
             names: net.stages.iter().map(|s| s.name.clone()).collect(),
             bars: vec![],
             note: String::new(),
@@ -51,7 +59,7 @@ impl Predictive {
         }
     }
 
-    fn cost(ctx: &Ctx, blocks: &[Block], arr: &[Vec<Arr>], horizon: f64) -> f64 {
+    fn cost(ctx: &Ctx, blocks: &[Block], arr: &[Vec<Arr>], horizon: f64, fairness: f64) -> f64 {
         let net = ctx.net;
         let mut total = 0.0;
         for m in 0..net.movements.len() {
@@ -96,7 +104,7 @@ impl Predictive {
                 } else {
                     (horizon - eta).max(0.0) + 25.0
                 };
-                total += w * (dly + 0.004 * ((wait0 + dly).powi(2) - wait0 * wait0));
+                total += w * (dly + fairness * ((wait0 + dly).powi(2) - wait0 * wait0));
             }
         }
         total
@@ -243,7 +251,8 @@ impl Controller for Predictive {
                 }
                 let first = Block { stage: cur, start: 0.0, end: x };
                 Self::rollout(ctx, first, j, &counts, &h_eff, self.horizon, min_g, &mut blocks);
-                let c = Self::cost(ctx, &blocks, &arr, self.horizon);
+                let c = Self::cost(ctx, &blocks, &arr, self.horizon, self.fairness);
+                let c = if x > 0.0 { c * (1.0 + self.hold_bias) } else { c };
                 if x == 0.0 {
                     switch_cost[j] = switch_cost[j].min(c);
                 } else {

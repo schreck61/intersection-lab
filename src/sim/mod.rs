@@ -124,6 +124,11 @@ pub struct Vehicle {
     pub reaction: f64,
     /// Time spent wanting to move while still stopped.
     go_t: f64,
+    /// Lane change: lateral display offset at the moment of the change (decays), time
+    /// since the change, and the lane it left (followers there still see it briefly).
+    pub lc_off: V2,
+    pub lc_t: f64,
+    lc_from: Option<LinkId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,6 +140,7 @@ pub enum Reason {
     Yielding,
     Pedestrian,
     Curve,
+    LaneChange,
 }
 
 impl Reason {
@@ -147,6 +153,7 @@ impl Reason {
             Reason::Yielding => "yielding right-of-way",
             Reason::Pedestrian => "yielding to pedestrian",
             Reason::Curve => "slowing for turn",
+            Reason::LaneChange => "waiting to change lanes",
         }
     }
 }
@@ -203,6 +210,10 @@ struct VStat {
 }
 
 const LOOK: f64 = 70.0;
+/// Duration of the drawn lateral motion of a lane change (s).
+pub const LC_DUR: f64 = 2.5;
+/// Followers in the old lane keep treating a lane changer as a leader this long (s).
+const GHOST_T: f64 = 1.5;
 const HORIZON: f64 = 140.0;
 
 pub struct Sim {
@@ -212,6 +223,8 @@ pub struct Sim {
     pub vehicles: Vec<Vehicle>,
     pub peds: Vec<Ped>,
     pub occ: Vec<Vec<usize>>,
+    /// Vehicles that just changed out of each lane (still partly in it).
+    ghosts: Vec<Vec<usize>>,
     pub mode: ControlMode,
     pub signal: SignalState,
     pub controller: Box<dyn Controller>,
@@ -235,6 +248,8 @@ pub struct Sim {
     pub max_wait_guard: f64,
     pub preempt_active: bool,
     pub collisions: u64,
+    /// Lane changes made (mandatory, discretionary).
+    pub lane_changes: (u64, u64),
     /// Run the (costly) body-overlap safety check every step.
     pub check_safety: bool,
     pub collision_log: Vec<String>,
@@ -268,6 +283,7 @@ impl Sim {
             demand_gen: DemandGen::new(seed, n_legs),
             queues: vec![VecDeque::new(); n_legs],
             occ: vec![Vec::new(); n_links],
+            ghosts: vec![Vec::new(); n_links],
             stats: Stats::new(&net),
             net,
             t: 0.0,
@@ -291,6 +307,7 @@ impl Sim {
             max_wait_guard: 150.0,
             preempt_active: false,
             collisions: 0,
+            lane_changes: (0, 0),
             check_safety: false,
             collision_log: Vec::new(),
             seed,
@@ -381,6 +398,7 @@ impl Sim {
         // 5. Vehicle behaviour.
         self.compute_vstat();
         self.drive(dt);
+        self.lane_changes(dt);
         // 6. Pedestrians.
         self.step_peds(dt);
         self.t += dt;
@@ -542,26 +560,34 @@ impl Sim {
         for o in self.occ.iter_mut() {
             o.sort_by(|&a, &b| veh[b].s.partial_cmp(&veh[a].s).unwrap());
         }
+        for g in self.ghosts.iter_mut() {
+            g.clear();
+        }
+        for (i, v) in self.vehicles.iter().enumerate() {
+            if let Some(l) = v.lc_from {
+                if v.ri == 0 && v.lc_t < GHOST_T {
+                    self.ghosts[l].push(i);
+                }
+            }
+        }
     }
 
     fn spawn_from_queues(&mut self) {
         for leg in 0..self.queues.len() {
             let Some(p) = self.queues[leg].front() else { continue };
-            let mv = &self.net.movements[p.movement];
             let spec = p.kind.spec();
-            // Choose the admissible lane with the most room at the entry.
-            let mut best: Option<(usize, f64, f64)> = None;
-            for (ri, (lane, _)) in mv.routes.iter().enumerate() {
-                let (room, lead_v) = self.entry_room(*lane);
+            // Enter on the admissible lane with the most room; turns whose lanes are
+            // bays enter next to the bay and change into it later.
+            let mut best: Option<(LinkId, f64, f64)> = None;
+            for lane in self.entry_lanes(p.movement) {
+                let (room, lead_v) = self.entry_room(lane);
                 if room > spec.min_gap + 1.0 && best.is_none_or(|b| room > b.1) {
-                    best = Some((ri, room, lead_v));
+                    best = Some((lane, room, lead_v));
                 }
             }
-            let Some((ri, room, lead_v)) = best else { continue };
+            let Some((lane, room, lead_v)) = best else { continue };
             let p = self.queues[leg].pop_front().unwrap();
-            let (lane, tail) = &self.net.movements[p.movement].routes[ri];
-            let mut route = vec![*lane];
-            route.extend_from_slice(tail);
+            let route = self.route_from(p.movement, lane);
             let speed = self.net.legs[leg].speed;
             let v0 = speed * spec.speed_factor * p.speed_factor;
             let v_safe = if room < 60.0 { lead_v.min(v0).max(((room - spec.min_gap) * 2.0 * spec.decel).sqrt().min(lead_v + 2.0)) } else { v0 };
@@ -605,10 +631,67 @@ impl Sim {
                 yield_to: None,
                 reaction: if p.kind == VKind::Emergency { 0.3 } else { 0.6 + 0.6 * self.misc.f64() },
                 go_t: 0.0,
+                lc_off: V2::default(),
+                lc_t: 1e9,
+                lc_from: None,
             });
             let idx = self.vehicles.len() - 1;
             self.occ[self.vehicles[idx].route[0]].push(idx);
         }
+    }
+
+    /// Lanes a vehicle of movement `m` can enter on: the full-length lanes that serve
+    /// it, else the full-length lanes next to the bays that do.
+    fn entry_lanes(&self, m: usize) -> Vec<LinkId> {
+        let mv = &self.net.movements[m];
+        let lanes = &self.net.legs[mv.leg].in_lanes;
+        let full = |l: LinkId| self.net.links[l].bay_start <= 0.0;
+        let serving: Vec<LinkId> = mv.routes.iter().map(|r| r.0).filter(|&l| full(l)).collect();
+        if !serving.is_empty() {
+            return serving;
+        }
+        let idx = |l: LinkId| lanes.iter().position(|&x| x == l).unwrap_or(0);
+        lanes
+            .iter()
+            .copied()
+            .filter(|&l| full(l) && mv.routes.iter().any(|r| idx(r.0).abs_diff(idx(l)) == 1))
+            .collect()
+    }
+
+    /// Route for movement `m` starting on inbound lane `lane`. If the lane doesn't serve
+    /// the movement, the tail of the nearest serving lane stands in (the vehicle must
+    /// change lanes before the stop line).
+    fn route_from(&self, m: usize, lane: LinkId) -> Vec<LinkId> {
+        let mv = &self.net.movements[m];
+        let lanes = &self.net.legs[mv.leg].in_lanes;
+        let idx = |l: LinkId| lanes.iter().position(|&x| x == l).unwrap_or(0);
+        let tail = mv
+            .routes
+            .iter()
+            .min_by_key(|r| if r.0 == lane { 0 } else { 1 + idx(r.0).abs_diff(idx(lane)) })
+            .map(|r| r.1.clone())
+            .unwrap_or_default();
+        let mut route = vec![lane];
+        route.extend(tail);
+        route
+    }
+
+    /// Does the vehicle's current inbound lane serve its movement?
+    pub fn lane_ok(&self, v: &Vehicle) -> bool {
+        v.ri > 0 || self.net.movements[v.movement].routes.iter().any(|r| r.0 == v.route[0])
+    }
+
+    /// Neighbouring lane a vehicle in the wrong lane must move into.
+    fn lane_target(&self, v: &Vehicle) -> Option<LinkId> {
+        let lanes = &self.net.legs[v.leg].in_lanes;
+        let k = lanes.iter().position(|&x| x == v.route[0])?;
+        let goal = self.net.movements[v.movement]
+            .routes
+            .iter()
+            .filter_map(|r| lanes.iter().position(|&x| x == r.0))
+            .min_by_key(|&g| g.abs_diff(k))?;
+        let t = if goal < k { k - 1 } else { k + 1 };
+        lanes.get(t).copied()
     }
 
     /// Free space at the upstream end of a lane and the speed of its last vehicle.
@@ -1024,7 +1107,7 @@ impl Sim {
                 *best = Some((gap, vl, j));
             }
         }
-        for &j in &self.occ[link] {
+        for &j in self.occ[link].iter().chain(&self.ghosts[link]) {
             if j == i {
                 continue;
             }
@@ -1311,7 +1394,7 @@ impl Sim {
             blocked = v.v < 0.5
                 && gap < 8.0
                 && w.v < 0.3
-                && (w.blocked || matches!(w.reason, Reason::Yielding | Reason::Pedestrian | Reason::Signal | Reason::StopSign));
+                && (w.blocked || matches!(w.reason, Reason::Yielding | Reason::Pedestrian | Reason::Signal | Reason::StopSign | Reason::LaneChange));
             let a2 = Self::idm(spec, v.v, v0, gap, v.v - vl);
             if a2 < acc {
                 acc = a2;
@@ -1341,6 +1424,29 @@ impl Sim {
         }
         let stop_at = |gap: f64| Self::idm(spec, v.v, v0, gap + spec.min_gap - 0.6, v.v);
         let can_stop = |gap: f64| v.v * v.v / (2.0 * gap.max(0.05)) < 6.5;
+
+        // In the wrong lane for the turn: never pass the stop line, and wait behind the
+        // tail of the target lane's queue rather than drive alongside it.
+        if on_approach && !self.lane_ok(v) {
+            let mut hold = d_line - 0.5;
+            if let Some(t) = self.lane_target(v) {
+                let rear = self.occ[t]
+                    .iter()
+                    .map(|&j| &self.vehicles[j])
+                    .filter(|w| w.v < 3.0 && w.s - w.len() > v.s - 1.0)
+                    .map(|w| w.s - w.len())
+                    .fold(f64::INFINITY, f64::min);
+                if rear.is_finite() {
+                    hold = hold.min(rear - 1.0 - v.s);
+                }
+            }
+            let a2 = stop_at(hold.max(0.0));
+            if a2 < acc {
+                acc = a2;
+                reason = Reason::LaneChange;
+            }
+            return (acc.clamp(-9.0, spec.accel), reason, commits, stop_done, ydec, (blocked, None), vec![]);
+        }
 
         // Signal / stop sign at the stop line.
         let mut line_hold = false;
@@ -1539,6 +1645,147 @@ impl Sim {
         (acc.clamp(-9.0, spec.accel), reason, commits, stop_done, ydec, (blocked, if stop_gap.is_some() { yield_to } else { None }), drop)
     }
 
+    // ---------------------------------------------------------------- lane changes
+
+    /// Lane changes on the approaches: mandatory ones into the lane (or bay) a turn
+    /// needs, and discretionary ones by MOBIL (Kesting, Treiber & Helbing 2007): change
+    /// when it is safe for the new follower and the acceleration gain, net of a
+    /// politeness-weighted cost to others, beats a threshold. No changes across the
+    /// solid line in the last 25 m unless mandatory.
+    fn lane_changes(&mut self, dt: f64) {
+        for v in self.vehicles.iter_mut() {
+            v.lc_t += dt;
+        }
+        for i in 0..self.vehicles.len() {
+            let v = &self.vehicles[i];
+            if v.ri != 0 || v.lc_t < 4.0 || v.kind == VKind::Emergency && self.lane_ok(v) {
+                continue;
+            }
+            let lane = v.route[0];
+            let link = &self.net.links[lane];
+            if link.kind != LinkKind::Inbound {
+                continue;
+            }
+            let d_line = link.length() - v.s;
+            let mandatory = !self.lane_ok(v);
+            if !mandatory && (d_line < 25.0 || v.s < 10.0) {
+                continue;
+            }
+            let lanes = &self.net.legs[v.leg].in_lanes;
+            let k = lanes.iter().position(|&x| x == lane).unwrap_or(0);
+            let serves = |l: LinkId| self.net.movements[v.movement].routes.iter().any(|r| r.0 == l);
+            let mut cands: Vec<LinkId> = Vec::new();
+            if mandatory {
+                cands.extend(self.lane_target(v));
+            } else {
+                for t in [k.wrapping_sub(1), k + 1] {
+                    if let Some(&l) = lanes.get(t) {
+                        if serves(l) {
+                            cands.push(l);
+                        }
+                    }
+                }
+            }
+            let spec = v.spec();
+            let b_safe = if mandatory { 4.0 } else { 2.0 };
+            let min_gap = if mandatory { 0.8 } else { 2.0 };
+            // Leader / follower of the vehicle on a lane (excluding itself).
+            let neighbours = |l: LinkId| {
+                let (mut lead, mut fol): (Option<usize>, Option<usize>) = (None, None);
+                for &j in &self.occ[l] {
+                    if j == i {
+                        continue;
+                    }
+                    let w = &self.vehicles[j];
+                    if w.s >= v.s {
+                        if lead.is_none_or(|x| w.s < self.vehicles[x].s) {
+                            lead = Some(j);
+                        }
+                    } else if fol.is_none_or(|x| w.s > self.vehicles[x].s) {
+                        fol = Some(j);
+                    }
+                }
+                (lead, fol)
+            };
+            let acc_behind = |me: &Vehicle, lead: Option<usize>| match lead {
+                Some(j) => {
+                    let w = &self.vehicles[j];
+                    Self::idm(me.spec(), me.v, me.v0, w.s - w.len() - me.s, me.v - w.v)
+                }
+                None => Self::idm(me.spec(), me.v, me.v0, 1e9, 0.0),
+            };
+            let (old_lead, old_fol) = neighbours(lane);
+            let mut best: Option<(LinkId, f64)> = None;
+            for t in cands {
+                if v.s < self.net.links[t].bay_start + 3.0 {
+                    continue;
+                }
+                let (lead, fol) = neighbours(t);
+                let gap_lead = lead.map(|j| self.vehicles[j].s - self.vehicles[j].len() - v.s).unwrap_or(1e9);
+                let gap_fol = fol.map(|j| v.s - v.len() - self.vehicles[j].s).unwrap_or(1e9);
+                if gap_lead < min_gap || gap_fol < min_gap {
+                    continue;
+                }
+                let a_new = acc_behind(v, lead);
+                let fol_new = fol.map(|j| {
+                    let f = &self.vehicles[j];
+                    Self::idm(f.spec(), f.v, f.v0, gap_fol, f.v - v.v)
+                });
+                if a_new < -b_safe || fol_new.is_some_and(|a| a < -b_safe) {
+                    continue;
+                }
+                let gain = if mandatory {
+                    1e3
+                } else {
+                    let fol_old = fol.map(|j| acc_behind(&self.vehicles[j], lead)).unwrap_or(0.0);
+                    let of_old = old_fol.map(|j| acc_behind(&self.vehicles[j], Some(i))).unwrap_or(0.0);
+                    let of_new = old_fol.map(|j| acc_behind(&self.vehicles[j], old_lead)).unwrap_or(0.0);
+                    let own = a_new - acc_behind(v, old_lead);
+                    own + 0.3 * ((fol_new.unwrap_or(0.0) - fol_old) + (of_new - of_old)) - 0.3
+                };
+                if gain > 0.0 && best.is_none_or(|b| gain > b.1) {
+                    best = Some((t, gain));
+                }
+            }
+            let Some((t, _)) = best else { continue };
+            let _ = spec;
+            if mandatory {
+                self.lane_changes.0 += 1;
+            } else {
+                self.lane_changes.1 += 1;
+            }
+            // Execute: the vehicle moves to the new lane at the same distance along it
+            // (approach lanes are parallel) and slides across on screen.
+            let before = self.front(&self.vehicles[i]) + self.lc_offset(&self.vehicles[i], 1.0);
+            let route = self.route_from(self.vehicles[i].movement, t);
+            let v = &mut self.vehicles[i];
+            v.route = route;
+            v.lc_from = Some(lane);
+            v.lc_t = 0.0;
+            v.commits.clear();
+            v.blocked = false;
+            v.yield_to = None;
+            let after = self.front(&self.vehicles[i]);
+            self.vehicles[i].lc_off = before - after;
+            self.occ[lane].retain(|&j| j != i);
+            let s_i = self.vehicles[i].s;
+            let pos = self.occ[t].iter().position(|&j| self.vehicles[j].s < s_i).unwrap_or(self.occ[t].len());
+            self.occ[t].insert(pos, i);
+        }
+        self.rebuild_occ();
+    }
+
+    /// Lateral display offset of a vehicle that is changing lanes (`alpha` as in
+    /// [`Sim::lag`]).
+    pub fn lc_offset(&self, v: &Vehicle, alpha: f64) -> V2 {
+        let t = v.lc_t - (1.0 - alpha.clamp(0.0, 1.0)) * self.dt;
+        if t >= LC_DUR {
+            return V2::default();
+        }
+        let x = (t / LC_DUR).clamp(0.0, 1.0);
+        v.lc_off * (1.0 - x * x * (3.0 - 2.0 * x))
+    }
+
     /// Body as a chain of oriented rectangles (centre, unit axis, half-length,
     /// half-width) that follows the path, so long vehicles bend through turns.
     pub fn body(&self, v: &Vehicle) -> Vec<(V2, V2, f64, f64)> {
@@ -1561,6 +1808,22 @@ impl Sim {
     }
 
     fn check_overlaps(&mut self) {
+        // Same-lane overlaps (rear-ends, cut-ins after lane changes).
+        for l in 0..self.occ.len() {
+            for w in self.occ[l].windows(2) {
+                let (a, b) = (&self.vehicles[w[0]], &self.vehicles[w[1]]);
+                if a.s - a.len() - b.s < -0.3 {
+                    self.collisions += 1;
+                    if self.collision_log.len() < 30 {
+                        let msg = format!(
+                            "t={:.1} same-lane overlap on link {l}: #{} {} s={:.1} v={:.1} lc_t={:.1} | #{} {} s={:.1} v={:.1} lc_t={:.1}",
+                            self.t, a.id, a.kind.name(), a.s, a.v, a.lc_t, b.id, b.kind.name(), b.s, b.v, b.lc_t
+                        );
+                        self.collision_log.push(msg);
+                    }
+                }
+            }
+        }
         // Safety metric: separating-axis test between vehicle bodies in or next to the
         // intersection on different links (small tolerance for drawn mirrors etc.).
         let near: Vec<usize> = (0..self.vehicles.len())

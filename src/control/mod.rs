@@ -3,6 +3,7 @@
 
 pub mod actuated;
 pub mod fixed;
+pub mod hybrid;
 pub mod maxpressure;
 pub mod predictive;
 pub mod rl;
@@ -49,6 +50,12 @@ pub trait Controller: Send {
     fn into_rl(self: Box<Self>) -> Option<Box<rl::RlController>> {
         None
     }
+    fn as_hybrid(&mut self) -> Option<&mut hybrid::Hybrid> {
+        None
+    }
+    fn into_hybrid(self: Box<Self>) -> Option<Box<hybrid::Hybrid>> {
+        None
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -58,11 +65,12 @@ pub enum CtrlKind {
     MaxPressure,
     Predictive,
     DeepRl,
+    Hybrid,
 }
 
 impl CtrlKind {
-    pub const ALL: [CtrlKind; 5] =
-        [CtrlKind::Fixed, CtrlKind::Actuated, CtrlKind::MaxPressure, CtrlKind::Predictive, CtrlKind::DeepRl];
+    pub const ALL: [CtrlKind; 6] =
+        [CtrlKind::Fixed, CtrlKind::Actuated, CtrlKind::MaxPressure, CtrlKind::Predictive, CtrlKind::DeepRl, CtrlKind::Hybrid];
     pub fn name(self) -> &'static str {
         match self {
             CtrlKind::Fixed => "Fixed-time (Webster)",
@@ -70,6 +78,7 @@ impl CtrlKind {
             CtrlKind::MaxPressure => "Max-Pressure",
             CtrlKind::Predictive => "Predictive (schedule-driven MPC)",
             CtrlKind::DeepRl => "AI: Deep RL (Double DQN)",
+            CtrlKind::Hybrid => "AI: Hybrid (RL-tuned predictive)",
         }
     }
     pub fn short(self) -> &'static str {
@@ -79,10 +88,11 @@ impl CtrlKind {
             CtrlKind::MaxPressure => "MaxPressure",
             CtrlKind::Predictive => "Predictive",
             CtrlKind::DeepRl => "DeepRL",
+            CtrlKind::Hybrid => "Hybrid",
         }
     }
     pub fn adaptive(self) -> bool {
-        matches!(self, CtrlKind::MaxPressure | CtrlKind::Predictive | CtrlKind::DeepRl)
+        matches!(self, CtrlKind::MaxPressure | CtrlKind::Predictive | CtrlKind::DeepRl | CtrlKind::Hybrid)
     }
     pub fn description(self) -> &'static str {
         match self {
@@ -91,6 +101,7 @@ impl CtrlKind {
             CtrlKind::MaxPressure => "Varaiya's throughput-optimal max-pressure: serves the stage with the largest upstream-minus-downstream queue pressure. Needs queue counts (camera).",
             CtrlKind::Predictive => "Rolling-horizon, schedule-driven control in the spirit of SURTRAC: predicts every detected vehicle's arrival, simulates candidate signal schedules 90 s ahead and picks the one minimising person-delay. Benefits most from long-range radar / connected vehicles.",
             CtrlKind::DeepRl => "Double DQN neural network trained by reinforcement learning (reward = negative person delay) on randomised demand. Observes queues, predicted arrivals, waits and pedestrian calls. Can keep learning online.",
+            CtrlKind::Hybrid => "The predictive planner makes every signal decision; a reinforcement-learning agent re-tunes it every 10 s (fairness weight, hold/switch bias, max green) from the traffic it sees. Keeps the planner's safety; learns when to deviate from its defaults.",
         }
     }
 }
@@ -102,6 +113,7 @@ pub fn make(kind: CtrlKind, net: &Network, demand: &DemandConfig) -> Box<dyn Con
         CtrlKind::MaxPressure => Box::new(maxpressure::MaxPressure::new(net)),
         CtrlKind::Predictive => Box::new(predictive::Predictive::new(net)),
         CtrlKind::DeepRl => Box::new(rl::RlController::load_or_new(net)),
+        CtrlKind::Hybrid => Box::new(hybrid::Hybrid::load_or_new(net)),
     }
 }
 

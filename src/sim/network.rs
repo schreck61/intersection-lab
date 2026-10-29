@@ -117,6 +117,9 @@ pub struct Link {
     pub movement: Option<usize>,
     pub conflicts: Vec<usize>,
     pub ped_conflicts: Vec<usize>,
+    /// For a turn bay: distance along the lane where the bay opens (vehicles must
+    /// change into it from the neighbouring lane). 0 for full-length lanes.
+    pub bay_start: f64,
 }
 
 impl Link {
@@ -319,6 +322,8 @@ pub struct Network {
 }
 
 pub const IN_LEN: f64 = 260.0;
+/// Length of a left-turn bay (storage + taper) before the stop line.
+pub const BAY_LEN: f64 = 75.0;
 pub const OUT_LEN: f64 = 160.0;
 const A_LAT: f64 = 2.6;
 
@@ -474,6 +479,7 @@ fn new_link(links: &mut Vec<Link>, kind: LinkKind, pts: &[V2], speed: f64, leg: 
         movement: None,
         conflicts: vec![],
         ped_conflicts: vec![],
+        bay_start: 0.0,
     });
     id
 }
@@ -537,6 +543,11 @@ fn build_signal(kind: LayoutKind, defs: Vec<LegDef>, lane_w: f64, speed: f64, ye
             let p1 = d * leg.stop_dist + lat;
             let id = new_link(&mut links, LinkKind::Inbound, &[p0, p1], speed, li, lane);
             leg.in_lanes.push(id);
+        }
+        // A left-only lane next to a through lane is a bay carved out of the median.
+        if leg.lane_moves.len() >= 2 && leg.lane_moves[0] == [Turn::L] && leg.lane_moves[1].contains(&Turn::T) {
+            let l = &mut links[leg.in_lanes[0]];
+            l.bay_start = (l.path.length - BAY_LEN).max(0.0);
         }
         for lane in 0..leg.n_out {
             let lat = outs * (leg.med_out + (lane as f64 + 0.5) * lane_w);

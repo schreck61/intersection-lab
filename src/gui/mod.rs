@@ -604,6 +604,29 @@ impl App {
                 }
                 ui.label(RichText::new("Thorough training: cargo run --release --bin train").small().monospace());
             }
+            if self.ctrl == CtrlKind::Hybrid && self.mode == ControlMode::Signal {
+                ui.separator();
+                ui.heading("AI (RL-tuned predictive)");
+                let layout = self.layout;
+                let mut saved = None;
+                if let Some(h) = self.world.sims[self.focus].controller.as_hybrid() {
+                    ui.checkbox(&mut h.learning, "Keep learning online");
+                    ui.add_enabled(h.learning, egui::Slider::new(&mut h.epsilon, 0.0..=0.5).text("exploration ε"));
+                    ui.label(format!("tuning decisions {}  ·  replay {}  ·  updates {}", h.decisions, h.agent.replay_len(), h.agent.updates));
+                    if ui.button("💾 Save weights").clicked() {
+                        let p = crate::control::hybrid::weights_path(layout.key());
+                        std::fs::create_dir_all(p.parent().unwrap()).ok();
+                        saved = Some(h.save(&p).map(|_| p.display().to_string()));
+                    }
+                }
+                if let Some(r) = saved {
+                    match r {
+                        Ok(p) => self.notify(format!("Saved {p}")),
+                        Err(e) => self.notify(format!("Save failed: {e}")),
+                    }
+                }
+                ui.label(RichText::new("Training: cargo run --release --bin train all 400 900 hybrid").small().monospace());
+            }
 
             ui.separator();
             ui.heading("View");
