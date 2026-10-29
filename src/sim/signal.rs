@@ -1,6 +1,7 @@
 //! Stage-based signal state machine with MUTCD-style clearance: yellow change and
-//! all-red intervals between stages, pedestrian WALK + flashing DON'T WALK, and
-//! minimum green that grows to fit an active pedestrian interval.
+//! all-red intervals between stages, pedestrian WALK + flashing DON'T WALK, minimum
+//! green that grows to fit an active pedestrian interval, and an optional leading
+//! pedestrian interval (LPI).
 
 use super::network::{MStat, Network};
 use std::collections::VecDeque;
@@ -68,6 +69,10 @@ pub struct SignalState {
     departing: Vec<bool>,
     pub history: VecDeque<StageSpan>,
     pub switches: u64,
+    /// Leading pedestrian interval (s, 0 = off): when a stage starts with WALK, the
+    /// vehicle movements that turn across those crosswalks stay red this long.
+    pub lpi: f64,
+    lpi_hold: Vec<bool>,
 }
 
 impl SignalState {
@@ -90,6 +95,8 @@ impl SignalState {
             departing: vec![false; net.movements.len()],
             history: VecDeque::new(),
             switches: 0,
+            lpi: 0.0,
+            lpi_hold: vec![false; net.movements.len()],
         };
         s.history.push_back(StageSpan { stage: first, start: t, end: t });
         s
@@ -107,6 +114,7 @@ impl SignalState {
             None => Sig::R,
         };
         match self.phase {
+            Phase::Green if self.lpi_held(m) => Sig::R,
             Phase::Green => base,
             Phase::Yellow => {
                 if self.departing[m] {
@@ -125,6 +133,11 @@ impl SignalState {
         }
     }
 
+    /// Held red by the leading pedestrian interval (no turn on red either).
+    pub fn lpi_held(&self, m: usize) -> bool {
+        self.phase == Phase::Green && self.lpi_hold[m] && self.green_elapsed < self.lpi
+    }
+
     pub fn can_switch(&self) -> bool {
         self.phase == Phase::Green && self.green_elapsed >= self.cur_min
     }
@@ -136,11 +149,16 @@ impl SignalState {
         }
         let a = &net.stages[self.stage].stat;
         let b = &net.stages[j].stat;
+        // With LPI, turns that continue into the next stage but cross a crosswalk about
+        // to start WALK get a yellow/red arrow so pedestrians can lead.
+        let lpi_cw: Vec<bool> =
+            (0..self.cw.len()).map(|cw| self.lpi > 0.0 && self.cw[cw].called && net.stages[j].walk.contains(&cw)).collect();
         let mut any = false;
         for m in 0..a.len() {
             let dep = match (a[m], b[m]) {
                 (Some(_), None) => true,
                 (Some(MStat::G), Some(MStat::P)) => true,
+                (Some(_), Some(_)) => net.movements[m].crosswalks.iter().any(|&cw| lpi_cw[cw]),
                 _ => false,
             };
             self.departing[m] = dep;
@@ -165,19 +183,31 @@ impl SignalState {
         if let Some(h) = self.history.back_mut() {
             h.end = t;
         }
+        let prev_stage = self.stage;
         self.stage = self.next;
         self.phase = Phase::Green;
         self.t_phase = 0.0;
         self.green_elapsed = 0.0;
         self.cur_min = self.min_green;
-        for d in self.departing.iter_mut() {
-            *d = false;
-        }
+        let was_departing = std::mem::replace(&mut self.departing, vec![false; net.movements.len()]);
         self.history.push_back(StageSpan { stage: self.stage, start: t, end: t });
         while self.history.len() > 400 {
             self.history.pop_front();
         }
+        let prev: Vec<PedSig> = self.cw.iter().map(|c| c.state).collect();
         self.serve_peds(net);
+        // LPI applies only to WALK that starts with the stage (never mid-green), and
+        // only to movements that start moving now (or were stopped for it) and cross a
+        // crosswalk that just started walking.
+        for (m, hold) in self.lpi_hold.iter_mut().enumerate() {
+            *hold = self.lpi > 0.0
+                && net.stages[self.stage].stat[m].is_some()
+                && (net.stages[prev_stage].stat[m].is_none() || was_departing[m])
+                && net.movements[m].crosswalks.iter().any(|&cw| prev[cw] != PedSig::Walk && self.cw[cw].state == PedSig::Walk);
+        }
+        if self.lpi_hold.iter().any(|&h| h) {
+            self.cur_min = self.cur_min.max(self.lpi + self.min_green);
+        }
     }
 
     /// Start WALK on called crosswalks the current stage can serve.

@@ -156,6 +156,7 @@ impl App {
         };
         let sensors = self.sim.sensors.clone();
         let (rtor, pre, guard) = (self.sim.rtor, self.sim.preemption, self.sim.max_wait_guard);
+        let (lpi, ntor) = (self.sim.signal.lpi, self.sim.ntor_peds);
         if !ControlMode::options(self.layout).contains(&self.mode) {
             self.mode = ControlMode::options(self.layout)[0];
         }
@@ -164,6 +165,8 @@ impl App {
         self.sim.rtor = rtor;
         self.sim.preemption = pre;
         self.sim.max_wait_guard = guard;
+        self.sim.signal.lpi = lpi;
+        self.sim.ntor_peds = ntor;
         self.sim.check_safety = true;
         if self.scene.kind != self.layout {
             self.scene = Scene::build(&self.sim.net);
@@ -399,6 +402,10 @@ impl App {
             ui.heading("Operations");
             ui.checkbox(&mut self.sim.preemption, "Emergency-vehicle preemption");
             ui.checkbox(&mut self.sim.rtor, "Right turn on red");
+            ui.add_enabled(self.sim.rtor, egui::Checkbox::new(&mut self.sim.ntor_peds, "…except while pedestrians are present"))
+                .on_hover_text("Blank-out NO TURN ON RED sign lit while someone waits at or crosses a crosswalk the turn passes");
+            ui.add(egui::Slider::new(&mut self.sim.signal.lpi, 0.0..=7.0).step_by(0.5).text("leading ped interval s"))
+                .on_hover_text("WALK starts this long before turning traffic that crosses it gets green (0 = off)");
             ui.add(egui::Slider::new(&mut self.sim.max_wait_guard, 0.0..=300.0).text("max-wait guard s"))
                 .on_hover_text("Adaptive controllers are forced to serve any movement waiting longer than this (0 = off)");
 
@@ -504,8 +511,8 @@ impl App {
             let (n_in, n_q) = self.sim.in_system();
             ui.label(
                 RichText::new(format!(
-                    "{} completed · {} in network · {} waiting to enter · {} peds · safety overlaps: {}",
-                    s.n, n_in, n_q, self.sim.peds.len(), self.sim.collisions
+                    "{} completed · {} in network · {} waiting to enter · {} peds · ped near-misses {:.1}/h · safety overlaps: {}",
+                    s.n, n_in, n_q, self.sim.peds.len(), s.ped_near_miss_ph, self.sim.collisions
                 ))
                 .small()
                 .color(Color32::from_gray(160)),

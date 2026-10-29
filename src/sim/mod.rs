@@ -200,6 +200,9 @@ pub struct Sim {
     pub view: SensorView,
     pub stats: Stats,
     pub rtor: bool,
+    /// Blank-out "NO TURN ON RED" sign lit while pedestrians wait at or cross a
+    /// crosswalk the right turn passes.
+    pub ntor_peds: bool,
     pub preemption: bool,
     pub max_wait_guard: f64,
     pub preempt_active: bool,
@@ -249,6 +252,7 @@ impl Sim {
             sensors,
             view,
             rtor: true,
+            ntor_peds: false,
             preemption: true,
             max_wait_guard: 150.0,
             preempt_active: false,
@@ -594,7 +598,7 @@ impl Sim {
                             st.reason_stop = 1;
                         }
                         Sig::R => {
-                            if v.turn == Turn::R && self.rtor && v.stop_done && self.t - v.stop_t > 1.0 {
+                            if v.turn == Turn::R && self.rtor_ok(v.movement) && v.stop_done && self.t - v.stop_t > 1.0 {
                                 st.rank = 0.0;
                                 st.hold_line = true;
                             } else {
@@ -652,6 +656,14 @@ impl Sim {
             }
         }
         st
+    }
+
+    /// Right turn on red allowed for movement `m` right now.
+    pub fn rtor_ok(&self, m: usize) -> bool {
+        self.rtor
+            && !self.signal.lpi_held(m)
+            && !(self.ntor_peds
+                && self.peds.iter().any(|p| p.state != PedState::Leaving && self.net.movements[m].crosswalks.contains(&p.cw)))
     }
 
     fn route_index(v: &Vehicle, link: LinkId) -> Option<usize> {
@@ -1124,6 +1136,23 @@ impl Sim {
             }
         }
         self.last_reward = person_delay;
+        // Surrogate safety: a vehicle crossing a crosswalk within ~1.5 s of a walking
+        // pedestrian's path (post-encroachment time) counts as a near-miss.
+        for v in &self.vehicles {
+            let lid = v.route[v.ri];
+            for &pci in &self.net.links[lid].ped_conflicts {
+                let pc = &self.net.ped_conflicts[pci];
+                if !(v.prev_s < pc.s && v.s >= pc.s) {
+                    continue;
+                }
+                let close = self.peds.iter().any(|p| {
+                    p.cw == pc.cw && p.state == PedState::Crossing && ((p.u - pc.u).abs() - 1.0).max(0.0) / p.speed < 1.5
+                });
+                if close {
+                    self.stats.ped_near_miss.push(self.t);
+                }
+            }
+        }
         // Remove finished vehicles.
         done_idx.sort_unstable();
         for &i in done_idx.iter().rev() {
@@ -1231,7 +1260,7 @@ impl Sim {
                     line_hold = true;
                     reason = Reason::Signal;
                 }
-                if sig == Sig::R && v.turn == Turn::R && self.rtor && d_line < 2.5 && v.v < 0.3 && !v.stop_done {
+                if sig == Sig::R && v.turn == Turn::R && self.rtor_ok(v.movement) && d_line < 2.5 && v.v < 0.3 && !v.stop_done {
                     stop_done = Some(true);
                 }
             } else if st.must_stop {

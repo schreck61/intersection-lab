@@ -77,11 +77,15 @@ pub struct Summary {
     /// network or queued upstream (robust to policies that starve an approach).
     pub person_delay_all: f64,
     pub avg_delay_all: f64,
+    /// Vehicles passing within ~1.5 s of a walking pedestrian, per hour.
+    pub ped_near_miss_ph: f64,
 }
 
 pub struct Stats {
     pub done: Vec<Done>,
     pub ped_waits: Vec<(f64, f64)>,
+    /// Times of vehicle/pedestrian near-misses (see `Sim::drive`).
+    pub ped_near_miss: Vec<f64>,
     pub series: VecDeque<Sample>,
     pub generated: u64,
     pub hist: Vec<u32>,
@@ -98,6 +102,7 @@ impl Stats {
         Stats {
             done: Vec::new(),
             ped_waits: Vec::new(),
+            ped_near_miss: Vec::new(),
             series: VecDeque::new(),
             generated: 0,
             hist: vec![0; HIST_BINS],
@@ -187,6 +192,7 @@ impl Stats {
             s.ped_avg_wait = pw.iter().sum::<f64>() / pw.len() as f64;
             s.ped_max_wait = pw.iter().cloned().fold(0.0, f64::max);
         }
+        s.ped_near_miss_ph = self.ped_near_miss.iter().filter(|&&t| t >= from_t).count() as f64 * 3600.0 / s.duration;
         // Vehicles still waiting: the upstream virtual queue and long-delayed vehicles.
         let mut unserved = 0;
         let mut uw = 0.0;
