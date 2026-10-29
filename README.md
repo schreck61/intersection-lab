@@ -6,6 +6,16 @@ and pedestrians actually experience, at one intersection or along a corridor.
 
 ![Arterial intersection under predictive control](docs/arterial.png)
 
+## Install
+
+Download the package for your platform from the
+[Releases](https://github.com/schreck61/intersection-lab/releases) page: a universal DMG
+for macOS, an MSI (or portable zip) for Windows on x64 and ARM64, and `.deb`, `.rpm` or
+`.tar.gz` for Linux on x86_64 and aarch64. All are built and signed by GitHub Actions; see
+[packaging/README.md](packaging/README.md) for how releases are made and verified.
+
+## Build from source
+
 ```bash
 cargo run --release                               # the interactive app
 cargo run --release --bin bench                   # headless controller comparison (all layouts)

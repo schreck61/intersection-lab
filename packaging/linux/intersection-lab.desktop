@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Intersection Lab
+GenericName=Traffic Simulator
+Comment=Traffic intersection simulator: signal control, sensing and AI
+Exec=intersection-lab
+Icon=intersection-lab
+Terminal=false
+Categories=Education;Science;Simulation;
+StartupWMClass=intersection-lab

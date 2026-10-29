@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Copyright (c) 2026 Jim Schreckengast
+  SPDX-License-Identifier: MIT OR Apache-2.0
+
+  WiX v5 installer for Intersection Lab (built by packaging/windows/package.ps1).
+  Per-machine install into Program Files, Start-menu shortcut, license files installed
+  next to the program, major upgrades replace older versions.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="Intersection Lab" Manufacturer="Jim Schreckengast" Version="$(var.Version)"
+           UpgradeCode="9225D1D8-A853-40A7-B025-4A224184DA7E" Scope="perMachine" Compressed="yes">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="AppIcon.ico" SourceFile="$(var.IconPath)" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/schreck61/intersection-lab" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/schreck61/intersection-lab" />
+
+    <!-- Welcome / license / install pages. -->
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
+    <ui:WixUI Id="WixUI_Minimal" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Intersection Lab" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Component>
+        <File Id="AppExe" Source="$(var.StageDir)\intersection-lab.exe" KeyPath="yes">
+          <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="Intersection Lab"
+                    Description="Traffic intersection simulator" WorkingDirectory="INSTALLFOLDER"
+                    Icon="AppIcon.ico" Advertise="yes" />
+        </File>
+      </Component>
+      <Component>
+        <File Source="$(var.StageDir)\LICENSE-MIT.txt" />
+      </Component>
+      <Component>
+        <File Source="$(var.StageDir)\LICENSE-APACHE.txt" />
+      </Component>
+      <Component>
+        <File Source="$(var.StageDir)\COPYRIGHT.txt" />
+      </Component>
+      <Component>
+        <File Source="$(var.StageDir)\THIRD_PARTY_LICENSES.txt" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="Main" Title="Intersection Lab" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+    </Feature>
+  </Package>
+</Wix>

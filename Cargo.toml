@@ -27,3 +27,57 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# Linux packages (built by packaging/linux/package.sh with cargo-deb and
+# cargo-generate-rpm). Windowing, graphics (wgpu: Vulkan, or OpenGL via EGL) and
+# fontconfig libraries are loaded at run time, so they are declared explicitly.
+[package.metadata.deb]
+name = "intersection-lab"
+maintainer = "Jim Schreckengast <schreck61@users.noreply.github.com>"
+copyright = "2026, Jim Schreckengast"
+section = "science"
+priority = "optional"
+extended-description = """\
+Microscopic traffic-intersection simulator for comparing signal control strategies \
+(fixed-time, actuated, max-pressure, predictive MPC, reinforcement learning), sensor \
+packages and pedestrian treatments, at a single intersection or along a corridor."""
+depends = "$auto, libegl1, libxkbcommon0, libx11-6, libxcursor1, libxrandr2, libxi6, libwayland-client0, libwayland-egl1, libfontconfig1"
+recommends = "libvulkan1, mesa-vulkan-drivers"
+assets = [
+    ["target/release/intersection-lab", "usr/bin/", "755"],
+    ["packaging/linux/intersection-lab.desktop", "usr/share/applications/", "644"],
+    ["packaging/linux/intersection-lab-256.png", "usr/share/icons/hicolor/256x256/apps/intersection-lab.png", "644"],
+    ["packaging/linux/intersection-lab-512.png", "usr/share/icons/hicolor/512x512/apps/intersection-lab.png", "644"],
+    ["LICENSE-MIT", "usr/share/doc/intersection-lab/", "644"],
+    ["LICENSE-APACHE", "usr/share/doc/intersection-lab/", "644"],
+    ["COPYRIGHT", "usr/share/doc/intersection-lab/", "644"],
+    ["THIRD_PARTY_LICENSES.md", "usr/share/doc/intersection-lab/", "644"],
+    ["README.md", "usr/share/doc/intersection-lab/", "644"],
+]
+
+[package.metadata.generate-rpm]
+summary = "Traffic intersection simulator: signal control, sensing and AI"
+assets = [
+    { source = "target/release/intersection-lab", dest = "/usr/bin/intersection-lab", mode = "755" },
+    { source = "packaging/linux/intersection-lab.desktop", dest = "/usr/share/applications/intersection-lab.desktop", mode = "644" },
+    { source = "packaging/linux/intersection-lab-256.png", dest = "/usr/share/icons/hicolor/256x256/apps/intersection-lab.png", mode = "644" },
+    { source = "packaging/linux/intersection-lab-512.png", dest = "/usr/share/icons/hicolor/512x512/apps/intersection-lab.png", mode = "644" },
+    { source = "LICENSE-MIT", dest = "/usr/share/licenses/intersection-lab/LICENSE-MIT", mode = "644", doc = true },
+    { source = "LICENSE-APACHE", dest = "/usr/share/licenses/intersection-lab/LICENSE-APACHE", mode = "644", doc = true },
+    { source = "COPYRIGHT", dest = "/usr/share/licenses/intersection-lab/COPYRIGHT", mode = "644", doc = true },
+    { source = "THIRD_PARTY_LICENSES.md", dest = "/usr/share/licenses/intersection-lab/THIRD_PARTY_LICENSES.md", mode = "644", doc = true },
+    { source = "README.md", dest = "/usr/share/doc/intersection-lab/README.md", mode = "644", doc = true },
+]
+
+[package.metadata.generate-rpm.requires]
+"libEGL.so.1()(64bit)" = "*"
+"libxkbcommon.so.0()(64bit)" = "*"
+"libX11.so.6()(64bit)" = "*"
+"libXcursor.so.1()(64bit)" = "*"
+"libXrandr.so.2()(64bit)" = "*"
+"libXi.so.6()(64bit)" = "*"
+"libwayland-client.so.0()(64bit)" = "*"
+"libfontconfig.so.1()(64bit)" = "*"
+
+[package.metadata.generate-rpm.recommends]
+"libvulkan.so.1()(64bit)" = "*"

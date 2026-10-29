@@ -1,0 +1,45 @@
+# Copyright (c) 2026 Jim Schreckengast
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# Build and test on every platform; check licenses, advisories and attributions.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --release --all-targets
+      - run: cargo test --locked --release
+
+  licenses:
+    name: Licenses and advisories
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2,cargo-about@0.9.1
+      - name: cargo deny (licenses, advisories, bans, sources)
+        run: cargo deny --locked check
+      - name: THIRD_PARTY_LICENSES.md is up to date
+        run: packaging/licenses.sh --check
