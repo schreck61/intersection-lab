@@ -27,7 +27,8 @@ pub struct VSpec {
     pub accel: f64,
     /// IDM comfortable deceleration (m/s²).
     pub decel: f64,
-    /// IDM desired time headway (s).
+    /// IDM desired time headway (s). Calibrated so a queue of cars discharges at about
+    /// the HCM base saturation flow (1,900 veh/h/ln); see `examples/satflow.rs`.
     pub headway: f64,
     /// IDM jam distance (m).
     pub min_gap: f64,
@@ -69,7 +70,7 @@ static CAR: VSpec = VSpec {
     speed_factor: 1.0,
     accel: 2.0,
     decel: 2.5,
-    headway: 1.3,
+    headway: 1.0,
     min_gap: 2.0,
     occupancy: 1.4,
     mass: 1500.0,
@@ -84,7 +85,7 @@ static SUV: VSpec = VSpec {
     speed_factor: 1.0,
     accel: 1.8,
     decel: 2.5,
-    headway: 1.4,
+    headway: 1.1,
     min_gap: 2.0,
     occupancy: 1.6,
     mass: 2200.0,
@@ -99,7 +100,7 @@ static TRUCK: VSpec = VSpec {
     speed_factor: 0.9,
     accel: 0.8,
     decel: 1.8,
-    headway: 1.9,
+    headway: 1.6,
     min_gap: 3.0,
     occupancy: 1.0,
     mass: 18000.0,
@@ -114,7 +115,7 @@ static BUS: VSpec = VSpec {
     speed_factor: 0.88,
     accel: 1.0,
     decel: 1.8,
-    headway: 1.7,
+    headway: 1.4,
     min_gap: 2.5,
     occupancy: 25.0,
     mass: 13000.0,
@@ -129,7 +130,7 @@ static MOTO: VSpec = VSpec {
     speed_factor: 1.05,
     accel: 3.2,
     decel: 3.0,
-    headway: 1.1,
+    headway: 0.9,
     min_gap: 1.5,
     occupancy: 1.1,
     mass: 300.0,
@@ -144,7 +145,7 @@ static EMERG: VSpec = VSpec {
     speed_factor: 1.15,
     accel: 2.6,
     decel: 3.5,
-    headway: 1.0,
+    headway: 0.9,
     min_gap: 2.0,
     occupancy: 3.0,
     mass: 4500.0,

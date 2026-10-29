@@ -97,6 +97,10 @@ pub struct Vehicle {
     pub blocked: bool,
     /// Vehicle id this one is currently yielding to (diagnostics / UI).
     pub yield_to: Option<u64>,
+    /// Perception-reaction time before pulling away from a standstill (s).
+    pub reaction: f64,
+    /// Time spent wanting to move while still stopped.
+    go_t: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -494,6 +498,8 @@ impl Sim {
                 reason: Reason::Free,
                 blocked: false,
                 yield_to: None,
+                reaction: if p.kind == VKind::Emergency { 0.3 } else { 0.6 + 0.6 * self.misc.f64() },
+                go_t: 0.0,
             });
             let idx = self.vehicles.len() - 1;
             self.occ[self.vehicles[idx].route[0]].push(idx);
@@ -764,15 +770,23 @@ impl Sim {
             // A stopped vehicle that is itself waiting (behind a waiting leader, or
             // yielding to someone) is not arriving soon; ignoring it unless it is
             // physically in the zone breaks wait-for cycles.
-            if !occupying && w.v < 0.3 && (w.blocked || w.yield_to.is_some() || w.reason == Reason::Pedestrian) {
+            let idle = w.v < 0.3 && (w.blocked || w.yield_to.is_some() || w.reason == Reason::Pedestrian);
+            if !occupying && idle {
                 continue;
             }
             let wspec = w.spec();
             let wm = self.vmax_on(w, other);
             let tv_in = Self::eta(d_v - zv0m, w.v, wspec.accel, wm);
-            // ...and theirs assumes they may not speed up (they could be held by a leader).
-            let tv_out = Self::eta(d_v + zv1m + wspec.length, w.v, wspec.accel, wm)
-                .max((d_v + zv1m + wspec.length).max(0.0) / w.v.max(3.0));
+            // ...and theirs assumes they may not speed up (they could be held by a leader),
+            // must first react if stopped, and won't clear at all while waiting in the zone.
+            let react = if w.v < 0.1 { (w.reaction - w.go_t).max(0.0) } else { 0.0 };
+            let tv_out = if occupying && idle {
+                f64::INFINITY
+            } else {
+                react
+                    + Self::eta(d_v + zv1m + wspec.length, w.v, wspec.accel, wm)
+                        .max((d_v + zv1m + wspec.length).max(0.0) / w.v.max(3.0))
+            };
             let w_priority = if committed {
                 true
             } else if sw.rank > sa.rank {
@@ -799,6 +813,21 @@ impl Sim {
             }
         }
         None
+    }
+
+    /// A (nearly) stopped vehicle whose body is inside conflict zone `cid`, seen from
+    /// vehicle `i`'s side.
+    fn stalled_in_zone(&self, i: usize, cid: usize, buf: &mut Vec<(usize, f64)>) -> Option<usize> {
+        let a = &self.vehicles[i];
+        let c = &self.net.conflicts[cid];
+        let my_link = if Self::route_index(a, c.a).is_some() { c.a } else { c.b };
+        let (_, other, s_other) = c.side(my_link);
+        let (_, (zv0, zv1)) = c.zones(my_link);
+        self.threats(other, s_other, zv1, i, buf);
+        buf.iter().find(|&&(j, d_v)| {
+            let w = &self.vehicles[j];
+            w.v < 0.5 && d_v - zv0 < 0.3 && d_v + zv1 + w.len() > 0.0
+        }).map(|x| x.0)
     }
 
     /// Would every later conflict on link `lid` (beyond `s_from`) let us through now?
@@ -1016,9 +1045,22 @@ impl Sim {
         let mut done_idx = Vec::new();
         let mut person_delay = 0.0;
         for i in 0..self.vehicles.len() {
-            let acc = accs[i];
+            let mut acc = accs[i];
             let veh = &mut self.vehicles[i];
             let spec = veh.kind.spec();
+            // Drivers take a moment to react before pulling away (start-up lost time).
+            // While waiting the vehicle keeps re-deciding, so any gap it accepts is judged
+            // at the moment it actually moves.
+            if veh.v < 0.1 {
+                if acc > 0.0 {
+                    if veh.go_t < veh.reaction {
+                        veh.go_t += dt;
+                        acc = 0.0;
+                    }
+                } else {
+                    veh.go_t = 0.0;
+                }
+            }
             let v_old = veh.v;
             let mut v_new = v_old + acc * dt;
             let ds = if v_new < 0.0 {
@@ -1237,6 +1279,19 @@ impl Sim {
                     // others may have gone around it, so it must re-check before moving.
                     let stale = v.v < 0.3 && v.a <= 0.05 && d - zn > 0.3;
                     if !stale {
+                        // A commitment grants priority, not room: if someone has stalled
+                        // inside the zone since, stop short of it while we still can.
+                        if d - zn > 0.3 {
+                            if let Some(j) = self.stalled_in_zone(i, cid, buf) {
+                                let gap = d - zn - 0.8;
+                                if can_stop(gap) || v.v < 1.0 {
+                                    yield_to = Some(self.vehicles[j].id);
+                                    stale_drop.push(cid);
+                                    stop_gap = Some((gap, Reason::Yielding));
+                                    break 'outer;
+                                }
+                            }
+                        }
                         passing.push((cid, d, zone, zn));
                         continue;
                     }
@@ -1303,11 +1358,30 @@ impl Sim {
                 // Holding at the line: give back commitments made this step.
                 commits.clear();
             } else {
-                // Don't block the box: if stopping here would leave our body in an
-                // earlier conflict zone that live traffic needs, stop before it instead.
+                // Don't block the box: if stopping here would leave our body in a
+                // conflict zone that live traffic needs (including zones we would only
+                // creep into while waiting), stop before it instead.
+                let mut ahead = passing.clone();
+                let mut base = -v.s;
+                for &lid in &v.route[v.ri..] {
+                    let l = &self.net.links[lid];
+                    if base > gap || l.kind == LinkKind::Outbound {
+                        break;
+                    }
+                    for &cid in &l.conflicts {
+                        let c = &self.net.conflicts[cid];
+                        let ((zn, zone), _) = c.zones(lid);
+                        let d = base + c.side(lid).0;
+                        if d - zn < gap && d + zone + spec.length > 0.0 && !ahead.iter().any(|x| x.0 == cid) {
+                            ahead.push((cid, d, zone, zn));
+                        }
+                    }
+                    base += l.length();
+                }
+                ahead.sort_by(|a, b| (a.1 - a.3).partial_cmp(&(b.1 - b.3)).unwrap());
                 loop {
                     let mut changed = false;
-                    for &(cid, d, zone, zn) in passing.iter().rev() {
+                    for &(cid, d, zone, zn) in ahead.iter().rev() {
                         if drop.contains(&cid) || !(d - zn < gap && d + zone > gap - spec.length) {
                             continue;
                         }
