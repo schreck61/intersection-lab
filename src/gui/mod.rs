@@ -8,7 +8,7 @@ use crate::control::CtrlKind;
 use crate::sim::demand::{DemandConfig, Pattern, compass_index};
 use crate::sim::geom::v2;
 use crate::sim::network::{LayoutKind, Network, Turn};
-use crate::sim::sensors::{SensorConfig, Source};
+use crate::sim::sensors::{Conditions, SensorConfig, Source};
 use crate::sim::stats::{HIST_BIN, Summary, los};
 use crate::sim::vtypes::{ALL_KINDS, VKind};
 use crate::sim::{ControlMode, LeftMode, Sim};
@@ -140,6 +140,12 @@ impl App {
             };
         }
         self.ov.night = var("TS_NIGHT").is_some();
+        if let Some(c) = var("TS_COND").and_then(|v| Conditions::ALL.into_iter().find(|c| format!("{c:?}").eq_ignore_ascii_case(&v))) {
+            self.sim.sensors.conditions = c;
+        }
+        if let Some(f) = var("TS_LOOP_FAULT").and_then(|v| v.parse().ok()) {
+            self.sim.sensors.loop_fault = f;
+        }
         if let Some(p) = var("TS_SHOT") {
             let after = var("TS_SHOT_AFTER").and_then(|v| v.parse().ok()).unwrap_or(120.0);
             self.shot = Some((p, after));
@@ -397,6 +403,21 @@ impl App {
             ui.add_enabled(s.radar, egui::Slider::new(&mut s.radar_range, 80.0..=260.0).text("radar range m"));
             ui.checkbox(&mut s.cv, "Connected vehicles (V2I)");
             ui.add_enabled(s.cv, egui::Slider::new(&mut s.cv_rate, 0.0..=1.0).text("CV penetration"));
+            ui.checkbox(&mut s.realistic, "Field-realistic sensor errors")
+                .on_hover_text("Cameras miss vehicles (weather, night, range, behind trucks) and only read intent from turn signals; loops fail and miss motorcycles; radar and connected-vehicle data are noisy");
+            ui.add_enabled_ui(s.realistic, |ui| {
+                egui::ComboBox::from_label("conditions")
+                    .selected_text(s.conditions.name())
+                    .show_ui(ui, |ui| {
+                        for c in Conditions::ALL {
+                            ui.selectable_value(&mut s.conditions, c, c.name());
+                        }
+                    });
+                ui.add(egui::Slider::new(&mut s.loop_fault, 0.0..=0.5).text("faulty loop stations"))
+                    .on_hover_text("Share of loop stations stuck on or off. Detector diagnostics flag them after a while and put their lanes on recall (red cross).");
+                ui.add(egui::Slider::new(&mut s.signal_use, 0.0..=1.0).text("turn-signal use"))
+                    .on_hover_text("Drivers who don't signal look like through traffic to the camera");
+            });
             ui.label(RichText::new("Controllers only see these sensors — never ground truth. Try turning cameras/radar off and watch the adaptive controllers degrade.").small().color(Color32::from_gray(160)));
 
             ui.separator();

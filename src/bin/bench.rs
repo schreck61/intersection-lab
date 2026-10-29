@@ -8,10 +8,11 @@ use trafficsim::control::CtrlKind;
 use trafficsim::run_scenario;
 use trafficsim::sim::demand::{DemandConfig, Pattern};
 use trafficsim::sim::network::{LayoutKind, Network};
-use trafficsim::sim::sensors::SensorConfig;
+use trafficsim::sim::sensors::{Conditions, SensorConfig};
 use trafficsim::sim::ControlMode;
 
-/// How much does each sensor package help each sensor-driven controller?
+/// How much does each sensor package help each sensor-driven controller, with ideal
+/// and field-realistic sensors, across weather, and with failed loop detectors?
 fn sensor_study(kind: LayoutKind, minutes: f64, seeds: u64) {
     let net = Network::build(kind);
     let demand = DemandConfig::default_for(&net);
@@ -30,11 +31,40 @@ fn sensor_study(kind: LayoutKind, minutes: f64, seeds: u64) {
     cv_only.loops = false;
     cv_only.cv = true;
     cv_only.cv_rate = 1.0;
-    let packages = [("loops", loops), ("loops+camera", cam), ("+radar", rad), ("+30% CV", cv30), ("100% CV only", cv_only)];
-    println!("\n=== Sensor study: {} | person delay incl. unserved (s), {:.0} min x {} seeds ===", kind.name(), minutes, seeds);
+    let packages: Vec<(String, SensorConfig)> = vec![
+        ("loops".into(), loops.clone()),
+        ("loops+camera".into(), cam.clone()),
+        ("+radar".into(), rad.clone()),
+        ("+30% CV".into(), cv30),
+        ("100% CV only".into(), cv_only),
+        ("+radar IDEAL".into(), rad.clone().ideal()),
+    ];
+    let title = format!("Sensor packages (realistic errors, clear day; last column ideal sensors)");
+    table(kind, &title, &packages, &demand, minutes, seeds);
+
+    let mut conds: Vec<(String, SensorConfig)> = Conditions::ALL
+        .iter()
+        .map(|&c| {
+            let mut s = rad.clone();
+            s.conditions = c;
+            (c.name().to_string(), s)
+        })
+        .collect();
+    let mut faulty = loops.clone();
+    faulty.loop_fault = 0.25;
+    conds.push(("loops, 25% faulty".into(), faulty));
+    let mut fog_faulty = rad.clone();
+    fog_faulty.conditions = Conditions::Fog;
+    fog_faulty.loop_fault = 0.25;
+    conds.push(("fog + 25% faulty".into(), fog_faulty));
+    table(kind, "Weather and detector faults (loops + camera + radar unless noted)", &conds, &demand, minutes, seeds);
+}
+
+fn table(kind: LayoutKind, title: &str, packages: &[(String, SensorConfig)], demand: &DemandConfig, minutes: f64, seeds: u64) {
+    println!("\n=== {} | {title} | person delay incl. unserved (s), {:.0} min x {} seeds ===", kind.name(), minutes, seeds);
     print!("{:<14}", "controller");
-    for (n, _) in &packages {
-        print!(" {:>13}", n);
+    for (n, _) in packages {
+        print!(" {:>17}", n);
     }
     println!();
     for c in [CtrlKind::Actuated, CtrlKind::MaxPressure, CtrlKind::Predictive, CtrlKind::DeepRl] {
@@ -52,7 +82,7 @@ fn sensor_study(kind: LayoutKind, minutes: f64, seeds: u64) {
             .collect();
         print!("{:<14}", c.short());
         for h in hs {
-            print!(" {:>13.1}", h.join().unwrap());
+            print!(" {:>17.1}", h.join().unwrap());
         }
         println!();
     }

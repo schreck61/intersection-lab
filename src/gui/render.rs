@@ -587,6 +587,12 @@ fn paint_sensors(painter: &egui::Painter, dc: &DrawCtx) {
                 let pts = rect_pts(c, ax, 4.3, hw);
                 poly(painter, &cam, &pts, col);
                 painter.add(Shape::closed_line(pts.iter().map(|p| cam.to_screen(*p)).collect(), Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 200, 60, 150))));
+                if lo.fault {
+                    // Diagnostics flagged this station: red cross (lane on recall).
+                    let red = Stroke::new((0.25 * cam.scale).max(1.5), Color32::from_rgb(240, 60, 50));
+                    painter.line_segment([cam.to_screen(pts[0]), cam.to_screen(pts[2])], red);
+                    painter.line_segment([cam.to_screen(pts[1]), cam.to_screen(pts[3])], red);
+                }
                 // Advance point detector (flashes on actuation).
                 if cfg.adv_dist < len {
                     let c = l.path.point(len - cfg.adv_dist);
@@ -601,8 +607,9 @@ fn paint_sensors(painter: &egui::Painter, dc: &DrawCtx) {
         let ins = leg.in_side();
         let pole = leg.d * (leg.stop_dist + 1.5) + ins * (leg.in_width + 2.2);
         if cfg.camera {
-            // Field-of-view wedge covering the approach.
-            let far = leg.d * (leg.stop_dist + cfg.cam_range);
+            // Field-of-view wedge covering the approach (shrinks in poor visibility).
+            let range = if cfg.realistic { cfg.cam_range * cfg.conditions.camera().1 } else { cfg.cam_range };
+            let far = leg.d * (leg.stop_dist + range);
             let a = far + ins * (leg.in_width + 1.5);
             let b = far - ins * (leg.out_width * 0.2);
             painter.add(Shape::convex_polygon(

@@ -2,6 +2,7 @@
 //! min green, unit extension per actuation (passage time), gap-out / max-out,
 //! calls from stop-bar presence and pedestrian push buttons, and a conditional
 //! transit-priority green extension when a camera or connected bus is approaching.
+//! Detector stations flagged faulty by the diagnostics are placed on max recall.
 
 use super::{Brain, Controller, Ctx, stat};
 use crate::sim::network::{MStat, Network};
@@ -43,9 +44,15 @@ impl Actuated {
             return true; // detector failure => recall
         }
         let st = &ctx.net.stages[j];
-        (0..ctx.net.movements.len()).any(|m| {
-            st.stat[m].is_some() && (ctx.view.moves[m].stopbar || ctx.view.moves[m].queue >= 0.5)
-        }) || st.walk.iter().any(|&cw| ctx.view.ped_call[cw])
+        // Lanes flagged faulty by detector diagnostics are on recall.
+        let recall = ctx.net.legs.iter().flat_map(|l| &l.in_lanes).any(|&lane| {
+            ctx.view.lanes[lane].fault && ctx.net.links[lane].lane_moves.iter().any(|&m| st.stat[m].is_some())
+        });
+        recall
+            || (0..ctx.net.movements.len()).any(|m| {
+                st.stat[m].is_some() && (ctx.view.moves[m].stopbar || ctx.view.moves[m].queue >= 0.5)
+            })
+            || st.walk.iter().any(|&cw| ctx.view.ped_call[cw])
     }
 }
 
@@ -68,7 +75,9 @@ impl Controller for Actuated {
                 let moves = &ctx.net.links[lane].lane_moves;
                 let all = moves.iter().all(|&m| matches!(stat(ctx.net, cur, m), Some(MStat::G) | Some(MStat::Rt)));
                 if all {
-                    last_act = last_act.max(ctx.view.lanes[lane].last_pulse);
+                    // A faulty station is on max recall: it always extends.
+                    let lp = if ctx.view.lanes[lane].fault { ctx.t } else { ctx.view.lanes[lane].last_pulse };
+                    last_act = last_act.max(lp);
                 }
             }
         }
