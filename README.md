@@ -186,6 +186,9 @@ protected-only holds at 89 s and *Auto* (volume cross-product) at 112 s.
 
 ## What the experiments say
 
+A fuller write-up of every finding, with the commands that reproduce it, is in
+[docs/insights.md](docs/insights.md).
+
 * **Model-based adaptive control is the strong default.** Predictive MPC and Max-Pressure
   cut person delay 30–45% against an optimised Webster plan on the multi-lane layouts, and
   cut pedestrian waits by a third to a half.
