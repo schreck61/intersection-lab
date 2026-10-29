@@ -67,7 +67,7 @@ fn table(kind: LayoutKind, title: &str, packages: &[(String, SensorConfig)], dem
         print!(" {:>17}", n);
     }
     println!();
-    for c in [CtrlKind::Actuated, CtrlKind::MaxPressure, CtrlKind::Predictive, CtrlKind::DeepRl] {
+    for c in [CtrlKind::Actuated, CtrlKind::MaxPressure, CtrlKind::Predictive, CtrlKind::DeepRl, CtrlKind::Hybrid] {
         let hs: Vec<_> = packages
             .iter()
             .map(|(_, s)| {

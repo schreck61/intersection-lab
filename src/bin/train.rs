@@ -91,11 +91,11 @@ impl Agent {
             Agent::Hybrid(a) => a.new_episode(net),
         }
     }
-    fn save(&self, layout: LayoutKind) {
+    fn save(&self, layout: LayoutKind, score: f64) {
         std::fs::create_dir_all("weights").ok();
         match self {
             Agent::Dqn(a) => a.save(&rl::weights_path(layout.key())).ok(),
-            Agent::Hybrid(a) => a.save(&hybrid::weights_path(layout.key())).ok(),
+            Agent::Hybrid(a) => a.save(&hybrid::weights_path(layout.key()), score, true).ok(),
         };
     }
     fn loss(&self) -> f32 {
@@ -140,10 +140,7 @@ fn evaluate(net: &Network, agent: Agent, secs: f64) -> (f64, Agent) {
     let mut agent = agent;
     let saved = agent.schedule();
     agent.set(false, 0.0, 0.0);
-    if let Agent::Hybrid(h) = &mut agent {
-        // Greedy evaluation must use the network even before weights are saved.
-        h.loaded_from.get_or_insert_with(|| "(training)".into());
-    }
+    let had_model = if let Agent::Hybrid(h) = &mut agent { std::mem::replace(&mut h.has_model, true) } else { false };
     let mut total = 0.0;
     for k in 0..EVAL_N {
         agent.new_episode(net);
@@ -152,6 +149,9 @@ fn evaluate(net: &Network, agent: Agent, secs: f64) -> (f64, Agent) {
         agent = back;
     }
     agent.set(saved.0, saved.1, saved.2);
+    if let Agent::Hybrid(h) = &mut agent {
+        h.has_model = had_model;
+    }
     (total / EVAL_N as f64, agent)
 }
 
@@ -179,6 +179,7 @@ fn train(kind: LayoutKind, episodes: u64, secs: f64, which: &str) {
         base_pred
     );
     let hybrid = which == "hybrid";
+    let mut base = (f64::INFINITY, hybrid::DEFAULT_ACTION);
     if hybrid {
         // The bar the agent must clear to add anything: the best single tuning.
         let scores: Vec<(f64, usize)> = (0..hybrid::N_ACTIONS)
@@ -190,6 +191,7 @@ fn train(kind: LayoutKind, episodes: u64, secs: f64, which: &str) {
             })
             .collect();
         let best_static = scores.iter().copied().fold((f64::INFINITY, 0), |a, b| if b.0 < a.0 { b } else { a });
+        base = best_static;
         println!(
             "[{}:hybrid] best static tuning: {} -> {:.1} s (default tuning {:.1} s)",
             kind.key(),
@@ -210,6 +212,16 @@ fn train(kind: LayoutKind, episodes: u64, secs: f64, which: &str) {
     };
     if let Agent::Dqn(a) = &mut agent {
         a.set_expert_predictive(&net);
+    }
+    if let Agent::Hybrid(h) = &mut agent {
+        // The base tuning is the exploration expert and the score to beat; save it now
+        // so the hybrid falls back to it if no network does better.
+        h.base_action = base.1;
+        if !resume {
+            best = base.0;
+            std::fs::create_dir_all("weights").ok();
+            h.save(&hybrid::weights_path(kind.key()), base.0, false).ok();
+        }
     }
     agent.set(true, 0.0, 0.0);
     if resume {
@@ -246,7 +258,7 @@ fn train(kind: LayoutKind, episodes: u64, secs: f64, which: &str) {
             agent = back;
             let saved = if score < best {
                 best = score;
-                agent.save(kind);
+                agent.save(kind, score);
                 " (saved)"
             } else {
                 ""

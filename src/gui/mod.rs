@@ -661,7 +661,7 @@ impl App {
                     if ui.button("💾 Save weights").clicked() {
                         let p = crate::control::hybrid::weights_path(layout.key());
                         std::fs::create_dir_all(p.parent().unwrap()).ok();
-                        saved = Some(h.save(&p).map(|_| p.display().to_string()));
+                        saved = Some(h.save(&p, f64::NAN, true).map(|_| p.display().to_string()));
                     }
                 }
                 if let Some(r) = saved {
@@ -984,7 +984,7 @@ impl App {
                 ("all + 30% CV", cv),
                 ("100% connected vehicles", cv_only),
             ];
-            for c in [CtrlKind::Actuated, CtrlKind::MaxPressure, CtrlKind::Predictive, CtrlKind::DeepRl] {
+            for c in [CtrlKind::Actuated, CtrlKind::MaxPressure, CtrlKind::Predictive, CtrlKind::DeepRl, CtrlKind::Hybrid] {
                 for (name, s) in &packages {
                     jobs.push((format!("{} · {}", c.short(), name), ControlMode::Signal, c, s.clone()));
                 }

@@ -3,13 +3,15 @@
 //! traffic state, choosing its fairness weight, hold/switch bias and maximum green.
 //!
 //! The learned part never touches the signal directly, so the planner's guarantees
-//! (feasible schedules, clearance intervals, max green) are kept; the default tuning is
-//! one of the agent's actions, so the hybrid can only add to the planner's judgement.
+//! (feasible schedules, clearance intervals, max green) are kept. Training first finds
+//! the best single tuning for the layout (the "base"); the network is kept only if it
+//! beats that base on the evaluation scenarios, otherwise the hybrid runs the base.
 
 use super::predictive::Predictive;
 use super::rl::{GAMMA_PER_2S, REWARD_SCALE, RlController};
 use super::{Brain, Controller, Ctx};
 use crate::rl::dqn::{Dqn, SavedModel, Transition, argmax};
+use serde::{Deserialize, Serialize};
 use crate::sim::network::Network;
 use crate::sim::rng::Rng;
 use std::path::PathBuf;
@@ -44,8 +46,20 @@ pub fn weights_path(layout: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("weights").join(file)
 }
 
+/// On-disk form: the best static tuning plus, if it earned its place, the network.
+#[derive(Serialize, Deserialize)]
+pub struct SavedHybrid {
+    pub base_action: usize,
+    pub base_score: f64,
+    pub model: Option<SavedModel>,
+}
+
 pub struct Hybrid {
     pub planner: Predictive,
+    /// Tuning used when the network has nothing better to say.
+    pub base_action: usize,
+    /// The network is trained (loaded or being trained) and may choose tunings.
+    pub has_model: bool,
     pub agent: Dqn,
     pub learning: bool,
     pub epsilon: f64,
@@ -73,6 +87,8 @@ impl Hybrid {
     fn with_agent(net: &Network, agent: Dqn) -> Self {
         Hybrid {
             planner: Predictive::new(net),
+            base_action: DEFAULT_ACTION,
+            has_model: false,
             agent,
             learning: false,
             epsilon: 0.0,
@@ -91,34 +107,40 @@ impl Hybrid {
         }
     }
 
-    /// Trained weights if present; otherwise an untrained agent that keeps the
-    /// planner's default tuning (it behaves exactly like the predictive controller).
+    /// Trained base tuning and network if present; otherwise an untrained agent that
+    /// keeps the planner's default tuning (it behaves exactly like the predictive
+    /// controller).
     pub fn load_or_new(net: &Network) -> Self {
         let path = weights_path(net.kind.key());
         if let Ok(txt) = std::fs::read_to_string(&path) {
-            if let Ok(m) = serde_json::from_str::<SavedModel>(&txt) {
-                if m.n_in == n_inputs(net) && m.n_out == N_ACTIONS {
-                    let mut h = Self::with_agent(net, Dqn::from_net(m.net, Rng::new(11)));
-                    h.episodes = m.episodes;
-                    h.loaded_from = Some(path.display().to_string());
-                    return h;
-                }
+            if let Ok(sv) = serde_json::from_str::<SavedHybrid>(&txt) {
+                let mut h = match sv.model {
+                    Some(m) if m.n_in == n_inputs(net) && m.n_out == N_ACTIONS => {
+                        let mut h = Self::with_agent(net, Dqn::from_net(m.net, Rng::new(11)));
+                        h.episodes = m.episodes;
+                        h.has_model = true;
+                        h
+                    }
+                    _ => Self::new(net, 11),
+                };
+                h.base_action = sv.base_action.min(N_ACTIONS - 1);
+                h.loaded_from = Some(path.display().to_string());
+                return h;
             }
         }
-        let mut h = Self::new(net, 11);
-        h.expert_prob = 1.0;
-        h
+        Self::new(net, 11)
     }
 
-    pub fn save(&self, path: &std::path::Path) -> std::io::Result<()> {
-        let m = SavedModel {
+    pub fn save(&self, path: &std::path::Path, base_score: f64, with_model: bool) -> std::io::Result<()> {
+        let model = with_model.then(|| SavedModel {
             layout: self.layout.clone(),
             n_in: self.agent.online.n_in(),
             n_out: self.agent.online.n_out(),
             episodes: self.episodes,
             net: self.agent.online.clone(),
-        };
-        std::fs::write(path, serde_json::to_string(&m).unwrap())
+        });
+        let sv = SavedHybrid { base_action: self.base_action, base_score, model };
+        std::fs::write(path, serde_json::to_string(&sv).unwrap())
     }
 
     pub fn new_episode(&mut self, net: &Network) {
@@ -126,11 +148,7 @@ impl Hybrid {
         self.prev = None;
         self.r_acc = 0.0;
         self.next_decision = 0.0;
-        self.action = DEFAULT_ACTION;
-    }
-
-    fn untrained(&self) -> bool {
-        self.loaded_from.is_none() && !self.learning
+        self.action = self.base_action;
     }
 
     fn apply(&mut self, a: usize) {
@@ -174,15 +192,15 @@ impl Controller for Hybrid {
             self.last_q = self.agent.q(&s);
             let a = if let Some(a) = self.fixed_action {
                 a
-            } else if self.untrained() {
-                DEFAULT_ACTION
             } else if self.learning && self.rng.chance(self.expert_prob) {
-                DEFAULT_ACTION
+                self.base_action
             } else if self.learning && self.rng.chance(self.epsilon) {
                 // Explore near the current tuning more often than far from it.
                 if self.rng.chance(0.5) { self.action } else { self.rng.below(N_ACTIONS) }
-            } else {
+            } else if self.has_model || self.learning {
                 argmax(&self.last_q)
+            } else {
+                self.base_action
             };
             self.apply(a);
             self.decisions += 1;
@@ -194,10 +212,11 @@ impl Controller for Hybrid {
     fn brain(&self) -> Brain {
         let inner = self.planner.brain();
         let mut notes = vec![format!("RL tuning now: {}", preset_name(self.action))];
-        notes.push(match &self.loaded_from {
-            Some(p) => format!("trained weights: {} episodes ({})", self.episodes, p.rsplit('/').next().unwrap_or(p)),
-            None if self.learning => "learning online from scratch".into(),
-            None => "no trained weights: running the planner's default tuning".into(),
+        notes.push(match (&self.loaded_from, self.has_model) {
+            (Some(_), true) => format!("trained network ({} episodes) over base tuning {}", self.episodes, preset_name(self.base_action)),
+            (Some(_), false) => format!("no network beat the best static tuning; running {}", preset_name(self.base_action)),
+            (None, _) if self.learning => "learning online from scratch".into(),
+            (None, _) => "no trained weights: running the planner's default tuning".into(),
         });
         if !self.last_q.is_empty() {
             let mut order: Vec<usize> = (0..N_ACTIONS).collect();
