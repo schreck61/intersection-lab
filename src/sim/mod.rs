@@ -60,6 +60,28 @@ impl ControlMode {
     }
 }
 
+/// Left-turn phasing on approaches with a dedicated left lane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LeftMode {
+    /// Protected green arrow plus permissive flashing yellow arrow.
+    Fya,
+    /// Green arrow only.
+    Protected,
+    /// Switch each left between the two by the left x opposing volume cross-product.
+    Auto,
+}
+
+impl LeftMode {
+    pub const ALL: [LeftMode; 3] = [LeftMode::Fya, LeftMode::Protected, LeftMode::Auto];
+    pub fn name(self) -> &'static str {
+        match self {
+            LeftMode::Fya => "Protected + permissive (FYA)",
+            LeftMode::Protected => "Protected only",
+            LeftMode::Auto => "Auto (volume cross-product)",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Vehicle {
     pub id: u64,
@@ -203,6 +225,11 @@ pub struct Sim {
     /// Blank-out "NO TURN ON RED" sign lit while pedestrians wait at or cross a
     /// crosswalk the right turn passes.
     pub ntor_peds: bool,
+    pub left_mode: LeftMode,
+    /// Per movement: left turn currently running protected-only.
+    pub left_protected: Vec<bool>,
+    base_stages: Vec<network::Stage>,
+    left_eval_t: f64,
     pub preemption: bool,
     pub max_wait_guard: f64,
     pub preempt_active: bool,
@@ -234,6 +261,8 @@ impl Sim {
         let n_legs = net.legs.len();
         let n_links = net.links.len();
         let view = SensorView::new(&net);
+        let base_stages = net.stages.clone();
+        let n_moves = net.movements.len();
         Sim {
             demand_gen: DemandGen::new(seed, n_legs),
             queues: vec![VecDeque::new(); n_legs],
@@ -253,6 +282,10 @@ impl Sim {
             view,
             rtor: true,
             ntor_peds: false,
+            left_mode: LeftMode::Fya,
+            left_protected: vec![false; n_moves],
+            base_stages,
+            left_eval_t: 0.0,
             preemption: true,
             max_wait_guard: 150.0,
             preempt_active: false,
@@ -340,6 +373,7 @@ impl Sim {
         self.sense();
         // 4. Control.
         if self.signalized() {
+            self.update_left_phasing();
             self.control_signal();
             self.signal.step(&self.net, dt, self.t + dt);
         }
@@ -356,6 +390,72 @@ impl Sim {
         let n = (seconds / self.dt).round() as usize;
         for _ in 0..n {
             self.step();
+        }
+    }
+
+    /// Apply the left-turn phasing mode. A left changes between permissive and
+    /// protected-only only while it is red, so no indication changes abruptly.
+    fn update_left_phasing(&mut self) {
+        if self.left_mode == LeftMode::Fya && !self.left_protected.iter().any(|&p| p) {
+            return;
+        }
+        let auto_due = self.left_mode == LeftMode::Auto && self.t >= self.left_eval_t;
+        if auto_due {
+            self.left_eval_t = self.t + 30.0;
+        }
+        let mut changed = false;
+        for m in 0..self.net.movements.len() {
+            let want = match self.left_mode {
+                LeftMode::Fya => false,
+                LeftMode::Protected => self.net.fya_eligible(&self.base_stages, m),
+                LeftMode::Auto if auto_due && self.net.fya_eligible(&self.base_stages, m) => {
+                    // Agency rule of thumb: protect the left when (left volume) x (opposing
+                    // through volume) exceeds 50k / 90k / 110k for 1 / 2 / 3+ opposing lanes.
+                    let mv = &self.net.movements[m];
+                    let opp_leg = self.net.legs.iter().position(|l| l.d.dist(-self.net.legs[mv.leg].d) < 1e-6);
+                    let opp = opp_leg.and_then(|l| self.net.movement_for(l, Turn::T));
+                    let window = 600.0_f64.min(self.t.max(60.0));
+                    let vol = |k: usize| {
+                        self.stats.done.iter().rev().take_while(|d| d.t_exit > self.t - window).filter(|d| d.movement == k).count()
+                            as f64
+                            * 3600.0
+                            / window
+                    };
+                    match opp {
+                        Some(o) => {
+                            let lanes = self.net.movements[o].routes.len();
+                            let thr = match lanes {
+                                1 => 50_000.0,
+                                2 => 90_000.0,
+                                _ => 110_000.0,
+                            };
+                            let x = vol(m) * vol(o);
+                            if self.left_protected[m] { x > 0.8 * thr } else { x > thr }
+                        }
+                        None => false,
+                    }
+                }
+                LeftMode::Auto => self.left_protected[m],
+            };
+            if want != self.left_protected[m] && self.signal.status(&self.net, m) == Sig::R && self.signal.next == self.signal.stage {
+                self.left_protected[m] = want;
+                changed = true;
+            }
+        }
+        if changed {
+            for (st, base) in self.base_stages.iter().enumerate() {
+                let stat: Vec<_> = base
+                    .stat
+                    .iter()
+                    .enumerate()
+                    .map(|(m, &x)| if self.left_protected[m] && x == Some(network::MStat::P) { None } else { x })
+                    .collect();
+                self.net.stages[st].walk = self.net.walk_for(&stat);
+                self.net.stages[st].stat = stat;
+            }
+            if self.ctrl_kind == CtrlKind::Fixed {
+                self.controller = control::make(CtrlKind::Fixed, &self.net, &self.demand);
+            }
         }
     }
 
@@ -1247,8 +1347,10 @@ impl Sim {
             if self.signalized() && self.mode == ControlMode::Signal {
                 let sig = self.signal.status(&self.net, v.movement);
                 if sig == Sig::Y && !matches!(v.yellow_dec, Some((id, _)) if id == self.signal.change_id) {
+                    // Dilemma zone: drivers less than ~2 s from the line (or who would
+                    // need hard braking) continue; the all-red covers their clearance.
                     let need = v.v * v.v / (2.0 * d_line.max(0.1));
-                    let go = need > 3.4 || d_line < 1.0;
+                    let go = need > 3.0 || d_line < 1.0 || (v.v > 2.0 && d_line / v.v < 2.0);
                     ydec = Some((self.signal.change_id, go));
                     if go {
                         // Decided this step; treat as permitted.

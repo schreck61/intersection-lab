@@ -11,7 +11,7 @@ use crate::sim::network::{LayoutKind, Network, Turn};
 use crate::sim::sensors::{SensorConfig, Source};
 use crate::sim::stats::{HIST_BIN, Summary, los};
 use crate::sim::vtypes::{ALL_KINDS, VKind};
-use crate::sim::{ControlMode, Sim};
+use crate::sim::{ControlMode, LeftMode, Sim};
 use egui::{Color32, RichText, Sense, Ui, vec2};
 use render::{Camera, ColorBy, DrawCtx, Overlays, Scene};
 use std::sync::mpsc;
@@ -156,7 +156,7 @@ impl App {
         };
         let sensors = self.sim.sensors.clone();
         let (rtor, pre, guard) = (self.sim.rtor, self.sim.preemption, self.sim.max_wait_guard);
-        let (lpi, ntor) = (self.sim.signal.lpi, self.sim.ntor_peds);
+        let (lpi, ntor, left) = (self.sim.signal.lpi, self.sim.ntor_peds, self.sim.left_mode);
         if !ControlMode::options(self.layout).contains(&self.mode) {
             self.mode = ControlMode::options(self.layout)[0];
         }
@@ -167,6 +167,7 @@ impl App {
         self.sim.max_wait_guard = guard;
         self.sim.signal.lpi = lpi;
         self.sim.ntor_peds = ntor;
+        self.sim.left_mode = left;
         self.sim.check_safety = true;
         if self.scene.kind != self.layout {
             self.scene = Scene::build(&self.sim.net);
@@ -406,6 +407,24 @@ impl App {
                 .on_hover_text("Blank-out NO TURN ON RED sign lit while someone waits at or crosses a crosswalk the turn passes");
             ui.add(egui::Slider::new(&mut self.sim.signal.lpi, 0.0..=7.0).step_by(0.5).text("leading ped interval s"))
                 .on_hover_text("WALK starts this long before turning traffic that crosses it gets green (0 = off)");
+            if self.sim.signalized() {
+                egui::ComboBox::from_label("left turns")
+                    .selected_text(self.sim.left_mode.name())
+                    .show_ui(ui, |ui| {
+                        for m in LeftMode::ALL {
+                            ui.selectable_value(&mut self.sim.left_mode, m, m.name());
+                        }
+                    })
+                    .response
+                    .on_hover_text("Lefts with their own lane: green arrow plus flashing yellow arrow (yield to oncoming), green arrow only, or switch automatically when left x opposing volume is high");
+                let prot: Vec<&str> = (0..self.sim.net.movements.len())
+                    .filter(|&m| self.sim.left_protected[m])
+                    .map(|m| self.sim.net.movements[m].name.as_str())
+                    .collect();
+                if self.sim.left_mode != LeftMode::Fya {
+                    ui.label(RichText::new(format!("protected-only now: {}", if prot.is_empty() { "none".into() } else { prot.join(", ") })).small().color(Color32::from_gray(160)));
+                }
+            }
             ui.add(egui::Slider::new(&mut self.sim.max_wait_guard, 0.0..=300.0).text("max-wait guard s"))
                 .on_hover_text("Adaptive controllers are forced to serve any movement waiting longer than this (0 = off)");
 

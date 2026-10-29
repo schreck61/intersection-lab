@@ -422,20 +422,33 @@ impl Network {
                     }
                 }
             }
-            // A crosswalk may walk unless a protected (G) movement crosses it or any
-            // served movement enters the intersection across it.
-            let walk = (0..self.crosswalks.len())
-                .filter(|&cw| {
-                    let leg = self.crosswalks[cw].leg;
-                    !self.movements.iter().any(|m| {
-                        stat[m.id].is_some()
-                            && m.crosswalks.contains(&cw)
-                            && (stat[m.id] == Some(MStat::G) || m.leg == leg)
-                    })
-                })
-                .collect();
+            let walk = self.walk_for(&stat);
             self.stages.push(Stage { name: name.to_string(), stat, walk });
         }
+    }
+
+    /// Crosswalks that may walk during a stage: all except those a protected (G)
+    /// movement crosses or that any served movement enters the intersection across.
+    pub fn walk_for(&self, stat: &[Option<MStat>]) -> Vec<usize> {
+        (0..self.crosswalks.len())
+            .filter(|&cw| {
+                let leg = self.crosswalks[cw].leg;
+                !self.movements.iter().any(|m| {
+                    stat[m.id].is_some() && m.crosswalks.contains(&cw) && (stat[m.id] == Some(MStat::G) || m.leg == leg)
+                })
+            })
+            .collect()
+    }
+
+    /// Left turns that can run protected-only: a dedicated left lane, a stage with a
+    /// green arrow and a stage where the left is permissive (flashing yellow arrow).
+    /// `stages` is the original stage plan (before any left is made protected-only).
+    pub fn fya_eligible(&self, stages: &[Stage], m: usize) -> bool {
+        let mv = &self.movements[m];
+        mv.turn == Turn::L
+            && self.legs[mv.leg].in_lanes.iter().any(|&l| self.links[l].lane_moves == [m])
+            && stages.iter().any(|s| s.stat[m] == Some(MStat::G))
+            && stages.iter().any(|s| s.stat[m] == Some(MStat::P))
     }
 }
 

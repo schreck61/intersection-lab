@@ -652,6 +652,9 @@ fn paint_signals(painter: &egui::Painter, dc: &DrawCtx) {
                     let moves = &l.lane_moves;
                     let sigs: Vec<(Turn, Sig)> = moves.iter().map(|&m| (net.movements[m].turn, sim.signal.status(net, m))).collect();
                     let main = sigs.iter().find(|s| s.0 == Turn::T).or_else(|| sigs.first()).map(|s| s.1).unwrap_or(Sig::R);
+                    // A turn-only lane has an arrow head: its permissive phase is the
+                    // flashing yellow arrow alone, never a green ball.
+                    let turn_only = !sigs.iter().any(|s| s.0 == Turn::T);
                     let base = l.path.point(l.length() + 0.8);
                     let ax = l.path.tangent(l.length());
                     let n = ax.right();
@@ -662,7 +665,8 @@ fn paint_signals(painter: &egui::Painter, dc: &DrawCtx) {
                     for (s, off) in lamps {
                         let p = base + ax.left() * off;
                         let lit = match (s, main) {
-                            (Sig::G, Sig::G | Sig::Rt | Sig::P) => true,
+                            (Sig::G, Sig::P) => !turn_only,
+                            (Sig::G, Sig::G | Sig::Rt) => true,
                             (a, b) => a == b,
                         };
                         let col = if lit { sig_color(main) } else { shade(sig_color(s), 0.25) };

@@ -5,8 +5,17 @@ use trafficsim::sim::{ControlMode, Sim};
 fn main() {
     let seeds: u64 = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(4);
     let scale: f64 = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(1.0);
-    // Optional: "peds" turns on the pedestrian treatments (LPI 4 s + no turn on red with peds).
-    let peds = std::env::args().nth(3).is_some_and(|a| a == "peds");
+    // Optional comma-separated options: "peds" turns on the pedestrian treatments (LPI 4 s +
+    // no turn on red with peds, 4x pedestrians); "prot" / "auto" set the left-turn mode.
+    let opts = std::env::args().nth(3).unwrap_or_default();
+    let peds = opts.split(',').any(|a| a == "peds");
+    let left = if opts.split(',').any(|a| a == "prot") {
+        trafficsim::sim::LeftMode::Protected
+    } else if opts.split(',').any(|a| a == "auto") {
+        trafficsim::sim::LeftMode::Auto
+    } else {
+        trafficsim::sim::LeftMode::Fya
+    };
     let mut jobs = vec![];
     for kind in LayoutKind::ALL {
         for mode in ControlMode::options(kind) {
@@ -18,6 +27,7 @@ fn main() {
                         let mut sim = Sim::new(kind, mode, c, 2000 + seed);
                         sim.check_safety = true;
                         sim.demand.scale = scale;
+                        sim.left_mode = left;
                         if peds {
                             sim.signal.lpi = 4.0;
                             sim.ntor_peds = true;
