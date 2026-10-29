@@ -193,6 +193,8 @@ pub struct LaneObs {
     pub fault: bool,
     /// Last time the station reported anything.
     pub last_activity: f64,
+    /// Last time a movement using this lane had green (for failed-detector fallback).
+    pub last_green: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -393,8 +395,12 @@ impl Sim {
                     }
                     // Diagnostics: max presence (stuck on) and no activity while the rest
                     // of the approach is busy (stuck off).
+                    // The no-activity timer scales with expected volume: ten expected
+                    // headways, between 2 and 15 minutes.
+                    let lane_flow: f64 = moves.iter().map(|&m| flows[m] / net.movements[m].routes.len().max(1) as f64).sum();
+                    let silent_limit = (10.0 * 3600.0 / lane_flow.max(1.0)).clamp(120.0, 900.0);
                     let stuck_on = lo.stopbar_since.is_some_and(|s0| t - s0 > 180.0);
-                    lo.fault = stuck_on || t - lo.last_activity > 600.0;
+                    lo.fault = stuck_on || t - lo.last_activity > silent_limit;
                     // Input-output counts drift when vehicles are missed: reset when the
                     // stop bar has been clear and nothing has arrived for a while.
                     if !occupied && t - lo.last_pulse > 15.0 {
@@ -420,13 +426,20 @@ impl Sim {
                     lo.pulses.pop_front();
                 }
                 // Loop-only estimates when no richer sensor covers the lane.
+                if self.signalized() && moves.iter().any(|&m| self.signal.status(net, m).is_green()) {
+                    lo.last_green = t;
+                }
                 if cfg.loops && !rich {
                     let mut est = (lo.count_io - rich_in_zone).max(0) as f64;
+                    let mut occ_wait = lo.stopbar_since.map(|s| t - s).unwrap_or(0.0);
                     if lo.fault {
-                        // No usable data: assume a modest standing queue (recall).
-                        est = est.max(2.0);
+                        // Failed detector: fall back to historical volume, i.e. the
+                        // vehicles expected to have arrived since the lane last had green.
+                        let lane_flow: f64 = moves.iter().map(|&m| flows[m] / net.movements[m].routes.len().max(1) as f64).sum();
+                        let since = t - lo.last_green;
+                        est = (lane_flow / 3600.0 * since).clamp(1.0, 25.0);
+                        occ_wait = since;
                     }
-                    let occ_wait = lo.stopbar_since.map(|s| t - s).unwrap_or(0.0);
                     let pulses: Vec<(f64, f64)> = lo.pulses.iter().copied().collect();
                     for &m in moves {
                         let share = flows[m] / total_flow;
