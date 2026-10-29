@@ -18,6 +18,7 @@ pub mod sensors;
 pub mod signal;
 pub mod stats;
 pub mod vtypes;
+pub mod world;
 
 use crate::control::{self, Controller, CtrlKind, Ctx};
 use demand::{DemandConfig, DemandGen, Pending};

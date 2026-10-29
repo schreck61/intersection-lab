@@ -11,6 +11,7 @@ use crate::sim::network::{LayoutKind, Network, Turn};
 use crate::sim::sensors::{Conditions, SensorConfig, Source};
 use crate::sim::stats::{HIST_BIN, Summary, los};
 use crate::sim::vtypes::{ALL_KINDS, VKind};
+use crate::sim::world::World;
 use crate::sim::{ControlMode, LeftMode, Sim};
 use egui::{Color32, RichText, Sense, Ui, vec2};
 use render::{Camera, ColorBy, DrawCtx, Overlays, Scene};
@@ -37,7 +38,14 @@ struct Bench {
 }
 
 pub struct App {
-    sim: Sim,
+    world: World,
+    /// Intersection whose statistics and controls the panels show.
+    focus: usize,
+    /// Side-by-side comparison: the same arrivals under another control strategy.
+    twin: Option<World>,
+    twin_mode: ControlMode,
+    twin_ctrl: CtrlKind,
+    twin_summary: Summary,
     scene: Scene,
     layout: LayoutKind,
     mode: ControlMode,
@@ -80,7 +88,12 @@ impl App {
         let scene = Scene::build(&sim.net);
         App {
             summary: Summary::default(),
-            sim,
+            world: World::single(sim),
+            focus: 0,
+            twin: None,
+            twin_mode: ControlMode::Signal,
+            twin_ctrl: CtrlKind::Fixed,
+            twin_summary: Summary::default(),
             scene,
             layout,
             mode: ControlMode::Signal,
@@ -109,8 +122,9 @@ impl App {
         .with_env()
     }
 
-    /// Optional overrides for scripted runs: TS_LAYOUT, TS_MODE, TS_CTRL, TS_SPEED,
-    /// TS_ZOOM, TS_COLOR, TS_NIGHT, TS_SHOT (png path) + TS_SHOT_AFTER (sim seconds).
+    /// Optional overrides for scripted runs: TS_LAYOUT, TS_MODE, TS_CTRL, TS_TWIN (B side:
+    /// a controller or allway/twoway), TS_SPEED, TS_ZOOM, TS_COLOR, TS_NIGHT, TS_COND,
+    /// TS_LOOP_FAULT, TS_SHOT (png path) + TS_SHOT_AFTER (sim seconds).
     fn with_env(mut self) -> Self {
         let var = |k: &str| std::env::var(k).ok();
         if let Some(l) = var("TS_LAYOUT").and_then(|v| LayoutKind::ALL.into_iter().find(|k| k.key() == v)) {
@@ -127,6 +141,13 @@ impl App {
         if let Some(c) = var("TS_CTRL").and_then(|v| CtrlKind::ALL.into_iter().find(|k| k.short() == v)) {
             self.ctrl = c;
         }
+        if let Some(b) = var("TS_TWIN") {
+            self.twin = Some(World::single(Sim::new(self.layout, ControlMode::Signal, CtrlKind::Fixed, 0)));
+            match CtrlKind::ALL.into_iter().find(|k| k.short() == b) {
+                Some(c) => self.twin_ctrl = c,
+                None => self.twin_mode = if b == "allway" { ControlMode::AllWayStop } else { ControlMode::TwoWayStop },
+            }
+        }
         self.rebuild(false);
         if let Some(s) = var("TS_SPEED").and_then(|v| v.parse().ok()) {
             self.speed = s;
@@ -141,10 +162,10 @@ impl App {
         }
         self.ov.night = var("TS_NIGHT").is_some();
         if let Some(c) = var("TS_COND").and_then(|v| Conditions::ALL.into_iter().find(|c| format!("{c:?}").eq_ignore_ascii_case(&v))) {
-            self.sim.sensors.conditions = c;
+            self.world.sims[self.focus].sensors.conditions = c;
         }
         if let Some(f) = var("TS_LOOP_FAULT").and_then(|v| v.parse().ok()) {
-            self.sim.sensors.loop_fault = f;
+            self.world.sims[self.focus].sensors.loop_fault = f;
         }
         if let Some(p) = var("TS_SHOT") {
             let after = var("TS_SHOT_AFTER").and_then(|v| v.parse().ok()).unwrap_or(120.0);
@@ -154,34 +175,74 @@ impl App {
     }
 
     fn rebuild(&mut self, keep_demand: bool) {
-        let net = Network::build(self.layout);
-        let demand = if keep_demand && self.sim.net.kind == self.layout {
-            self.sim.demand.clone()
-        } else {
-            DemandConfig::default_for(&net)
-        };
-        let sensors = self.sim.sensors.clone();
-        let (rtor, pre, guard) = (self.sim.rtor, self.sim.preemption, self.sim.max_wait_guard);
-        let (lpi, ntor, left) = (self.sim.signal.lpi, self.sim.ntor_peds, self.sim.left_mode);
         if !ControlMode::options(self.layout).contains(&self.mode) {
             self.mode = ControlMode::options(self.layout)[0];
         }
-        self.sim = Sim::with_demand(net, self.mode, self.ctrl, demand, self.seed);
-        self.sim.sensors = sensors;
-        self.sim.rtor = rtor;
-        self.sim.preemption = pre;
-        self.sim.max_wait_guard = guard;
-        self.sim.signal.lpi = lpi;
-        self.sim.ntor_peds = ntor;
-        self.sim.left_mode = left;
-        self.sim.check_safety = true;
+        let old = &self.world.sims[self.focus];
+        let net = Network::build(self.layout);
+        let demand = if keep_demand && old.net.kind == self.layout { old.demand.clone() } else { DemandConfig::default_for(&net) };
+        let template = Self::settings_of(old);
+        self.world = World::single(self.make_sim(net, self.mode, self.ctrl, demand, &template));
+        self.focus = 0;
+        self.rebuild_twin();
         if self.scene.kind != self.layout {
-            self.scene = Scene::build(&self.sim.net);
+            self.scene = Scene::build(&self.world.sims[0].net);
             self.fitted = false;
         }
         self.selected = None;
         self.stats_from = 0.0;
         self.summary = Summary::default();
+    }
+
+    /// The comparison world: identical layout, demand, seed and settings, but its own
+    /// control strategy.
+    fn rebuild_twin(&mut self) {
+        if self.twin.is_none() {
+            return;
+        }
+        if !ControlMode::options(self.layout).contains(&self.twin_mode) {
+            self.twin_mode = ControlMode::options(self.layout)[0];
+        }
+        let src = &self.world.sims[0];
+        let template = Self::settings_of(src);
+        let sim = self.make_sim(Network::build(self.layout), self.twin_mode, self.twin_ctrl, src.demand.clone(), &template);
+        self.twin = Some(World::single(sim));
+        self.twin_summary = Summary::default();
+    }
+
+    fn settings_of(s: &Sim) -> Sim {
+        // A throwaway carrier for the settings a rebuild keeps.
+        let mut t = Sim::new(LayoutKind::Town4, ControlMode::AllWayStop, CtrlKind::Fixed, 0);
+        t.sensors = s.sensors.clone();
+        t.rtor = s.rtor;
+        t.ntor_peds = s.ntor_peds;
+        t.signal.lpi = s.signal.lpi;
+        t.left_mode = s.left_mode;
+        t.preemption = s.preemption;
+        t.max_wait_guard = s.max_wait_guard;
+        t
+    }
+
+    fn make_sim(&self, net: Network, mode: ControlMode, ctrl: CtrlKind, demand: DemandConfig, settings: &Sim) -> Sim {
+        let mut sim = Sim::with_demand(net, mode, ctrl, demand, self.seed);
+        sim.sensors = settings.sensors.clone();
+        sim.rtor = settings.rtor;
+        sim.preemption = settings.preemption;
+        sim.max_wait_guard = settings.max_wait_guard;
+        sim.signal.lpi = settings.signal.lpi;
+        sim.ntor_peds = settings.ntor_peds;
+        sim.left_mode = settings.left_mode;
+        sim.check_safety = true;
+        sim
+    }
+
+    /// Propagate settings edited on the focused intersection to the rest of the world
+    /// and to the comparison twin.
+    fn sync_settings(&mut self) {
+        self.world.sync_settings(self.focus);
+        if let Some(t) = self.twin.as_mut() {
+            t.follow(&self.world);
+        }
     }
 
     fn notify(&mut self, s: impl Into<String>) {
@@ -198,9 +259,13 @@ impl App {
         }
         self.acc += real * self.speed as f64;
         let budget = Instant::now();
-        while self.acc >= self.sim.dt {
-            self.sim.step();
-            self.acc -= self.sim.dt;
+        let dt = self.world.dt();
+        while self.acc >= dt {
+            self.world.step();
+            if let Some(t) = self.twin.as_mut() {
+                t.step();
+            }
+            self.acc -= dt;
             if budget.elapsed().as_millis() > 30 {
                 self.acc = 0.0;
                 break;
@@ -211,7 +276,12 @@ impl App {
 
     fn refresh_summary(&mut self) {
         if self.summary_at.elapsed().as_millis() > 400 {
-            self.summary = self.sim.stats.summary(self.stats_from, self.sim.t, &self.sim.vehicles, &self.sim.queues);
+            let sim = &self.world.sims[self.focus];
+            self.summary = sim.stats.summary(self.stats_from, sim.t, &sim.vehicles, &sim.queues);
+            if let Some(tw) = &self.twin {
+                let s = &tw.sims[self.focus.min(tw.sims.len() - 1)];
+                self.twin_summary = s.stats.summary(self.stats_from, s.t, &s.vehicles, &s.queues);
+            }
             self.summary_at = Instant::now();
         }
     }
@@ -227,7 +297,10 @@ impl App {
             }
             if ui.button("⏭ Step").on_hover_text("Advance 1 s").clicked() {
                 for _ in 0..10 {
-                    self.sim.step();
+                    self.world.step();
+                    if let Some(t) = self.twin.as_mut() {
+                        t.step();
+                    }
                 }
             }
             ui.label("Speed");
@@ -271,13 +344,16 @@ impl App {
             }
             if self.tool == Tool::Vehicle {
                 ui.separator();
-                for li in 0..self.sim.net.legs.len() {
+                for li in 0..self.world.sims[self.focus].net.legs.len() {
                     let (letter, bound) = {
-                        let leg = &self.sim.net.legs[li];
+                        let leg = &self.world.sims[self.focus].net.legs[li];
                         (leg.compass.letter(), leg.compass.bound())
                     };
                     if ui.button(format!("+ {letter}")).on_hover_text(format!("{bound} approach")).clicked() {
-                        let ok = self.sim.spawn_manual(li, self.spawn_kind, self.spawn_turn);
+                        let ok = self.world.sims[self.focus].spawn_manual(li, self.spawn_kind, self.spawn_turn);
+                        if let Some(t) = self.twin.as_mut() {
+                            t.sims[self.focus].spawn_manual(li, self.spawn_kind, self.spawn_turn);
+                        }
                         if !ok {
                             self.notify(format!("{} has no {} movement", bound, self.spawn_turn.name()));
                         }
@@ -332,7 +408,7 @@ impl App {
                 if c != self.ctrl {
                     // Hot-swap: traffic keeps flowing, only the brain changes.
                     self.ctrl = c;
-                    self.sim.set_controller(c);
+                    self.world.sims[self.focus].set_controller(c);
                     self.notify(format!("Controller switched live to {}", c.name()));
                 }
                 ui.label(RichText::new(self.ctrl.description()).small().color(Color32::from_gray(170)));
@@ -344,11 +420,49 @@ impl App {
                     self.rebuild(true);
                 }
             });
+            let mut compare = self.twin.is_some();
+            if ui
+                .checkbox(&mut compare, "Compare side by side")
+                .on_hover_text("Run a second copy with the same arrivals under another strategy (restarts both)")
+                .changed()
+            {
+                self.twin = if compare { Some(World::single(Sim::new(self.layout, ControlMode::Signal, CtrlKind::Fixed, 0))) } else { None };
+                self.rebuild(true);
+            }
+            if self.twin.is_some() {
+                let (mut m, mut c) = (self.twin_mode, self.twin_ctrl);
+                ui.horizontal(|ui| {
+                    ui.label("B:");
+                    egui::ComboBox::from_id_salt("twin_mode").selected_text(m.name()).width(120.0).show_ui(ui, |ui| {
+                        for x in ControlMode::options(self.layout) {
+                            ui.selectable_value(&mut m, x, x.name());
+                        }
+                    });
+                    if m == ControlMode::Signal {
+                        egui::ComboBox::from_id_salt("twin_ctrl").selected_text(c.short()).width(110.0).show_ui(ui, |ui| {
+                            for k in CtrlKind::ALL {
+                                ui.selectable_value(&mut c, k, k.name());
+                            }
+                        });
+                    }
+                });
+                if m != self.twin_mode {
+                    self.twin_mode = m;
+                    self.rebuild(true);
+                } else if c != self.twin_ctrl {
+                    self.twin_ctrl = c;
+                    if let Some(t) = self.twin.as_mut() {
+                        for s in &mut t.sims {
+                            s.set_controller(c);
+                        }
+                    }
+                }
+            }
 
             ui.separator();
             ui.heading("Demand");
             let mut changed = false;
-            let d = &mut self.sim.demand;
+            let d = &mut self.world.sims[self.focus].demand;
             changed |= ui.add(egui::Slider::new(&mut d.scale, 0.0..=2.0).text("demand ×")).changed();
             let mut pat = d.pattern;
             ui.label("Arrivals");
@@ -363,11 +477,12 @@ impl App {
                 d.pattern = pat;
                 changed = true;
             }
-            for li in 0..self.sim.net.legs.len() {
-                let leg = &self.sim.net.legs[li];
+            for li in 0..self.world.sims[self.focus].net.legs.len() {
+                let sim = &mut self.world.sims[self.focus];
+                let leg = &sim.net.legs[li];
                 let ci = compass_index(leg.compass);
                 let turns = leg.turns();
-                let d = &mut self.sim.demand;
+                let d = &mut sim.demand;
                 egui::CollapsingHeader::new(format!("{} — {:.0} veh/h", leg.compass.bound(), d.rate[ci] * d.scale))
                     .id_salt(("leg", li))
                     .show(ui, |ui| {
@@ -381,20 +496,27 @@ impl App {
             }
             egui::CollapsingHeader::new("Vehicle mix").show(ui, |ui| {
                 for k in ALL_KINDS {
-                    changed |= ui.add(egui::Slider::new(&mut self.sim.demand.mix[k.index()], 0.0..=1.0).text(k.name())).changed();
+                    changed |= ui.add(egui::Slider::new(&mut self.world.sims[self.focus].demand.mix[k.index()], 0.0..=1.0).text(k.name())).changed();
                 }
             });
-            if !self.sim.net.crosswalks.is_empty() {
-                changed |= ui.add(egui::Slider::new(&mut self.sim.demand.ped_rate, 0.0..=600.0).text("peds/h").step_by(5.0)).changed();
+            if !self.world.sims[self.focus].net.crosswalks.is_empty() {
+                changed |= ui.add(egui::Slider::new(&mut self.world.sims[self.focus].demand.ped_rate, 0.0..=600.0).text("peds/h").step_by(5.0)).changed();
             }
-            if changed && self.ctrl == CtrlKind::Fixed && self.mode == ControlMode::Signal {
+            if changed {
                 // Fixed-time plans are re-optimised from the new demand (Webster).
-                self.sim.set_controller(CtrlKind::Fixed);
+                self.sync_settings();
+                for w in std::iter::once(&mut self.world).chain(self.twin.as_mut()) {
+                    for sim in &mut w.sims {
+                        if sim.ctrl_kind == CtrlKind::Fixed && sim.signalized() {
+                            sim.set_controller(CtrlKind::Fixed);
+                        }
+                    }
+                }
             }
 
             ui.separator();
             ui.heading("Sensors");
-            let s = &mut self.sim.sensors;
+            let s = &mut self.world.sims[self.focus].sensors;
             ui.checkbox(&mut s.loops, "Inductive loops (stop-bar + advance)");
             ui.add_enabled(s.loops, egui::Slider::new(&mut s.adv_dist, 20.0..=120.0).text("advance loop m"));
             ui.checkbox(&mut s.camera, "Intersection cameras (video analytics)");
@@ -422,38 +544,38 @@ impl App {
 
             ui.separator();
             ui.heading("Operations");
-            ui.checkbox(&mut self.sim.preemption, "Emergency-vehicle preemption");
-            ui.checkbox(&mut self.sim.rtor, "Right turn on red");
-            ui.add_enabled(self.sim.rtor, egui::Checkbox::new(&mut self.sim.ntor_peds, "…except while pedestrians are present"))
+            ui.checkbox(&mut self.world.sims[self.focus].preemption, "Emergency-vehicle preemption");
+            ui.checkbox(&mut self.world.sims[self.focus].rtor, "Right turn on red");
+            ui.add_enabled(self.world.sims[self.focus].rtor, egui::Checkbox::new(&mut self.world.sims[self.focus].ntor_peds, "…except while pedestrians are present"))
                 .on_hover_text("Blank-out NO TURN ON RED sign lit while someone waits at or crosses a crosswalk the turn passes");
-            ui.add(egui::Slider::new(&mut self.sim.signal.lpi, 0.0..=7.0).step_by(0.5).text("leading ped interval s"))
+            ui.add(egui::Slider::new(&mut self.world.sims[self.focus].signal.lpi, 0.0..=7.0).step_by(0.5).text("leading ped interval s"))
                 .on_hover_text("WALK starts this long before turning traffic that crosses it gets green (0 = off)");
-            if self.sim.signalized() {
+            if self.world.sims[self.focus].signalized() {
                 egui::ComboBox::from_label("left turns")
-                    .selected_text(self.sim.left_mode.name())
+                    .selected_text(self.world.sims[self.focus].left_mode.name())
                     .show_ui(ui, |ui| {
                         for m in LeftMode::ALL {
-                            ui.selectable_value(&mut self.sim.left_mode, m, m.name());
+                            ui.selectable_value(&mut self.world.sims[self.focus].left_mode, m, m.name());
                         }
                     })
                     .response
                     .on_hover_text("Lefts with their own lane: green arrow plus flashing yellow arrow (yield to oncoming), green arrow only, or switch automatically when left x opposing volume is high");
-                let prot: Vec<&str> = (0..self.sim.net.movements.len())
-                    .filter(|&m| self.sim.left_protected[m])
-                    .map(|m| self.sim.net.movements[m].name.as_str())
+                let prot: Vec<&str> = (0..self.world.sims[self.focus].net.movements.len())
+                    .filter(|&m| self.world.sims[self.focus].left_protected[m])
+                    .map(|m| self.world.sims[self.focus].net.movements[m].name.as_str())
                     .collect();
-                if self.sim.left_mode != LeftMode::Fya {
+                if self.world.sims[self.focus].left_mode != LeftMode::Fya {
                     ui.label(RichText::new(format!("protected-only now: {}", if prot.is_empty() { "none".into() } else { prot.join(", ") })).small().color(Color32::from_gray(160)));
                 }
             }
-            ui.add(egui::Slider::new(&mut self.sim.max_wait_guard, 0.0..=300.0).text("max-wait guard s"))
+            ui.add(egui::Slider::new(&mut self.world.sims[self.focus].max_wait_guard, 0.0..=300.0).text("max-wait guard s"))
                 .on_hover_text("Adaptive controllers are forced to serve any movement waiting longer than this (0 = off)");
 
             if self.ctrl == CtrlKind::DeepRl && self.mode == ControlMode::Signal {
                 ui.separator();
                 ui.heading("AI (Deep RL)");
                 let layout = self.layout;
-                if let Some(rl) = self.sim.controller.as_rl() {
+                if let Some(rl) = self.world.sims[self.focus].controller.as_rl() {
                     ui.checkbox(&mut rl.learning, "Keep learning online");
                     ui.add_enabled(rl.learning, egui::Slider::new(&mut rl.epsilon, 0.0..=0.5).text("exploration ε"));
                     ui.label(format!("decisions {}  ·  replay {}  ·  updates {}", rl.decisions, rl.agent.replay_len(), rl.agent.updates));
@@ -471,7 +593,7 @@ impl App {
                         }
                     });
                     if ui.button("⟳ Reload pretrained").clicked() {
-                        self.sim.set_controller(CtrlKind::DeepRl);
+                        self.world.sims[self.focus].set_controller(CtrlKind::DeepRl);
                     }
                     if let Some(r) = saved {
                         match r {
@@ -506,6 +628,10 @@ impl App {
         });
     }
 
+    fn strategy_name(&self, mode: ControlMode, ctrl: CtrlKind) -> String {
+        if mode == ControlMode::Signal && self.layout.signalized() { ctrl.short().to_string() } else { mode.name().to_string() }
+    }
+
     fn kpi(ui: &mut Ui, label: &str, value: String, color: Color32) {
         ui.vertical(|ui| {
             ui.set_min_width(104.0);
@@ -522,10 +648,10 @@ impl App {
             ui.horizontal(|ui| {
                 ui.heading("Vehicle experience");
                 if ui.small_button("reset stats").on_hover_text("Measure from now on").clicked() {
-                    self.stats_from = self.sim.t;
+                    self.stats_from = self.world.sims[self.focus].t;
                 }
             });
-            let signalized = self.sim.signalized();
+            let signalized = self.world.sims[self.focus].signalized();
             let grade = los(s.avg_delay, signalized);
             let gcol = match grade {
                 "A" | "B" => Color32::from_rgb(90, 210, 120),
@@ -548,19 +674,49 @@ impl App {
                 Self::kpi(ui, "ped wait", format!("{:.1} s", s.ped_avg_wait), Color32::WHITE);
                 ui.end_row();
             });
-            let (n_in, n_q) = self.sim.in_system();
+            let (n_in, n_q) = self.world.sims[self.focus].in_system();
             ui.label(
                 RichText::new(format!(
                     "{} completed · {} in network · {} waiting to enter · {} peds · ped near-misses {:.1}/h · safety overlaps: {}",
-                    s.n, n_in, n_q, self.sim.peds.len(), s.ped_near_miss_ph, self.sim.collisions
+                    s.n, n_in, n_q, self.world.sims[self.focus].peds.len(), s.ped_near_miss_ph, self.world.sims[self.focus].collisions
                 ))
                 .small()
                 .color(Color32::from_gray(160)),
             );
             ui.label(RichText::new("* includes vehicles still queued (penalises starving an approach)").small().color(Color32::from_gray(120)));
+            if self.twin.is_some() {
+                ui.separator();
+                ui.label(RichText::new("Side by side (same arrivals)").strong());
+                let b = self.twin_summary.clone();
+                let a_name = self.strategy_name(self.mode, self.ctrl);
+                let b_name = self.strategy_name(self.twin_mode, self.twin_ctrl);
+                egui::Grid::new("ab").striped(true).num_columns(3).show(ui, |ui| {
+                    ui.label("");
+                    ui.label(RichText::new(format!("A: {a_name}")).strong());
+                    ui.label(RichText::new(format!("B: {b_name}")).strong());
+                    ui.end_row();
+                    let rows: [(&str, f64, f64, &str, bool); 7] = [
+                        ("person delay*", s.person_delay_all, b.person_delay_all, "s", true),
+                        ("avg delay", s.avg_delay, b.avg_delay, "s", true),
+                        ("95th pct delay", s.p95_delay, b.p95_delay, "s", true),
+                        ("throughput", s.throughput_vph, b.throughput_vph, "veh/h", false),
+                        ("stops / veh", s.avg_stops, b.avg_stops, "", true),
+                        ("CO₂ / veh", s.co2_per_veh, b.co2_per_veh, "g", true),
+                        ("ped wait", s.ped_avg_wait, b.ped_avg_wait, "s", true),
+                    ];
+                    for (k, a, bv, unit, lower) in rows {
+                        let better = |x: f64, y: f64| if lower { x < y * 0.97 } else { x > y * 1.03 };
+                        let col = |x: f64, y: f64| if better(x, y) { Color32::from_rgb(110, 220, 130) } else { Color32::from_gray(220) };
+                        ui.label(RichText::new(k).color(Color32::from_gray(150)));
+                        ui.label(RichText::new(format!("{a:.1} {unit}")).color(col(a, bv)));
+                        ui.label(RichText::new(format!("{bv:.1} {unit}")).color(col(bv, a)));
+                        ui.end_row();
+                    }
+                });
+            }
 
             ui.separator();
-            let series = &self.sim.stats.series;
+            let series = &self.world.sims[self.focus].stats.series;
             let xs: Vec<f64> = series.iter().map(|x| x.t).collect();
             charts::line_chart(
                 ui,
@@ -590,12 +746,11 @@ impl App {
                 90.0,
             );
             ui.label(RichText::new("Delay distribution (s)").strong().size(12.5));
-            charts::histogram(ui, &self.sim.stats.hist, HIST_BIN, 80.0);
+            charts::histogram(ui, &self.world.sims[self.focus].stats.hist, HIST_BIN, 80.0);
 
             ui.separator();
             ui.label(RichText::new("Average delay by approach").strong().size(12.5));
-            let rows: Vec<(String, f64, bool)> = self
-                .sim
+            let rows: Vec<(String, f64, bool)> = self.world.sims[self.focus]
                 .net
                 .legs
                 .iter()
@@ -604,15 +759,14 @@ impl App {
                 .collect();
             charts::hbars(ui, &rows, " s", true);
             ui.label(RichText::new("Average delay by movement").strong().size(12.5));
-            let rows: Vec<(String, f64, bool)> = self
-                .sim
+            let rows: Vec<(String, f64, bool)> = self.world.sims[self.focus]
                 .net
                 .movements
                 .iter()
                 .enumerate()
                 .filter(|(i, _)| s.by_move.get(*i).is_some_and(|g| g.n > 0))
                 .map(|(i, m)| {
-                    let leg = &self.sim.net.legs[m.leg];
+                    let leg = &self.world.sims[self.focus].net.legs[m.leg];
                     (format!("{} {}", leg.compass.bound(), m.turn.name()), s.by_move[i].avg_delay(), false)
                 })
                 .collect();
@@ -637,9 +791,9 @@ impl App {
                 }
             });
 
-            if self.sim.signalized() {
+            if self.world.sims[self.focus].signalized() {
                 ui.separator();
-                let b = self.sim.controller.brain();
+                let b = self.world.sims[self.focus].controller.brain();
                 ui.heading("Controller brain");
                 ui.label(RichText::new(&b.title).strong());
                 charts::hbars(ui, &b.bars, "", b.lower_is_better);
@@ -659,7 +813,7 @@ impl App {
                 if ui.add_enabled(!running, egui::Button::new("▶ Compare controllers")).clicked() {
                     self.start_bench(false);
                 }
-                if ui.add_enabled(!running && self.sim.net.kind.signalized(), egui::Button::new("▶ Sensor study")).clicked() {
+                if ui.add_enabled(!running && self.world.sims[self.focus].net.kind.signalized(), egui::Button::new("▶ Sensor study")).clicked() {
                     self.start_bench(true);
                 }
             });
@@ -675,13 +829,13 @@ impl App {
             ui.label(RichText::new("Click a vehicle to inspect it.").small().color(Color32::from_gray(150)));
             return;
         };
-        let Some(v) = self.sim.vehicles.iter().find(|v| v.id == id) else {
+        let Some(v) = self.world.sims[self.focus].vehicles.iter().find(|v| v.id == id) else {
             ui.label("(left the network)");
             return;
         };
-        let net = &self.sim.net;
+        let net = &self.world.sims[self.focus].net;
         let mv = &net.movements[v.movement];
-        let src = self.sim.view.detections.iter().find(|d| d.0 == id).map(|d| match d.1 {
+        let src = self.world.sims[self.focus].view.detections.iter().find(|d| d.0 == id).map(|d| match d.1 {
             Source::Camera => "camera",
             Source::Radar => "radar",
             Source::Cv => "connected (V2I)",
@@ -711,8 +865,8 @@ impl App {
 
     fn start_bench(&mut self, sensor_study: bool) {
         let kind = self.layout;
-        let demand = self.sim.demand.clone();
-        let base = self.sim.sensors.clone();
+        let demand = self.world.sims[self.focus].demand.clone();
+        let base = self.world.sims[self.focus].sensors.clone();
         let mut jobs: Vec<(String, ControlMode, CtrlKind, SensorConfig)> = vec![];
         if sensor_study {
             let mut loops = base.clone();
@@ -862,7 +1016,7 @@ impl App {
                 }
             }
         });
-        charts::timeline(ui, &self.sim, 180.0);
+        charts::timeline(ui, &self.world.sims[self.focus], 180.0);
     }
 
     // ------------------------------------------------------------- canvas
@@ -871,7 +1025,7 @@ impl App {
         let (resp, painter) = ui.allocate_painter(ui.available_size(), Sense::click_and_drag());
         let rect = resp.rect;
         if !self.fitted {
-            let net = &self.sim.net;
+            let net = &self.world.sims[self.focus].net;
             let extent = net.legs.iter().map(|l| l.stop_dist).fold(0.0, f64::max) + 55.0;
             self.scale = (rect.width().min(rect.height()) / (2.0 * extent as f32)).max(1.0);
             if let Some(z) = std::env::var("TS_ZOOM").ok().and_then(|v| v.parse::<f32>().ok()) {
@@ -899,66 +1053,94 @@ impl App {
                 }
             }
         }
-        let cam = Camera { center: self.cam_center, scale: self.scale, rect };
-        painter.rect_filled(rect, 0.0, render::GRASS);
-        self.scene.paint(&painter, &cam, self.ov.night);
-        let dc = DrawCtx { sim: &self.sim, cam, ov: &self.ov, selected: self.selected, time: self.anim_t, alpha: if self.paused { 1.0 } else { self.acc / self.sim.dt } };
-        render::paint_dynamic(&painter, &dc);
-        if self.ov.detections {
-            render::paint_detections(&painter, &dc);
+        // Side by side: A on the left half, B on the right, same camera.
+        let halves = if self.twin.is_some() {
+            let mid = rect.center().x;
+            vec![egui::Rect::from_min_max(rect.min, egui::pos2(mid - 1.0, rect.max.y)), egui::Rect::from_min_max(egui::pos2(mid + 1.0, rect.min.y), rect.max)]
+        } else {
+            vec![rect]
+        };
+        painter.rect_filled(rect, 0.0, Color32::from_rgb(20, 22, 26));
+        let alpha = if self.paused { 1.0 } else { self.acc / self.world.dt() };
+        for (k, half) in halves.iter().enumerate() {
+            let (world, mode, ctrl) = if k == 0 {
+                (&self.world, self.mode, self.ctrl)
+            } else {
+                (self.twin.as_ref().unwrap(), self.twin_mode, self.twin_ctrl)
+            };
+            let label = match (self.twin.is_some(), k) {
+                (false, _) => self.strategy_name(mode, ctrl),
+                (true, 0) => format!("A · {}", self.strategy_name(mode, ctrl)),
+                _ => format!("B · {}", self.strategy_name(mode, ctrl)),
+            };
+            self.paint_world(&painter.with_clip_rect(*half), world, *half, &label, alpha, k == 0);
         }
-        render::hud(&painter, rect, &self.sim, if self.sim.signalized() { self.ctrl.name() } else { self.mode.name() }, self.speed, self.paused);
-        self.legend(&painter, rect);
+        if self.twin.is_some() {
+            painter.vline(rect.center().x, rect.y_range(), egui::Stroke::new(2.0, Color32::from_gray(15)));
+        }
+        self.legend(&painter, halves[0]);
 
-        // Clicks: select / spawn.
+        // Clicks: select / spawn (spawns go to both sides so arrivals stay identical).
         if resp.clicked() {
             if let Some(p) = resp.interact_pointer_pos() {
+                let k = halves.iter().position(|h| h.contains(p)).unwrap_or(0);
+                let cam = Camera { center: self.cam_center, scale: self.scale, rect: halves[k] };
                 let w = cam.to_world(p);
+                let (i, local) = self.locate(w);
                 match self.tool {
-                    Tool::Select => {
-                        self.selected = self
-                            .sim
+                    Tool::Select if k == 0 => {
+                        let sim = &self.world.sims[i];
+                        self.selected = sim
                             .vehicles
                             .iter()
-                            .map(|v| (v.id, self.sim.center(v).dist(w) - v.len() * 0.5))
+                            .map(|v| (v.id, sim.center(v).dist(local) - v.len() * 0.5))
                             .filter(|(_, d)| *d < 2.5)
                             .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
                             .map(|x| x.0);
+                        if self.selected.is_some() {
+                            self.focus = i;
+                        }
                     }
+                    Tool::Select => {}
                     Tool::Vehicle => {
-                        let net = &self.sim.net;
+                        let net = &self.world.sims[i].net;
                         let leg = (0..net.legs.len())
-                            .map(|i| {
-                                let l = &net.legs[i];
-                                let r = w.dot(l.d);
-                                let lat = w.dot(l.in_side());
+                            .map(|li| {
+                                let l = &net.legs[li];
+                                let r = local.dot(l.d);
+                                let lat = local.dot(l.in_side());
                                 let ok = r > l.stop_dist * 0.6 && lat > -l.out_width - 12.0 && lat < l.in_width + 12.0;
-                                (i, ok, (lat - l.in_width * 0.5).abs())
+                                (li, ok, (lat - l.in_width * 0.5).abs())
                             })
                             .filter(|x| x.1)
                             .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap())
                             .map(|x| x.0);
                         if let Some(li) = leg {
-                            if !self.sim.spawn_manual(li, self.spawn_kind, self.spawn_turn) {
-                                let leg = &self.sim.net.legs[li];
-                                self.notify(format!("{} has no {} movement", leg.compass.bound(), self.spawn_turn.name()));
+                            let ok = self.world.sims[i].spawn_manual(li, self.spawn_kind, self.spawn_turn);
+                            if let Some(t) = self.twin.as_mut() {
+                                t.sims[i].spawn_manual(li, self.spawn_kind, self.spawn_turn);
+                            }
+                            let bound = self.world.sims[i].net.legs[li].compass.bound();
+                            if !ok {
+                                self.notify(format!("{} has no {} movement", bound, self.spawn_turn.name()));
                             } else {
-                                let leg = &self.sim.net.legs[li];
-                                self.notify(format!("{} {} queued on {} (enters 260 m upstream)", self.spawn_kind.name(), self.spawn_turn.name(), leg.compass.bound()));
+                                self.notify(format!("{} {} queued on {} (enters 260 m upstream)", self.spawn_kind.name(), self.spawn_turn.name(), bound));
                             }
                         }
                     }
                     Tool::Pedestrian => {
-                        let best = self
-                            .sim
+                        let best = self.world.sims[i]
                             .net
                             .crosswalks
                             .iter()
-                            .flat_map(|c| [(c.id, false, c.a.dist(w)), (c.id, true, c.b.dist(w))])
+                            .flat_map(|c| [(c.id, false, c.a.dist(local)), (c.id, true, c.b.dist(local))])
                             .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap());
                         if let Some((cw, b, d)) = best {
                             if d < 12.0 {
-                                self.sim.spawn_ped(cw, b);
+                                self.world.sims[i].spawn_ped(cw, b);
+                                if let Some(t) = self.twin.as_mut() {
+                                    t.sims[i].spawn_ped(cw, b);
+                                }
                             }
                         }
                     }
@@ -976,19 +1158,45 @@ impl App {
         }
     }
 
+    /// Intersection nearest to world point `w`, and `w` in its local coordinates.
+    fn locate(&self, w: crate::sim::geom::V2) -> (usize, crate::sim::geom::V2) {
+        let i = (0..self.world.offsets.len())
+            .min_by(|&a, &b| w.dist(self.world.offsets[a]).partial_cmp(&w.dist(self.world.offsets[b])).unwrap())
+            .unwrap_or(0);
+        (i, w - self.world.offsets[i])
+    }
+
+    fn paint_world(&self, painter: &egui::Painter, world: &World, rect: egui::Rect, label: &str, alpha: f64, main: bool) {
+        painter.rect_filled(rect, 0.0, render::GRASS);
+        let cam_for = |i: usize| Camera { center: self.cam_center - world.offsets[i], scale: self.scale, rect };
+        for i in 0..world.sims.len() {
+            self.scene.paint(painter, &cam_for(i), self.ov.night);
+        }
+        for (i, sim) in world.sims.iter().enumerate() {
+            let selected = if main && i == self.focus { self.selected } else { None };
+            let dc = DrawCtx { sim, cam: cam_for(i), ov: &self.ov, selected, time: self.anim_t, alpha };
+            render::paint_dynamic(painter, &dc);
+            if self.ov.detections {
+                render::paint_detections(painter, &dc);
+            }
+        }
+        let focus = self.focus.min(world.sims.len() - 1);
+        render::hud(painter, rect, &world.sims[focus], label, self.speed, self.paused);
+    }
+
     fn legend(&self, painter: &egui::Painter, rect: egui::Rect) {
         let mut items: Vec<(Color32, &str)> = vec![];
-        if self.ov.sensors && self.sim.sensors.loops {
+        if self.ov.sensors && self.world.sims[self.focus].sensors.loops {
             items.push((Color32::from_rgb(255, 200, 60), "loop detector"));
         }
         if self.ov.detections {
-            if self.sim.sensors.camera {
+            if self.world.sims[self.focus].sensors.camera {
                 items.push((Color32::from_rgb(90, 220, 255), "camera track"));
             }
-            if self.sim.sensors.radar {
+            if self.world.sims[self.focus].sensors.radar {
                 items.push((Color32::from_rgb(190, 110, 255), "radar track"));
             }
-            if self.sim.sensors.cv {
+            if self.world.sims[self.focus].sensors.cv {
                 items.push((Color32::from_rgb(120, 255, 160), "connected vehicle"));
             }
         }
@@ -1011,12 +1219,13 @@ impl eframe::App for App {
         }
         egui::Panel::top("top").show(ui, |ui| self.top_bar(ui));
         egui::Panel::left("left").default_size(300.0).resizable(true).show(ui, |ui| self.left_panel(ui));
+        self.sync_settings();
         egui::Panel::right("right").default_size(380.0).resizable(true).show(ui, |ui| self.right_panel(ui));
         egui::Panel::bottom("bottom").show(ui, |ui| self.bottom_panel(ui));
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| self.canvas(ui));
         self.bench_window(&ctx);
         if let Some((path, after)) = self.shot.clone() {
-            if self.sim.t >= after {
+            if self.world.sims[self.focus].t >= after {
                 self.shot = None;
                 shot::request(&ctx, path);
             }
