@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Headless-friendly screenshots: `TS_SHOT=out.png` makes the app capture its own
 //! framebuffer once `TS_SHOT_AFTER` simulated seconds have elapsed, then exit.
 //! Useful for documentation and visual regression checks.

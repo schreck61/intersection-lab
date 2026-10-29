@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Interactive desktop front-end (eframe/egui).
 
 pub mod charts;
@@ -51,6 +54,7 @@ pub struct App {
     /// Fixed-time intersections of a corridor run a coordinated green wave.
     green_wave: bool,
     corridor: CorridorSummary,
+    show_about: bool,
     scene: Scene,
     layout: LayoutKind,
     mode: ControlMode,
@@ -102,6 +106,7 @@ impl App {
             corridor_n: 1,
             green_wave: false,
             corridor: CorridorSummary::default(),
+            show_about: false,
             scene,
             layout,
             mode: ControlMode::Signal,
@@ -132,7 +137,7 @@ impl App {
 
     /// Optional overrides for scripted runs: TS_LAYOUT, TS_MODE, TS_CTRL, TS_TWIN (B side:
     /// a controller or allway/twoway), TS_CORRIDOR (signals), TS_WAVE, TS_SPEED, TS_ZOOM, TS_COLOR, TS_NIGHT, TS_COND,
-    /// TS_LOOP_FAULT, TS_SHOT (png path) + TS_SHOT_AFTER (sim seconds).
+    /// TS_LOOP_FAULT, TS_ABOUT, TS_SHOT (png path) + TS_SHOT_AFTER (sim seconds).
     fn with_env(mut self) -> Self {
         let var = |k: &str| std::env::var(k).ok();
         if let Some(l) = var("TS_LAYOUT").and_then(|v| LayoutKind::ALL.into_iter().find(|k| k.key() == v)) {
@@ -173,6 +178,7 @@ impl App {
             };
         }
         self.ov.night = var("TS_NIGHT").is_some();
+        self.show_about = var("TS_ABOUT").is_some();
         if let Some(c) = var("TS_COND").and_then(|v| Conditions::ALL.into_iter().find(|c| format!("{c:?}").eq_ignore_ascii_case(&v))) {
             self.world.sims[self.focus].sensors.conditions = c;
         }
@@ -311,6 +317,9 @@ impl App {
     fn top_bar(&mut self, ui: &mut Ui) {
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("🚦 Intersection Lab").strong().size(16.0));
+            if ui.small_button("About").clicked() {
+                self.show_about = !self.show_about;
+            }
             ui.separator();
             if ui.button(if self.paused { "▶ Run" } else { "⏸ Pause" }).clicked() {
                 self.paused = !self.paused;
@@ -1046,6 +1055,32 @@ impl App {
         self.show_bench = true;
     }
 
+    /// Version, copyright, license and third-party notices.
+    fn about_window(&mut self, ctx: &egui::Context) {
+        const THIRD_PARTY: &str = include_str!("../../THIRD_PARTY_LICENSES.md");
+        let mut open = self.show_about;
+        egui::Window::new("About Intersection Lab").open(&mut open).default_width(620.0).default_height(560.0).show(ctx, |ui| {
+            ui.label(RichText::new(format!("Intersection Lab {}", env!("CARGO_PKG_VERSION"))).strong().size(16.0));
+            ui.label("Microscopic traffic-intersection simulator for comparing signal control, sensing and AI.");
+            ui.label("Copyright © 2026 Jim Schreckengast");
+            ui.label("Licensed under either of the MIT license or the Apache License, Version 2.0, at your option.");
+            ui.hyperlink(env!("CARGO_PKG_REPOSITORY"));
+            ui.separator();
+            ui.label(RichText::new("Third-party software").strong());
+            ui.label(RichText::new("This program includes open-source components under the licenses below.").small().color(Color32::from_gray(170)));
+            // Thousands of lines: lay out only the visible ones.
+            let lines: Vec<&str> = THIRD_PARTY.lines().collect();
+            let font = egui::FontId::monospace(11.0);
+            let row_h = ui.fonts_mut(|f| f.row_height(&font));
+            egui::ScrollArea::both().max_height(380.0).auto_shrink([false, true]).show_rows(ui, row_h, lines.len(), |ui, range| {
+                for line in &lines[range] {
+                    ui.add(egui::Label::new(RichText::new(*line).font(font.clone())).extend());
+                }
+            });
+        });
+        self.show_about = open;
+    }
+
     fn bench_window(&mut self, ctx: &egui::Context) {
         let Some(b) = self.bench.as_mut() else { return };
         while let Ok((i, row)) = b.rx.try_recv() {
@@ -1326,6 +1361,7 @@ impl eframe::App for App {
         egui::Panel::bottom("bottom").show(ui, |ui| self.bottom_panel(ui));
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| self.canvas(ui));
         self.bench_window(&ctx);
+        self.about_window(&ctx);
         if let Some((path, after)) = self.shot.clone() {
             if self.world.sims[self.focus].t >= after {
                 self.shot = None;

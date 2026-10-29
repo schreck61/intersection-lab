@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Emergency vehicles: with and without preemption, spawned against a red.
 use intersection_lab::control::CtrlKind;
 use intersection_lab::sim::network::{LayoutKind, Turn};

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Safety sweep: every layout x control x seed, report in-box overlaps.
 use intersection_lab::control::CtrlKind;
 use intersection_lab::sim::network::LayoutKind;

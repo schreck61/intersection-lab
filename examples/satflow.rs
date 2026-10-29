@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Calibration: saturation flow and start-up lost time of a queued through lane.
 //! Compares the simulated discharge with the HCM base saturation flow (1,900 pc/h/ln).
 use intersection_lab::control::CtrlKind;

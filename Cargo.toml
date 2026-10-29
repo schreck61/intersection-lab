@@ -3,6 +3,14 @@ name = "intersection-lab"
 default-run = "intersection-lab"
 version = "0.1.0"
 edition = "2024"
+description = "Microscopic traffic-intersection simulator for comparing signal control, sensing and AI"
+authors = ["Jim Schreckengast"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/schreck61/intersection-lab"
+homepage = "https://github.com/schreck61/intersection-lab"
+readme = "README.md"
+keywords = ["traffic", "simulation", "traffic-signal", "reinforcement-learning", "egui"]
+categories = ["simulation", "science"]
 
 [dependencies]
 eframe = "0.37.0"

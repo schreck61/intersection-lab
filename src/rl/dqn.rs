@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Double DQN with experience replay, Huber loss, Polyak-averaged target network and
 //! semi-Markov discounting (decisions are not evenly spaced in time).
 

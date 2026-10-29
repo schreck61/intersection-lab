@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Minimal dense neural network (ReLU MLP) with backprop and Adam, no dependencies.
 
 use crate::sim::rng::Rng;

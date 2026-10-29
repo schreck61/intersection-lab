@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Schedule-driven rolling-horizon control (inspired by SURTRAC, Xie & Smith).
 //!
 //! Every second the controller takes each detected vehicle's predicted arrival at the

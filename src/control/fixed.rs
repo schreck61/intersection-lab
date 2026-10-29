@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Pre-timed control optimised with Webster's method:
 //! C0 = (1.5 L + 5) / (1 - Y), effective green split in proportion to critical flow
 //! ratios, with every green at least as long as its pedestrian interval (WALK +

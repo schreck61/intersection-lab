@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Corridor study: N intersections along the main road. Compares fixed-time without
 //! and with a coordinated green wave, and the adaptive controllers with and without
 //! upstream information sharing. Reports end-to-end main-road trips and the mean

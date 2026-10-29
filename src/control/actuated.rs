@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Fully actuated control (NEMA-style, single-ring sequence with phase skipping):
 //! min green, unit extension per actuation (passage time), gap-out / max-out,
 //! calls from stop-bar presence and pedestrian push buttons, and a conditional

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Small deterministic PRNG (SplitMix64 seeded xoshiro256**) so runs are reproducible
 //! across controllers: the same seed produces the same arrival stream.
 

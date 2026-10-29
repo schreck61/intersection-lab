@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Vehicle-experience statistics: HCM control delay, stops, stopped time, fuel/CO2,
 //! person delay, level of service, per-approach/movement/class breakdowns and
 //! time series for charts.

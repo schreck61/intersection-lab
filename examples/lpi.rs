@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Pedestrian safety treatments: leading pedestrian interval (LPI) and a blank-out
 //! "NO TURN ON RED" sign lit while pedestrians are present. Reports vehicle/pedestrian
 //! near-misses (a vehicle crossing within ~1.5 s of a walking pedestrian) and delay.

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Headless reinforcement-learning training, per signalised layout, on randomised
 //! demand (rates, turning shares, arrival pattern, pedestrians), keeping the weights
 //! that score best on fixed evaluation scenarios.

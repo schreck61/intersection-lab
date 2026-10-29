@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Max-pressure control (Varaiya 2013): pressure of a stage = Σ over its movements of
 //! saturation-weighted (upstream queue − downstream queue). Serve the max-pressure
 //! stage, with a minimum dwell and a switching threshold to account for lost time.

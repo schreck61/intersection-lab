@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Deep reinforcement-learning signal controller.
 //!
 //! State: per movement (queue, arrivals within 10 s and 10-30 s, longest wait, extra
@@ -48,13 +51,13 @@ pub fn n_inputs(net: &Network) -> usize {
     net.movements.len() * 6 + net.stages.len() + 1 + MAX_CW
 }
 
+/// Where to save this layout's weights (see [`super::weights`]).
 pub fn weights_path(layout: &str) -> PathBuf {
-    let file = format!("dqn_{layout}.json");
-    let local = PathBuf::from("weights").join(&file);
-    if local.exists() {
-        return local;
-    }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("weights").join(file)
+    super::weights::save_path(&weights_file(layout))
+}
+
+pub fn weights_file(layout: &str) -> String {
+    format!("dqn_{layout}.json")
 }
 
 impl RlController {
@@ -91,13 +94,12 @@ impl RlController {
     }
 
     pub fn load_or_new(net: &Network) -> Self {
-        let path = weights_path(net.kind.key());
-        if let Ok(txt) = std::fs::read_to_string(&path) {
+        if let Some((txt, source)) = super::weights::load(&weights_file(net.kind.key())) {
             if let Ok(m) = serde_json::from_str::<SavedModel>(&txt) {
                 if m.n_in == n_inputs(net) && m.n_out == net.stages.len() {
                     let mut c = Self::with_agent(net, Dqn::from_net(m.net, Rng::new(7)));
                     c.episodes = m.episodes;
-                    c.loaded_from = Some(path.display().to_string());
+                    c.loaded_from = Some(source);
                     return c;
                 }
             }

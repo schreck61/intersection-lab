@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Headless benchmark: every controller on identical arrival streams.
 //!
 //! usage: bench [layout|all] [minutes] [seeds] [demand-scale] [pattern]

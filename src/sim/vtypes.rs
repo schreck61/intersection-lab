@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Vehicle classes with Intelligent Driver Model parameters, occupancy (for
 //! person-delay weighting) and a simple power-based fuel/CO2 model.
 

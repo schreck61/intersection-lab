@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Hybrid controller: the predictive (schedule-driven MPC) controller makes every
 //! signal decision, while a Double-DQN agent re-tunes it every 10 s from the observed
 //! traffic state, choosing its fairness weight, hold/switch bias and maximum green.
@@ -37,13 +40,13 @@ pub fn n_inputs(net: &Network) -> usize {
     super::rl::n_inputs(net)
 }
 
+/// Where to save this layout's weights (see [`super::weights`]).
 pub fn weights_path(layout: &str) -> PathBuf {
-    let file = format!("hybrid_{layout}.json");
-    let local = PathBuf::from("weights").join(&file);
-    if local.exists() {
-        return local;
-    }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("weights").join(file)
+    super::weights::save_path(&weights_file(layout))
+}
+
+pub fn weights_file(layout: &str) -> String {
+    format!("hybrid_{layout}.json")
 }
 
 /// On-disk form: the best static tuning plus, if it earned its place, the network.
@@ -111,8 +114,7 @@ impl Hybrid {
     /// keeps the planner's default tuning (it behaves exactly like the predictive
     /// controller).
     pub fn load_or_new(net: &Network) -> Self {
-        let path = weights_path(net.kind.key());
-        if let Ok(txt) = std::fs::read_to_string(&path) {
+        if let Some((txt, source)) = super::weights::load(&weights_file(net.kind.key())) {
             if let Ok(sv) = serde_json::from_str::<SavedHybrid>(&txt) {
                 let mut h = match sv.model {
                     Some(m) if m.n_in == n_inputs(net) && m.n_out == N_ACTIONS => {
@@ -124,7 +126,7 @@ impl Hybrid {
                     _ => Self::new(net, 11),
                 };
                 h.base_action = sv.base_action.min(N_ACTIONS - 1);
-                h.loaded_from = Some(path.display().to_string());
+                h.loaded_from = Some(source);
                 return h;
             }
         }

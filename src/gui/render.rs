@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Top-down rendering of the intersection: a cached world-space mesh for the static
 //! scene (terrain, roads, markings, buildings, trees) and per-frame shapes for
 //! signals, sensors, vehicles and pedestrians.

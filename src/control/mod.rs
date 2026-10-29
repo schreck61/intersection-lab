@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Signal controllers. Each one sees only the `SensorView` (plus "historical" demand
 //! for fixed-time planning) and asks the signal state machine for a stage.
 
@@ -7,6 +10,7 @@ pub mod hybrid;
 pub mod maxpressure;
 pub mod predictive;
 pub mod rl;
+pub mod weights;
 
 use crate::sim::demand::DemandConfig;
 use crate::sim::network::{MStat, Network};

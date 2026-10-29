@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Stage-based signal state machine with MUTCD-style clearance: yellow change and
 //! all-red intervals between stages, pedestrian WALK + flashing DON'T WALK, minimum
 //! green that grows to fit an active pedestrian interval, and an optional leading

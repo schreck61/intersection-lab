@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Regression tests: every layout/control combination must run collision-free and
 //! serve (nearly) all demand at default volumes.
 

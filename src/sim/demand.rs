@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Stochastic demand: per-approach Poisson arrivals modulated by an arrival pattern
 //! (random, platooned from an upstream signal, rush-hour peak, random surges),
 //! turning shares, vehicle mix and pedestrian arrivals.

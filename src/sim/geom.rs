@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! 2D geometry: vectors, arc-length parametrised polylines, Bezier/arc builders and
 //! path-path intersection used to discover conflict points inside the intersection.
 //!

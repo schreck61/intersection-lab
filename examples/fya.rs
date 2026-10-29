@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Left-turn phasing: permissive flashing yellow arrow vs protected-only vs automatic
 //! switching by the volume cross-product, across demand levels.
 use intersection_lab::control::CtrlKind;

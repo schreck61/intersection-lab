@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Sensor models. Controllers never see ground truth: they see a `SensorView`
 //! assembled from whichever sensors are enabled.
 //!

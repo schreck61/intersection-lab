@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Microscopic intersection simulation.
 //!
 //! * Longitudinal motion: Intelligent Driver Model (Treiber et al.) with curve-speed
