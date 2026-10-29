@@ -45,4 +45,6 @@ wix build packaging\windows\main.wxs -arch $Arch -ext WixToolset.UI.wixext `
     -d "Version=$version" -d "StageDir=$stage" -d "IconPath=packaging\windows\app.ico" -d "LicenseRtf=$rtf" `
     -o "$base.msi"
 if ($LASTEXITCODE -ne 0) { throw "wix build failed" }
+# The installer's debug symbols aren't a release asset.
+Remove-Item "$base.wixpdb" -ErrorAction SilentlyContinue
 Write-Host "==> $base.msi"
