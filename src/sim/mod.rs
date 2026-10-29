@@ -21,7 +21,7 @@ pub mod vtypes;
 pub mod world;
 
 use crate::control::{self, Controller, CtrlKind, Ctx};
-use demand::{DemandConfig, DemandGen, Pending};
+use demand::{DemandConfig, DemandGen, Pending, Trip};
 use geom::V2;
 use network::{LayoutKind, LinkId, LinkKind, Network, Turn};
 use rng::Rng;
@@ -129,6 +129,7 @@ pub struct Vehicle {
     pub lc_off: V2,
     pub lc_t: f64,
     lc_from: Option<LinkId>,
+    pub trip: Trip,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -197,6 +198,31 @@ pub struct Ped {
     pub prev_pos: Option<V2>,
 }
 
+/// A vehicle leaving the network (handed to the next intersection in a corridor).
+#[derive(Clone, Debug)]
+pub struct Exit {
+    pub kind: VKind,
+    pub from_leg: usize,
+    pub to_leg: usize,
+    pub v: f64,
+    /// Desired-speed factor relative to the class default.
+    pub speed_factor: f64,
+    pub connected: bool,
+    pub cam_ok: bool,
+    pub manual: bool,
+    pub trip: Trip,
+}
+
+/// A vehicle reported by the upstream intersection of a corridor, heading for leg
+/// `leg`: distance to our stop line and speed.
+#[derive(Clone, Copy, Debug)]
+pub struct UpstreamObs {
+    pub leg: usize,
+    pub dist: f64,
+    pub speed: f64,
+    pub kind: VKind,
+}
+
 /// Per-step right-of-way context of a vehicle.
 #[derive(Clone, Copy, Debug, Default)]
 struct VStat {
@@ -248,6 +274,15 @@ pub struct Sim {
     pub max_wait_guard: f64,
     pub preempt_active: bool,
     pub collisions: u64,
+    /// Corridor hooks: collect vehicles leaving the network; space available beyond
+    /// each leg's exit (room, speed of the vehicle there) when another intersection
+    /// follows; vehicles the upstream intersection reports.
+    pub collect_exits: bool,
+    /// Corridor coordination for fixed-time control: (cycle, offset, synchronised stage).
+    pub coordination: Option<(f64, f64, usize)>,
+    pub exits: Vec<Exit>,
+    pub exit_room: Vec<Option<(f64, f64)>>,
+    pub upstream: Vec<UpstreamObs>,
     /// Lane changes made (mandatory, discretionary).
     pub lane_changes: (u64, u64),
     /// Run the (costly) body-overlap safety check every step.
@@ -307,6 +342,11 @@ impl Sim {
             max_wait_guard: 150.0,
             preempt_active: false,
             collisions: 0,
+            collect_exits: false,
+            coordination: None,
+            exits: Vec::new(),
+            exit_room: vec![None; n_legs],
+            upstream: Vec::new(),
             lane_changes: (0, 0),
             check_safety: false,
             collision_log: Vec::new(),
@@ -323,6 +363,9 @@ impl Sim {
     pub fn set_controller(&mut self, ctrl: CtrlKind) {
         self.controller = control::make(ctrl, &self.net, &self.demand);
         self.ctrl_kind = ctrl;
+        if let (Some((c, o, st)), Some(f)) = (self.coordination, self.controller.as_fixed()) {
+            f.coordinate_plan(c, o, st);
+        }
     }
 
     pub fn signalized(&self) -> bool {
@@ -340,6 +383,7 @@ impl Sim {
             cv_u: self.misc.f64(),
             cam_ok: true,
             manual: true,
+            trip: Trip { start: self.t, ..Default::default() },
         };
         self.queues[leg].push_front(p);
         true
@@ -391,6 +435,7 @@ impl Sim {
         self.sense();
         // 4. Control.
         if self.signalized() {
+            self.signal.no_late_walk = self.coordination.is_some() && self.ctrl_kind == CtrlKind::Fixed;
             self.update_left_phasing();
             self.control_signal();
             self.signal.step(&self.net, dt, self.t + dt);
@@ -473,7 +518,7 @@ impl Sim {
                 self.net.stages[st].stat = stat;
             }
             if self.ctrl_kind == CtrlKind::Fixed {
-                self.controller = control::make(CtrlKind::Fixed, &self.net, &self.demand);
+                self.set_controller(CtrlKind::Fixed);
             }
         }
     }
@@ -634,6 +679,7 @@ impl Sim {
                 lc_off: V2::default(),
                 lc_t: 1e9,
                 lc_from: None,
+                trip: p.trip,
             });
             let idx = self.vehicles.len() - 1;
             self.occ[self.vehicles[idx].route[0]].push(idx);
@@ -695,7 +741,7 @@ impl Sim {
     }
 
     /// Free space at the upstream end of a lane and the speed of its last vehicle.
-    fn entry_room(&self, lane: LinkId) -> (f64, f64) {
+    pub(crate) fn entry_room(&self, lane: LinkId) -> (f64, f64) {
         let mut room = f64::INFINITY;
         let mut lead_v = 30.0;
         for &j in &self.occ[lane] {
@@ -1343,6 +1389,25 @@ impl Sim {
             let v = self.vehicles.swap_remove(i);
             let travel = self.t + dt - v.arrival_t;
             let mv = &self.net.movements[v.movement];
+            if self.collect_exits {
+                let leg_speed = self.net.legs[v.leg].speed * v.spec().speed_factor;
+                self.exits.push(Exit {
+                    kind: v.kind,
+                    from_leg: v.leg,
+                    to_leg: mv.to_leg,
+                    v: v.v,
+                    speed_factor: v.v0 / leg_speed.max(0.1),
+                    connected: v.connected,
+                    cam_ok: v.cam_ok,
+                    manual: v.manual,
+                    trip: Trip {
+                        hops: v.trip.hops + 1,
+                        stops: v.trip.stops + v.stops,
+                        delay: v.trip.delay + (travel - v.ff_time).max(0.0),
+                        ..v.trip
+                    },
+                });
+            }
             self.stats.record(Done {
                 kind: v.kind,
                 leg: v.leg,
@@ -1402,6 +1467,15 @@ impl Sim {
             }
             if gap < -0.5 {
                 acc = acc.min(-8.0);
+            }
+        }
+        // A corridor's next intersection may be backed up: its queue is a leader
+        // beyond the end of our exit road.
+        if let Some((gap, sp)) = self.exit_gap(i) {
+            let a2 = Self::idm(spec, v.v, v0, gap, v.v - sp);
+            if a2 < acc {
+                acc = a2;
+                reason = Reason::Following;
             }
         }
         // Curve speeds ahead.
@@ -1477,6 +1551,15 @@ impl Sim {
                 reason = Reason::StopSign;
                 if d_line < 2.5 && v.v < 0.3 {
                     stop_done = Some(true);
+                }
+            }
+        }
+        // Don't enter the intersection without room to clear it on the far side.
+        if on_approach && !line_hold && v.commits.is_empty() && (can_stop(d_line) || v.v < 1.0) && d_line < 30.0 {
+            if let Some(room) = self.exit_space(v) {
+                if room < spec.length + spec.min_gap + 1.0 {
+                    line_hold = true;
+                    reason = Reason::Following;
                 }
             }
         }
@@ -1773,6 +1856,40 @@ impl Sim {
             self.occ[t].insert(pos, i);
         }
         self.rebuild_occ();
+    }
+
+    /// Gap to the virtual leader beyond the end of the route (a backed-up downstream
+    /// intersection), and its speed.
+    fn exit_gap(&self, i: usize) -> Option<(f64, f64)> {
+        let v = &self.vehicles[i];
+        let last = *v.route.last()?;
+        let (room, sp) = self.exit_room[self.net.links[last].leg]?;
+        if self.net.links[last].kind != LinkKind::Outbound {
+            return None;
+        }
+        let mut d = self.net.links[v.link()].length() - v.s;
+        for &l in &v.route[v.ri + 1..] {
+            d += self.net.links[l].length();
+        }
+        (d + room < 250.0).then_some((d + room - 0.5, sp))
+    }
+
+    /// Free length at the start of the vehicle's exit road if it is backed up with
+    /// stopped traffic (None if moving or clear).
+    fn exit_space(&self, v: &Vehicle) -> Option<f64> {
+        let out = *v.route.last()?;
+        if self.net.links[out].kind != LinkKind::Outbound {
+            return None;
+        }
+        let tail = self.occ[out].iter().map(|&j| &self.vehicles[j]).min_by(|a, b| a.s.partial_cmp(&b.s).unwrap());
+        match tail {
+            Some(w) if w.v < 1.0 => Some(w.s - w.len()),
+            Some(_) => None,
+            None => match self.exit_room[self.net.links[out].leg] {
+                Some((room, sp)) if sp < 1.0 => Some(self.net.links[out].length() + room),
+                _ => None,
+            },
+        }
     }
 
     /// Lateral display offset of a vehicle that is changing lanes (`alpha` as in

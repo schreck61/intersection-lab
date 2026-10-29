@@ -1,5 +1,12 @@
 //! Pre-timed control optimised with Webster's method:
-//! C0 = (1.5 L + 5) / (1 - Y), effective green split in proportion to critical flow ratios.
+//! C0 = (1.5 L + 5) / (1 - Y), effective green split in proportion to critical flow
+//! ratios, with every green at least as long as its pedestrian interval (WALK +
+//! flashing DON'T WALK) when pedestrians are expected.
+//!
+//! In a corridor the plan can be coordinated: a common cycle, the main-road stage
+//! first in each cycle at the intersection's offset, spare time given to that stage,
+//! and fixed force-off points so a late stage is shortened rather than shifting the
+//! whole schedule.
 
 use super::{Brain, Controller, Ctx};
 use crate::sim::demand::DemandConfig;
@@ -12,6 +19,9 @@ pub struct FixedTime {
     pub cycle: f64,
     last: usize,
     names: Vec<String>,
+    /// Coordination (corridors): the cycle starts with `seq[0]` at `offset` (mod cycle).
+    offset: Option<f64>,
+    clear: f64,
 }
 
 pub const SAT_FLOW: f64 = 1800.0;
@@ -20,7 +30,38 @@ impl FixedTime {
     pub fn new(net: &Network, demand: &DemandConfig) -> Self {
         let seq = net.fixed_sequence.clone();
         let (cycle, greens) = webster(net, demand, &seq);
-        FixedTime { names: seq.iter().map(|&s| net.stages[s].name.clone()).collect(), seq, greens, cycle, last: 0 }
+        FixedTime {
+            names: seq.iter().map(|&s| net.stages[s].name.clone()).collect(),
+            seq,
+            greens,
+            cycle,
+            last: 0,
+            offset: None,
+            clear: net.yellow + net.all_red,
+        }
+    }
+
+    /// Run a common `cycle` (at least this plan's own) with stage `sync` starting at
+    /// `offset`: rotate the sequence to begin with `sync` and give the spare time to it.
+    pub fn coordinate_plan(&mut self, cycle: f64, offset: f64, sync: usize) {
+        if let Some(k) = self.seq.iter().position(|&s| s == sync) {
+            self.seq.rotate_left(k);
+            self.greens.rotate_left(k);
+            self.names.rotate_left(k);
+        }
+        let lost = self.clear * self.seq.len() as f64;
+        let used: f64 = self.greens.iter().sum::<f64>() + lost;
+        let cycle = cycle.max(used);
+        if let Some(g) = self.greens.first_mut() {
+            *g += cycle - used;
+        }
+        self.cycle = cycle;
+        self.offset = Some(offset);
+    }
+
+    /// Scheduled end of green for sequence position `i` within the cycle.
+    fn green_end(&self, i: usize) -> f64 {
+        self.greens[..=i].iter().sum::<f64>() + self.clear * i as f64
     }
 }
 
@@ -67,13 +108,27 @@ pub fn webster(net: &Network, demand: &DemandConfig, seq: &[usize]) -> (f64, Vec
     let g_total = cycle - l;
     let yeff: Vec<f64> = ys.iter().map(|y| y.max(0.02)).collect();
     let ytot: f64 = yeff.iter().sum();
-    let greens = yeff.iter().map(|y| (g_total * y / ytot).max(7.0)).collect();
+    // Minimum greens: 7 s, or the full pedestrian interval where pedestrians may cross
+    // (WALK 7 s + crossing at 1.1 m/s), as in the signal's own timing.
+    let ped_min = |s: usize| -> f64 {
+        let walk = &net.stages[s].walk;
+        if demand.ped_rate <= 0.0 || walk.is_empty() {
+            return 7.0;
+        }
+        7.0 + walk.iter().map(|&cw| net.crosswalks[cw].length).fold(0.0, f64::max) / 1.1
+    };
+    let greens: Vec<f64> = yeff.iter().zip(seq).map(|(y, &s)| (g_total * y / ytot).max(ped_min(s))).collect();
+    let cycle = greens.iter().sum::<f64>() + l;
     (cycle, greens)
 }
 
 impl Controller for FixedTime {
     fn name(&self) -> &'static str {
         "Fixed-time"
+    }
+
+    fn as_fixed(&mut self) -> Option<&mut FixedTime> {
+        Some(self)
     }
 
     fn step(&mut self, ctx: &Ctx) -> Option<usize> {
@@ -84,7 +139,18 @@ impl Controller for FixedTime {
         match self.seq.iter().position(|&s| s == cur) {
             Some(i) => {
                 self.last = i;
-                if ctx.can_switch && ctx.sig.green_elapsed >= self.greens[i] {
+                let due = match self.offset {
+                    // Coordinated: end at this stage's force-off point in the cycle. A
+                    // stage that started late (past its slot) ends as soon as allowed.
+                    Some(off) => {
+                        let start = (ctx.t - ctx.sig.green_elapsed - off).rem_euclid(self.cycle);
+                        let to_force_off = (self.green_end(i) - start).rem_euclid(self.cycle);
+                        let late = to_force_off > self.greens[i] + 8.0;
+                        late || ctx.sig.green_elapsed >= to_force_off
+                    }
+                    None => ctx.sig.green_elapsed >= self.greens[i],
+                };
+                if ctx.can_switch && due {
                     return Some(self.seq[(i + 1) % self.seq.len()]);
                 }
                 None
@@ -96,7 +162,10 @@ impl Controller for FixedTime {
 
     fn brain(&self) -> Brain {
         Brain {
-            title: format!("Webster plan: cycle {:.0} s", self.cycle),
+            title: match self.offset {
+                Some(o) => format!("Coordinated plan: cycle {:.0} s, offset {:.0} s", self.cycle, o),
+                None => format!("Webster plan: cycle {:.0} s", self.cycle),
+            },
             bars: self
                 .names
                 .iter()

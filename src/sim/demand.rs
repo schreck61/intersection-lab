@@ -40,6 +40,10 @@ pub struct DemandConfig {
     pub pattern: Pattern,
     /// Global demand multiplier.
     pub scale: f64,
+    /// Approaches fed by an upstream intersection (corridor): no random arrivals are
+    /// generated there, but `rate` still describes their expected flow.
+    #[serde(default)]
+    pub fed: [bool; 4],
 }
 
 impl DemandConfig {
@@ -51,6 +55,7 @@ impl DemandConfig {
             ped_rate: 60.0,
             pattern: Pattern::Random,
             scale: 1.0,
+            fed: [false; 4],
         };
         use super::network::LayoutKind::*;
         let (major, minor) = match net.kind {
@@ -114,6 +119,20 @@ pub fn compass_index(c: Compass) -> usize {
     }
 }
 
+/// A vehicle's journey through a corridor (one or more intersections).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Trip {
+    /// Time the vehicle arrived at the corridor.
+    pub start: f64,
+    /// Intersections passed so far.
+    pub hops: u32,
+    pub stops: u32,
+    /// Control delay accumulated at previous intersections.
+    pub delay: f64,
+    /// Entered the corridor at its west (+1) or east (-1) end on the main road.
+    pub from_end: i8,
+}
+
 /// A generated arrival waiting to enter the network at the upstream boundary.
 #[derive(Clone, Debug)]
 pub struct Pending {
@@ -125,6 +144,7 @@ pub struct Pending {
     pub cv_u: f64,
     pub cam_ok: bool,
     pub manual: bool,
+    pub trip: Trip,
 }
 
 #[derive(Clone, Debug)]
@@ -175,7 +195,7 @@ impl DemandGen {
         let mmax = Self::max_multiplier(cfg.pattern);
         for li in 0..net.legs.len() {
             let ci = compass_index(net.legs[li].compass);
-            let base = cfg.rate[ci] * cfg.scale / 3600.0;
+            let base = if cfg.fed[ci] { 0.0 } else { cfg.rate[ci] * cfg.scale / 3600.0 };
             if base <= 0.0 {
                 self.next_t[li] = t + dt;
                 continue;
@@ -218,6 +238,7 @@ impl DemandGen {
             cv_u: self.rng.f64(),
             cam_ok: self.rng.f64() < 0.985,
             manual: false,
+            trip: Trip { start: at, ..Default::default() },
         }
     }
 

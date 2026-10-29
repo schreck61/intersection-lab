@@ -11,7 +11,7 @@ use crate::sim::network::{LayoutKind, Network, Turn};
 use crate::sim::sensors::{Conditions, SensorConfig, Source};
 use crate::sim::stats::{HIST_BIN, Summary, los};
 use crate::sim::vtypes::{ALL_KINDS, VKind};
-use crate::sim::world::World;
+use crate::sim::world::{CorridorSummary, SPACING, World};
 use crate::sim::{ControlMode, LeftMode, Sim};
 use egui::{Color32, RichText, Sense, Ui, vec2};
 use render::{Camera, ColorBy, DrawCtx, Overlays, Scene};
@@ -46,6 +46,11 @@ pub struct App {
     twin_mode: ControlMode,
     twin_ctrl: CtrlKind,
     twin_summary: Summary,
+    /// Intersections along the main road (1 = a single intersection).
+    corridor_n: usize,
+    /// Fixed-time intersections of a corridor run a coordinated green wave.
+    green_wave: bool,
+    corridor: CorridorSummary,
     scene: Scene,
     layout: LayoutKind,
     mode: ControlMode,
@@ -94,6 +99,9 @@ impl App {
             twin_mode: ControlMode::Signal,
             twin_ctrl: CtrlKind::Fixed,
             twin_summary: Summary::default(),
+            corridor_n: 1,
+            green_wave: false,
+            corridor: CorridorSummary::default(),
             scene,
             layout,
             mode: ControlMode::Signal,
@@ -123,7 +131,7 @@ impl App {
     }
 
     /// Optional overrides for scripted runs: TS_LAYOUT, TS_MODE, TS_CTRL, TS_TWIN (B side:
-    /// a controller or allway/twoway), TS_SPEED, TS_ZOOM, TS_COLOR, TS_NIGHT, TS_COND,
+    /// a controller or allway/twoway), TS_CORRIDOR (signals), TS_WAVE, TS_SPEED, TS_ZOOM, TS_COLOR, TS_NIGHT, TS_COND,
     /// TS_LOOP_FAULT, TS_SHOT (png path) + TS_SHOT_AFTER (sim seconds).
     fn with_env(mut self) -> Self {
         let var = |k: &str| std::env::var(k).ok();
@@ -141,6 +149,10 @@ impl App {
         if let Some(c) = var("TS_CTRL").and_then(|v| CtrlKind::ALL.into_iter().find(|k| k.short() == v)) {
             self.ctrl = c;
         }
+        if let Some(n) = var("TS_CORRIDOR").and_then(|v| v.parse().ok()) {
+            self.corridor_n = n;
+        }
+        self.green_wave = var("TS_WAVE").is_some();
         if let Some(b) = var("TS_TWIN") {
             self.twin = Some(World::single(Sim::new(self.layout, ControlMode::Signal, CtrlKind::Fixed, 0)));
             match CtrlKind::ALL.into_iter().find(|k| k.short() == b) {
@@ -182,13 +194,14 @@ impl App {
         let net = Network::build(self.layout);
         let demand = if keep_demand && old.net.kind == self.layout { old.demand.clone() } else { DemandConfig::default_for(&net) };
         let template = Self::settings_of(old);
-        self.world = World::single(self.make_sim(net, self.mode, self.ctrl, demand, &template));
-        self.focus = 0;
+        self.world = self.make_world(self.mode, self.ctrl, demand, &template);
+        // The view is centred on the middle of the corridor: start the panels there.
+        self.focus = self.world.sims.len() / 2;
         self.rebuild_twin();
         if self.scene.kind != self.layout {
             self.scene = Scene::build(&self.world.sims[0].net);
-            self.fitted = false;
         }
+        self.fitted = false;
         self.selected = None;
         self.stats_from = 0.0;
         self.summary = Summary::default();
@@ -205,8 +218,8 @@ impl App {
         }
         let src = &self.world.sims[0];
         let template = Self::settings_of(src);
-        let sim = self.make_sim(Network::build(self.layout), self.twin_mode, self.twin_ctrl, src.demand.clone(), &template);
-        self.twin = Some(World::single(sim));
+        let demand = src.demand.clone();
+        self.twin = Some(self.make_world(self.twin_mode, self.twin_ctrl, demand, &template));
         self.twin_summary = Summary::default();
     }
 
@@ -223,17 +236,23 @@ impl App {
         t
     }
 
-    fn make_sim(&self, net: Network, mode: ControlMode, ctrl: CtrlKind, demand: DemandConfig, settings: &Sim) -> Sim {
-        let mut sim = Sim::with_demand(net, mode, ctrl, demand, self.seed);
-        sim.sensors = settings.sensors.clone();
-        sim.rtor = settings.rtor;
-        sim.preemption = settings.preemption;
-        sim.max_wait_guard = settings.max_wait_guard;
-        sim.signal.lpi = settings.signal.lpi;
-        sim.ntor_peds = settings.ntor_peds;
-        sim.left_mode = settings.left_mode;
-        sim.check_safety = true;
-        sim
+    /// One intersection, or a corridor of `corridor_n` along the main road.
+    fn make_world(&self, mode: ControlMode, ctrl: CtrlKind, demand: DemandConfig, settings: &Sim) -> World {
+        let mut w = World::corridor(self.corridor_n, self.layout, mode, ctrl, &demand, self.seed);
+        for sim in &mut w.sims {
+            sim.sensors = settings.sensors.clone();
+            sim.rtor = settings.rtor;
+            sim.preemption = settings.preemption;
+            sim.max_wait_guard = settings.max_wait_guard;
+            sim.signal.lpi = settings.signal.lpi;
+            sim.ntor_peds = settings.ntor_peds;
+            sim.left_mode = settings.left_mode;
+            sim.check_safety = true;
+        }
+        if self.green_wave {
+            w.set_coordination(true);
+        }
+        w
     }
 
     /// Propagate settings edited on the focused intersection to the rest of the world
@@ -278,6 +297,7 @@ impl App {
         if self.summary_at.elapsed().as_millis() > 400 {
             let sim = &self.world.sims[self.focus];
             self.summary = sim.stats.summary(self.stats_from, sim.t, &sim.vehicles, &sim.queues);
+            self.corridor = self.world.corridor_summary(self.stats_from);
             if let Some(tw) = &self.twin {
                 let s = &tw.sims[self.focus.min(tw.sims.len() - 1)];
                 self.twin_summary = s.stats.summary(self.stats_from, s.t, &s.vehicles, &s.queues);
@@ -379,6 +399,27 @@ impl App {
             if layout != self.layout {
                 self.layout = layout;
                 self.rebuild(false);
+            }
+            let mut n = self.corridor_n;
+            ui.add(egui::Slider::new(&mut n, 1..=5).text("signals along main road"))
+                .on_hover_text("A corridor: intersections one block (420 m) apart on the east-west road. Traffic flows between them and queues spill back.");
+            if n != self.corridor_n {
+                self.corridor_n = n;
+                self.rebuild(true);
+            }
+            if self.corridor_n > 1 {
+                let mut gw = self.green_wave;
+                if ui
+                    .checkbox(&mut gw, "Fixed-time green wave")
+                    .on_hover_text("Common cycle and offsets that maximise the two-way green band (applies to fixed-time signals)")
+                    .changed()
+                {
+                    self.green_wave = gw;
+                    self.world.set_coordination(gw);
+                    if let Some(t) = self.twin.as_mut() {
+                        t.set_coordination(gw);
+                    }
+                }
             }
             let mut mode = self.mode;
             ui.label("Control");
@@ -525,6 +566,10 @@ impl App {
             ui.add_enabled(s.radar, egui::Slider::new(&mut s.radar_range, 80.0..=260.0).text("radar range m"));
             ui.checkbox(&mut s.cv, "Connected vehicles (V2I)");
             ui.add_enabled(s.cv, egui::Slider::new(&mut s.cv_rate, 0.0..=1.0).text("CV penetration"));
+            if self.corridor_n > 1 {
+                ui.checkbox(&mut s.upstream_link, "Upstream signal shares its outflow")
+                    .on_hover_text("Corridor: each signal is told which vehicles its upstream neighbour has just released toward it");
+            }
             ui.checkbox(&mut s.realistic, "Field-realistic sensor errors")
                 .on_hover_text("Cameras miss vehicles (weather, night, range, behind trucks) and only read intent from turn signals; loops fail and miss motorcycles; radar and connected-vehicle data are noisy");
             ui.add_enabled_ui(s.realistic, |ui| {
@@ -674,6 +719,30 @@ impl App {
                     self.stats_from = self.world.sims[self.focus].t;
                 }
             });
+            if self.world.is_corridor() {
+                let n = self.world.sims.len();
+                ui.horizontal(|ui| {
+                    if ui.small_button("◀").clicked() && self.focus > 0 {
+                        self.focus -= 1;
+                        self.selected = None;
+                    }
+                    ui.label(RichText::new(format!("Intersection {} of {} (west → east)", self.focus + 1, n)).strong());
+                    if ui.small_button("▶").clicked() && self.focus + 1 < n {
+                        self.focus += 1;
+                        self.selected = None;
+                    }
+                });
+                let c = self.corridor;
+                ui.label(RichText::new("Main-road trips end to end").small().color(Color32::from_gray(150)));
+                egui::Grid::new("corr").num_columns(4).spacing(vec2(16.0, 4.0)).show(ui, |ui| {
+                    Self::kpi(ui, "through trips", format!("{}", c.through_n), Color32::WHITE);
+                    Self::kpi(ui, "travel time", format!("{:.0} s", c.through_travel), Color32::WHITE);
+                    Self::kpi(ui, "stops / trip", format!("{:.2}", c.through_stops), Color32::WHITE);
+                    Self::kpi(ui, "delay / trip", format!("{:.0} s", c.through_delay), render::delay_color(c.through_delay / 2.0));
+                    ui.end_row();
+                });
+                ui.label(RichText::new("Below: the selected intersection").small().color(Color32::from_gray(150)));
+            }
             let signalized = self.world.sims[self.focus].signalized();
             let grade = los(s.avg_delay, signalized);
             let gcol = match grade {
@@ -1050,7 +1119,9 @@ impl App {
         if !self.fitted {
             let net = &self.world.sims[self.focus].net;
             let extent = net.legs.iter().map(|l| l.stop_dist).fold(0.0, f64::max) + 55.0;
-            self.scale = (rect.width().min(rect.height()) / (2.0 * extent as f32)).max(1.0);
+            let half_w = if self.twin.is_some() { rect.width() * 0.5 } else { rect.width() };
+            let span = (self.world.sims.len() - 1) as f64 * SPACING;
+            self.scale = (half_w / (2.0 * extent + span) as f32).min(rect.height() / (2.0 * extent as f32)).max(0.6);
             if let Some(z) = std::env::var("TS_ZOOM").ok().and_then(|v| v.parse::<f32>().ok()) {
                 self.scale *= z;
             }
@@ -1192,8 +1263,16 @@ impl App {
     fn paint_world(&self, painter: &egui::Painter, world: &World, rect: egui::Rect, label: &str, alpha: f64, main: bool) {
         painter.rect_filled(rect, 0.0, render::GRASS);
         let cam_for = |i: usize| Camera { center: self.cam_center - world.offsets[i], scale: self.scale, rect };
-        for i in 0..world.sims.len() {
-            self.scene.paint(painter, &cam_for(i), self.ov.night);
+        let n = world.sims.len();
+        for i in 0..n {
+            // Each intersection's scenery covers its own block (half-way to each
+            // neighbour), so one block's terrain doesn't paint over the next one's road.
+            let cam = cam_for(i);
+            let half = SPACING / 2.0;
+            let x0 = if i == 0 { rect.left() } else { cam.to_screen(v2(-half, 0.0)).x };
+            let x1 = if i + 1 == n { rect.right() } else { cam.to_screen(v2(half, 0.0)).x };
+            let clip = egui::Rect::from_x_y_ranges(x0..=x1, rect.y_range()).intersect(rect);
+            self.scene.paint(&painter.with_clip_rect(clip), &cam, self.ov.night);
         }
         for (i, sim) in world.sims.iter().enumerate() {
             let selected = if main && i == self.focus { self.selected } else { None };

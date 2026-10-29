@@ -73,6 +73,9 @@ pub struct SignalState {
     /// vehicle movements that turn across those crosswalks stay red this long.
     pub lpi: f64,
     lpi_hold: Vec<bool>,
+    /// Coordinated operation: WALK only starts with the stage (no late walk), so
+    /// pedestrian intervals never push a stage past its force-off.
+    pub no_late_walk: bool,
 }
 
 impl SignalState {
@@ -97,6 +100,7 @@ impl SignalState {
             switches: 0,
             lpi: 0.0,
             lpi_hold: vec![false; net.movements.len()],
+            no_late_walk: false,
         };
         s.history.push_back(StageSpan { stage: first, start: t, end: t });
         s
@@ -241,7 +245,9 @@ impl SignalState {
         match self.phase {
             Phase::Green => {
                 self.green_elapsed += dt;
-                self.serve_peds(net);
+                if !self.no_late_walk {
+                    self.serve_peds(net);
+                }
             }
             Phase::Yellow => {
                 if self.t_phase >= self.yellow {

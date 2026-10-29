@@ -84,6 +84,9 @@ pub struct SensorConfig {
     pub loop_fault: f64,
     /// Fraction of drivers who use their turn signal (camera intent).
     pub signal_use: f64,
+    /// Corridor: the upstream intersection shares the vehicles it has released toward
+    /// us (experimental: helps little in this simple form, see README).
+    pub upstream_link: bool,
 }
 
 impl Default for SensorConfig {
@@ -101,6 +104,7 @@ impl Default for SensorConfig {
             conditions: Conditions::Clear,
             loop_fault: 0.0,
             signal_use: 0.8,
+            upstream_link: false,
         }
     }
 }
@@ -467,6 +471,34 @@ impl Sim {
                     let mo = &mut view.moves[m];
                     mo.stopbar |= sb;
                     mo.last_actuation = mo.last_actuation.max(lp);
+                }
+            }
+        }
+        // Corridor: vehicles the upstream intersection is sending, beyond what our own
+        // sensors cover (intent unknown: attributed by turning shares).
+        if cfg.upstream_link {
+            let own = [(cfg.radar, cfg.radar_range), (cfg.camera, cfg.cam_range), (cfg.loops, cfg.adv_dist)]
+                .iter()
+                .filter(|x| x.0)
+                .map(|x| x.1)
+                .fold(0.0, f64::max);
+            for u in &self.upstream {
+                if u.dist <= own {
+                    continue;
+                }
+                let moves: Vec<usize> = (0..net.movements.len()).filter(|&m| net.movements[m].leg == u.leg).collect();
+                let total: f64 = moves.iter().map(|&m| flows[m]).sum();
+                for &m in &moves {
+                    view.moves[m].vehicles.push(Obs {
+                        eta: u.dist / u.speed.max(3.0),
+                        dist: u.dist,
+                        speed: u.speed,
+                        weight: flows[m] / total.max(1e-9),
+                        persons: u.kind.spec().occupancy,
+                        wait: 0.0,
+                        queued: false,
+                        kind: Some(u.kind),
+                    });
                 }
             }
         }

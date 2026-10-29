@@ -53,6 +53,9 @@ pub trait Controller: Send {
     fn as_hybrid(&mut self) -> Option<&mut hybrid::Hybrid> {
         None
     }
+    fn as_fixed(&mut self) -> Option<&mut fixed::FixedTime> {
+        None
+    }
     fn into_hybrid(self: Box<Self>) -> Option<Box<hybrid::Hybrid>> {
         None
     }
