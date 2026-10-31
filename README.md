@@ -4,6 +4,9 @@ A graphically rich, microscopic traffic-intersection simulator in Rust for explo
 signal control, sensing, pedestrian treatments and AI affect what drivers, transit riders
 and pedestrians actually experience, at one intersection or along a corridor.
 
+**[Try it in your browser](https://schreck61.github.io/intersection-lab/)**, no install
+needed, or download it for your desktop below.
+
 ![Arterial intersection under predictive control](docs/arterial.png)
 
 ## Install
@@ -27,6 +30,18 @@ cargo run --release --example fya                 # left-turn phasing modes
 cargo run --release --example satflow             # calibration against HCM saturation flow
 cargo test --release                              # safety + throughput regression tests
 ```
+
+The browser version is the same app compiled to WebAssembly. Build and serve it locally
+with [Trunk](https://trunk-rs.github.io/trunk/) (`rustup target add wasm32-unknown-unknown`
+first); GitHub Actions publishes it to GitHub Pages from `main`
+([`.github/workflows/pages.yml`](.github/workflows/pages.yml)):
+
+```bash
+trunk serve --release --open                      # http://127.0.0.1:8080
+```
+
+In the browser, benchmarks run one strategy at a time instead of in parallel, and trained
+weights can't be saved; everything else matches the desktop app.
 
 ## What you can do in the app
 

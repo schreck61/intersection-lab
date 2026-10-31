@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<!-- Copyright (c) 2026 Jim Schreckengast. SPDX-License-Identifier: MIT OR Apache-2.0 -->
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Intersection Lab</title>
+    <meta name="description" content="Microscopic traffic-intersection simulator for comparing signal control, sensing and AI, running in your browser.">
+    <base data-trunk-public-url>
+    <link data-trunk rel="rust" href="../Cargo.toml" data-bin="intersection-lab" data-wasm-opt="z">
+    <link data-trunk rel="icon" href="../packaging/linux/intersection-lab-256.png">
+    <!-- License and third-party notices, published next to the app. -->
+    <link data-trunk rel="copy-file" href="../LICENSE-MIT">
+    <link data-trunk rel="copy-file" href="../LICENSE-APACHE">
+    <link data-trunk rel="copy-file" href="../COPYRIGHT">
+    <link data-trunk rel="copy-file" href="../THIRD_PARTY_LICENSES.md">
+    <style>
+        html { touch-action: manipulation; }
+        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #1b1e24; }
+        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block; outline: none; }
+        #status {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            max-width: 32em; padding: 0 16px; text-align: center;
+            font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; color: #c8ccd4;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="app"></canvas>
+    <div id="status">Loading Intersection Lab…<noscript><br>It needs JavaScript and WebAssembly.</noscript></div>
+</body>
+</html>

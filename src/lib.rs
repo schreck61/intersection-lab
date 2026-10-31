@@ -27,10 +27,16 @@ pub fn run_scenario(
     warmup: f64,
     duration: f64,
 ) -> (Summary, u64) {
-    let net = Network::build(kind);
-    let mut sim = Sim::with_demand(net, mode, ctrl, demand.clone(), seed);
-    sim.sensors = sensors.clone();
+    let mut sim = scenario(kind, mode, ctrl, demand, sensors, seed);
     sim.run_for(warmup + duration);
     let s = sim.stats.summary(warmup, sim.t, &sim.vehicles, &sim.queues);
     (s, sim.collisions)
+}
+
+/// A fresh headless simulation of a scenario, ready to step.
+pub fn scenario(kind: LayoutKind, mode: ControlMode, ctrl: CtrlKind, demand: &DemandConfig, sensors: &SensorConfig, seed: u64) -> Sim {
+    let net = Network::build(kind);
+    let mut sim = Sim::with_demand(net, mode, ctrl, demand.clone(), seed);
+    sim.sensors = sensors.clone();
+    sim
 }

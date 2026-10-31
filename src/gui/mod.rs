@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Jim Schreckengast
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Interactive desktop front-end (eframe/egui).
+//! Interactive front-end (eframe/egui), on the desktop and in the browser.
 
+mod bench;
 pub mod charts;
 pub mod render;
 pub mod shot;
@@ -11,33 +12,27 @@ use crate::control::CtrlKind;
 use crate::sim::demand::{DemandConfig, Pattern, compass_index};
 use crate::sim::geom::v2;
 use crate::sim::network::{LayoutKind, Network, Turn};
-use crate::sim::sensors::{Conditions, SensorConfig, Source};
+use crate::sim::sensors::{Conditions, Source};
 use crate::sim::stats::{HIST_BIN, Summary, los};
 use crate::sim::vtypes::{ALL_KINDS, VKind};
 use crate::sim::world::{CorridorSummary, SPACING, World};
 use crate::sim::{ControlMode, LeftMode, Sim};
 use egui::{Color32, RichText, Sense, Ui, vec2};
+use bench::{Bench, BenchRow, Job};
 use render::{Camera, ColorBy, DrawCtx, Overlays, Scene};
-use std::sync::mpsc;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
+
+/// Running in a browser page (no file system or threads).
+const WEB: bool = cfg!(target_arch = "wasm32");
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tool {
     Select,
     Vehicle,
     Pedestrian,
-}
-
-struct BenchRow {
-    label: String,
-    summary: Summary,
-}
-
-struct Bench {
-    title: String,
-    rx: mpsc::Receiver<(usize, BenchRow)>,
-    total: usize,
-    rows: Vec<Option<BenchRow>>,
 }
 
 pub struct App {
@@ -640,7 +635,8 @@ impl App {
                     }
                     let mut saved = None;
                     ui.horizontal(|ui| {
-                        if ui.button("💾 Save weights").clicked() {
+                        // A browser page has no file system to save to.
+                        if !WEB && ui.button("💾 Save weights").clicked() {
                             let p = crate::control::rl::weights_path(layout.key());
                             std::fs::create_dir_all(p.parent().unwrap()).ok();
                             saved = Some(rl.save(&p).map(|_| p.display().to_string()));
@@ -656,7 +652,9 @@ impl App {
                         }
                     }
                 }
-                ui.label(RichText::new("Thorough training: cargo run --release --bin train").small().monospace());
+                if !WEB {
+                    ui.label(RichText::new("Thorough training: cargo run --release --bin train").small().monospace());
+                }
             }
             if self.ctrl == CtrlKind::Hybrid && self.mode == ControlMode::Signal {
                 ui.separator();
@@ -667,7 +665,7 @@ impl App {
                     ui.checkbox(&mut h.learning, "Keep learning online");
                     ui.add_enabled(h.learning, egui::Slider::new(&mut h.epsilon, 0.0..=0.5).text("exploration ε"));
                     ui.label(format!("tuning decisions {}  ·  replay {}  ·  updates {}", h.decisions, h.agent.replay_len(), h.agent.updates));
-                    if ui.button("💾 Save weights").clicked() {
+                    if !WEB && ui.button("💾 Save weights").clicked() {
                         let p = crate::control::hybrid::weights_path(layout.key());
                         std::fs::create_dir_all(p.parent().unwrap()).ok();
                         saved = Some(h.save(&p, f64::NAN, true).map(|_| p.display().to_string()));
@@ -679,7 +677,9 @@ impl App {
                         Err(e) => self.notify(format!("Save failed: {e}")),
                     }
                 }
-                ui.label(RichText::new("Training: cargo run --release --bin train all 400 900 hybrid").small().monospace());
+                if !WEB {
+                    ui.label(RichText::new("Training: cargo run --release --bin train all 400 900 hybrid").small().monospace());
+                }
             }
 
             ui.separator();
@@ -968,7 +968,7 @@ impl App {
         let kind = self.layout;
         let demand = self.world.sims[self.focus].demand.clone();
         let base = self.world.sims[self.focus].sensors.clone();
-        let mut jobs: Vec<(String, ControlMode, CtrlKind, SensorConfig)> = vec![];
+        let mut jobs: Vec<Job> = vec![];
         if sensor_study {
             let mut loops = base.clone();
             loops.camera = false;
@@ -995,63 +995,22 @@ impl App {
             ];
             for c in [CtrlKind::Actuated, CtrlKind::MaxPressure, CtrlKind::Predictive, CtrlKind::DeepRl, CtrlKind::Hybrid] {
                 for (name, s) in &packages {
-                    jobs.push((format!("{} · {}", c.short(), name), ControlMode::Signal, c, s.clone()));
+                    jobs.push(Job { label: format!("{} · {}", c.short(), name), mode: ControlMode::Signal, ctrl: c, sensors: s.clone() });
                 }
             }
         } else {
             for m in ControlMode::options(kind) {
                 if m == ControlMode::Signal {
                     for c in CtrlKind::ALL {
-                        jobs.push((c.name().to_string(), m, c, base.clone()));
+                        jobs.push(Job { label: c.name().to_string(), mode: m, ctrl: c, sensors: base.clone() });
                     }
                 } else {
-                    jobs.push((m.name().to_string(), m, CtrlKind::Fixed, base.clone()));
+                    jobs.push(Job { label: m.name().to_string(), mode: m, ctrl: CtrlKind::Fixed, sensors: base.clone() });
                 }
             }
         }
-        let (tx, rx) = mpsc::channel();
-        let total = jobs.len();
-        for (i, (label, mode, ctrl, sensors)) in jobs.into_iter().enumerate() {
-            let tx = tx.clone();
-            let demand = demand.clone();
-            std::thread::spawn(move || {
-                let mut acc: Option<Summary> = None;
-                let seeds = 3;
-                for seed in 0..seeds {
-                    let (s, _) = crate::run_scenario(kind, mode, ctrl, &demand, &sensors, 500 + seed, 300.0, 1200.0);
-                    acc = Some(match acc {
-                        None => s,
-                        Some(mut a) => {
-                            a.avg_delay += s.avg_delay;
-                            a.p95_delay += s.p95_delay;
-                            a.throughput_vph += s.throughput_vph;
-                            a.avg_stops += s.avg_stops;
-                            a.person_delay_all += s.person_delay_all;
-                            a.co2_per_veh += s.co2_per_veh;
-                            a.ped_avg_wait += s.ped_avg_wait;
-                            a.max_delay = a.max_delay.max(s.max_delay);
-                            a
-                        }
-                    });
-                }
-                let mut s = acc.unwrap();
-                let k = seeds as f64;
-                s.avg_delay /= k;
-                s.p95_delay /= k;
-                s.throughput_vph /= k;
-                s.avg_stops /= k;
-                s.person_delay_all /= k;
-                s.co2_per_veh /= k;
-                s.ped_avg_wait /= k;
-                tx.send((i, BenchRow { label, summary: s })).ok();
-            });
-        }
-        self.bench = Some(Bench {
-            title: if sensor_study { format!("Sensor study — {}", kind.name()) } else { format!("Controller comparison — {}", kind.name()) },
-            rx,
-            total,
-            rows: (0..total).map(|_| None).collect(),
-        });
+        let title = if sensor_study { format!("Sensor study — {}", kind.name()) } else { format!("Controller comparison — {}", kind.name()) };
+        self.bench = Some(Bench::start(title, kind, &demand, jobs));
         self.show_bench = true;
     }
 
@@ -1083,9 +1042,7 @@ impl App {
 
     fn bench_window(&mut self, ctx: &egui::Context) {
         let Some(b) = self.bench.as_mut() else { return };
-        while let Ok((i, row)) = b.rx.try_recv() {
-            b.rows[i] = Some(row);
-        }
+        b.poll(ctx);
         if !self.show_bench {
             return;
         }

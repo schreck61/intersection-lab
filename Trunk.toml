@@ -1,0 +1,5 @@
+# Browser build: `trunk serve` for local development, `trunk build --release` for
+# GitHub Pages (.github/workflows/pages.yml).
+[build]
+target = "web/index.html"
+dist = "target/web"

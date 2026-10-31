@@ -1,7 +1,8 @@
 # Copyright (c) 2026 Jim Schreckengast
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
-# Build and test on every platform; check licenses, advisories and attributions.
+# Build and test on every platform, build the browser version, and check licenses,
+# advisories and attributions.
 name: CI
 
 on:
@@ -29,6 +30,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked --release --all-targets
       - run: cargo test --locked --release
+
+  web:
+    name: Web (wasm32)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --release --target wasm32-unknown-unknown --bin intersection-lab
 
   licenses:
     name: Licenses and advisories
