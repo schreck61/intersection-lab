@@ -45,7 +45,7 @@ jobs:
   macos:
     name: macOS (universal)
     needs: check
-    runs-on: macos-14
+    runs-on: macos-15
     # The signing secrets live on the `release` environment (v* tags only); manual runs
     # build an ad-hoc signed, unnotarized DMG outside it.
     environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'release' || '' }}
