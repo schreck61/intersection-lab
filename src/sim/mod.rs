@@ -1023,9 +1023,11 @@ impl Sim {
             let wm = self.vmax_on(w, other);
             let tv_in = Self::eta(d_v - zv0m, w.v, wspec.accel, wm);
             // ...and theirs assumes they may not speed up (they could be held by a leader),
-            // must first react if stopped, and won't clear at all while waiting in the zone.
+            // must first react if stopped, and won't clear at all while waiting in the zone
+            // (or, at a crossing, still creeping up to wherever it is yielding: going in
+            // behind it would leave us stopped across its path).
             let react = if w.v < 0.1 { (w.reaction - w.go_t).max(0.0) } else { 0.0 };
-            let tv_out = if occupying && idle {
+            let tv_out = if occupying && (idle || (w.yield_to.is_some() && !c.merge)) {
                 f64::INFINITY
             } else {
                 react
@@ -1075,19 +1077,43 @@ impl Sim {
         }).map(|x| x.0)
     }
 
-    /// Would every later conflict on link `lid` (beyond `s_from`) let us through now?
-    fn rest_clear(&self, i: usize, lid: LinkId, s_from: f64, base: f64, buf: &mut Vec<(usize, f64)>) -> bool {
+    /// Another vehicle committed to crossing zone `cid` that can no longer stop before it
+    /// and will get there while we would still be in it.
+    fn unstoppable_rival(&self, i: usize, cid: usize, d_a: f64, buf: &mut Vec<(usize, f64)>) -> Option<usize> {
+        let a = &self.vehicles[i];
+        let c = &self.net.conflicts[cid];
+        if c.merge {
+            return None;
+        }
+        let my_link = if Self::route_index(a, c.a).is_some() { c.a } else { c.b };
+        let (_, other, s_other) = c.side(my_link);
+        let ((_, za1), (zv0, zv1)) = c.zones(my_link);
+        let spec = a.spec();
+        let ta_out = Self::eta(d_a + za1 + spec.length, a.v, spec.accel * 0.7, self.vmax_on(a, my_link));
+        self.threats(other, s_other, zv1, i, buf);
+        buf.iter().find(|&&(j, d_v)| {
+            let w = &self.vehicles[j];
+            w.commits.contains(&cid)
+                && w.v > 1.0
+                && w.v * w.v / (2.0 * (d_v - zv0).max(0.1)) > 4.5
+                && Self::eta(d_v - zv0, w.v, w.spec().accel, self.vmax_on(w, other)) < ta_out + 0.8
+        }).map(|x| x.0)
+    }
+
+    /// The vehicle, if any, that a later conflict on link `lid` (beyond `s_from`) would
+    /// make us yield to now.
+    fn rest_blocker(&self, i: usize, lid: LinkId, s_from: f64, base: f64, buf: &mut Vec<(usize, f64)>) -> Option<usize> {
         let v = &self.vehicles[i];
         for &cid in &self.net.links[lid].conflicts {
             let (s_c, _, _) = self.net.conflicts[cid].side(lid);
             if s_c <= s_from + 0.01 || v.commits.contains(&cid) {
                 continue;
             }
-            if self.must_yield(i, cid, base + s_c, buf).is_some() {
-                return false;
+            if let Some(j) = self.must_yield(i, cid, base + s_c, buf) {
+                return Some(j);
             }
         }
-        true
+        None
     }
 
     /// Is anyone (not stopping for a signal/sign) expected at conflict `cid` soon?
@@ -1201,12 +1227,20 @@ impl Sim {
             if sib == mine {
                 continue;
             }
-            for &j in &self.occ[sib] {
+            // Those on the sibling, and long ones whose front has moved on past its end
+            // (a right-turn connector is shorter than a truck): (vehicle, rear on `sib`).
+            let len_sib = self.net.links[sib].length();
+            let on_sib = self.occ[sib].iter().map(|&j| (j, self.vehicles[j].s - self.vehicles[j].len()));
+            let beyond = self.net.links[sib].succ.iter().flat_map(|&x| &self.occ[x]).filter_map(|&j| {
+                let w = &self.vehicles[j];
+                let rear = len_sib + w.s - w.len();
+                (w.ri > 0 && w.route[w.ri - 1] == sib && rear < len_sib).then_some((j, rear))
+            });
+            for (j, rear) in on_sib.chain(beyond) {
                 if j == i {
                     continue;
                 }
                 let w = &self.vehicles[j];
-                let rear = w.s - w.len();
                 let gap = base + rear;
                 if gap < -1.0 || gap > 40.0 {
                     continue;
@@ -1457,12 +1491,16 @@ impl Sim {
         }
         let mut acc = Self::idm(spec, v.v, v0, 1e9, 0.0);
         let mut blocked = false;
+        // Where we will come to rest behind a leader that is waiting or pulling up to wait
+        // (not just slow).
+        let mut queue_gap = None;
         if let Some((gap, vl, j)) = self.leader(i) {
             let w = &self.vehicles[j];
-            blocked = v.v < 0.5
-                && gap < 8.0
-                && w.v < 0.3
-                && (w.blocked || matches!(w.reason, Reason::Yielding | Reason::Pedestrian | Reason::Signal | Reason::StopSign | Reason::LaneChange));
+            let waiting = w.blocked || matches!(w.reason, Reason::Yielding | Reason::Pedestrian | Reason::Signal | Reason::StopSign | Reason::LaneChange);
+            blocked = v.v < 0.5 && gap < 8.0 && w.v < 0.3 && waiting;
+            if waiting || w.yield_to.is_some() {
+                queue_gap = Some(gap + vl * vl / (2.0 * 3.0) - spec.min_gap + 0.6);
+            }
             let a2 = Self::idm(spec, v.v, v0, gap, v.v - vl);
             if a2 < acc {
                 acc = a2;
@@ -1604,9 +1642,10 @@ impl Sim {
                     let stale = v.v < 0.3 && v.a <= 0.05 && d - zn > 0.3;
                     if !stale {
                         // A commitment grants priority, not room: if someone has stalled
-                        // inside the zone since, stop short of it while we still can.
+                        // inside the zone since, or someone who committed in the same
+                        // instant can no longer stop, stop short of it while we still can.
                         if d - zn > 0.3 {
-                            if let Some(j) = self.stalled_in_zone(i, cid, buf) {
+                            if let Some(j) = self.stalled_in_zone(i, cid, buf).or_else(|| self.unstoppable_rival(i, cid, d, buf)) {
                                 let gap = d - zn - 0.8;
                                 if can_stop(gap) || v.v < 1.0 {
                                     yield_to = Some(self.vehicles[j].id);
@@ -1642,9 +1681,10 @@ impl Sim {
                     let brake = v.v * v.v / (2.0 * 3.0) + 3.0;
                     if d - zn < brake || hold_line_mode {
                         // Permissive movers accept a gap only for the rest of the turn.
-                        if st.rank <= 1.0 && !hold_line_mode && !self.rest_clear(i, lid, s_c, base, buf) {
+                        if st.rank <= 1.0 && !hold_line_mode && let Some(j) = self.rest_blocker(i, lid, s_c, base, buf) {
                             let gap = d - zn - 0.8;
                             if can_stop(gap) || v.v < 1.0 {
+                                yield_to = Some(self.vehicles[j].id);
                                 stop_gap = Some((gap, Reason::Yielding));
                                 break 'outer;
                             }
@@ -1677,55 +1717,75 @@ impl Sim {
             k += 1;
         }
         let mut drop = stale_drop;
+        // Don't block the box: if stopping at `gap` would leave our body in a conflict
+        // zone (or only a crossing) that live traffic needs, including zones we would
+        // only creep into while waiting, stop before it instead.
+        let unblock = |mut gap: f64, crossings: bool, drop: &mut Vec<usize>, buf: &mut Vec<(usize, f64)>| -> f64 {
+            let mut ahead = passing.clone();
+            let mut base = -v.s;
+            for &lid in &v.route[v.ri..] {
+                let l = &self.net.links[lid];
+                if base > gap || l.kind == LinkKind::Outbound {
+                    break;
+                }
+                for &cid in &l.conflicts {
+                    let c = &self.net.conflicts[cid];
+                    let ((zn, zone), _) = c.zones(lid);
+                    let d = base + c.side(lid).0;
+                    if d - zn < gap && d + zone + spec.length > 0.0 && !ahead.iter().any(|x| x.0 == cid) {
+                        ahead.push((cid, d, zone, zn));
+                    }
+                }
+                base += l.length();
+            }
+            ahead.sort_by(|a, b| (a.1 - a.3).partial_cmp(&(b.1 - b.3)).unwrap());
+            loop {
+                let mut changed = false;
+                for &(cid, d, zone, zn) in ahead.iter().rev() {
+                    if drop.contains(&cid) || (crossings && self.net.conflicts[cid].merge) || !(d - zn < gap && d + zone > gap - spec.length) {
+                        continue;
+                    }
+                    let g2 = d - zn - 0.8;
+                    if g2 > -0.3 && g2 < gap && (can_stop(g2) || v.v < 1.0) && self.live_threat(i, cid, buf) {
+                        gap = g2;
+                        drop.push(cid);
+                        changed = true;
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+            gap
+        };
+        let mut stop = f64::INFINITY;
         if let Some((mut gap, r)) = stop_gap {
             if hold_line_mode {
                 // Holding at the line: give back commitments made this step.
                 commits.clear();
             } else {
-                // Don't block the box: if stopping here would leave our body in a
-                // conflict zone that live traffic needs (including zones we would only
-                // creep into while waiting), stop before it instead.
-                let mut ahead = passing.clone();
-                let mut base = -v.s;
-                for &lid in &v.route[v.ri..] {
-                    let l = &self.net.links[lid];
-                    if base > gap || l.kind == LinkKind::Outbound {
-                        break;
-                    }
-                    for &cid in &l.conflicts {
-                        let c = &self.net.conflicts[cid];
-                        let ((zn, zone), _) = c.zones(lid);
-                        let d = base + c.side(lid).0;
-                        if d - zn < gap && d + zone + spec.length > 0.0 && !ahead.iter().any(|x| x.0 == cid) {
-                            ahead.push((cid, d, zone, zn));
-                        }
-                    }
-                    base += l.length();
-                }
-                ahead.sort_by(|a, b| (a.1 - a.3).partial_cmp(&(b.1 - b.3)).unwrap());
-                loop {
-                    let mut changed = false;
-                    for &(cid, d, zone, zn) in ahead.iter().rev() {
-                        if drop.contains(&cid) || !(d - zn < gap && d + zone > gap - spec.length) {
-                            continue;
-                        }
-                        let g2 = d - zn - 0.8;
-                        if g2 > -0.3 && g2 < gap && (can_stop(g2) || v.v < 1.0) && self.live_threat(i, cid, buf) {
-                            gap = g2;
-                            drop.push(cid);
-                            changed = true;
-                        }
-                    }
-                    if !changed {
-                        break;
-                    }
-                }
+                gap = unblock(gap, false, &mut drop, buf);
                 commits.retain(|c| !drop.contains(c));
             }
+            stop = gap;
             let a2 = stop_at(gap.max(0.0));
             if a2 < acc {
                 acc = a2;
                 reason = r;
+            }
+        }
+        // Queueing behind a waiting leader mustn't leave us across a crossing either (car
+        // following already handles a queue stop that blocks nothing, and at a merge we
+        // just fall in behind). That stop is only a forecast, so keep the commitments:
+        // they lapse anyway once we are standing.
+        if let Some(q) = queue_gap.filter(|&q| !hold_line_mode && q < stop) {
+            let gap = unblock(q, true, &mut drop.clone(), buf);
+            if gap < q {
+                let a2 = stop_at(gap.max(0.0));
+                if a2 < acc {
+                    acc = a2;
+                    reason = Reason::Following;
+                }
             }
         }
         (acc.clamp(-9.0, spec.accel), reason, commits, stop_done, ydec, (blocked, if stop_gap.is_some() { yield_to } else { None }), drop)

@@ -82,7 +82,7 @@ Keyboard: `Space` pauses. Mouse wheel zooms, drag pans.
 | Yellow | Dilemma-zone behaviour: drivers under ~2 s from the line (or facing hard braking) continue; the all-red covers them |
 | Turning speed | Curvature of each connector → comfortable lateral acceleration |
 | Lanes | Left-turn bays are 75 m storage lanes carved out of the median; left-turners arrive in the next lane and merge in, and wait behind the bay queue when it is full (bay spillback). Discretionary lane changes use **MOBIL** (safety criterion + politeness-weighted incentive), never across the solid line in the last 25 m |
-| Right of way | Paths are intersected into **conflict points** with measured zones. Vehicles compare priority (signal, stop order, circulating vs entering) and predicted occupancy windows, accept gaps for the whole manoeuvre, and **commit** once they can't stop. A commitment grants priority, not room: committed vehicles still stop for anyone stalled in the zone, and a vehicle waiting inside a zone holds it. Wait-for cycles are broken by ignoring vehicles that are themselves waiting |
+| Right of way | Paths are intersected into **conflict points** with measured zones. Vehicles compare priority (signal, stop order, circulating vs entering) and predicted occupancy windows, accept gaps for the whole manoeuvre, and **commit** once they can't stop. A commitment grants priority, not room: committed vehicles still stop for anyone stalled in the zone, and a vehicle waiting inside a zone holds it. Wait-for cycles are broken by ignoring vehicles that are themselves waiting, and gridlock is avoided by never pulling into a crossing behind a vehicle that is still creeping up to where it will wait. If two vehicles commit to a crossing in the same instant, the one that can still stop gives way; followers keep seeing a long vehicle that turns off until its tail clears the split |
 | Corridors | Vehicles leaving an intersection enter the next one's approach; when it is full they wait on the exit road, and drivers don't enter the box without room to clear it |
 | Signals | Stage-based state machine with yellow and all-red, pedestrian WALK + flashing DON'T WALK, min green stretched for pedestrians, right turn on red, optional LPI |
 | Pedestrians | Push-button calls, walk in compatible stages, vehicles yield; at unsignalised crosswalks they assert right of way to vehicles that can stop comfortably |
@@ -137,15 +137,15 @@ those still queued, so a policy can't look good by starving an approach. Lower i
 
 | Person delay\* (s) | Arterial | Major/minor | Town | T-junction |
 |---|---|---|---|---|
-| Fixed-time (Webster) | 30.5 | 37.9 | 28.6 | 21.2 |
-| Actuated (NEMA) | 38.4 | 54.2 | 25.5 | 17.9 |
-| Max-Pressure | 20.1 | 21.6 | 29.9 | 15.8 |
-| Predictive MPC | **16.7** | 25.4 | 23.1 | 14.0 |
-| Deep RL | 28.5 | 33.4 | 44.9 | 13.7 † |
-| **Hybrid (RL-tuned predictive)** | 17.4 | **19.8** | **22.0** | **13.1** |
-| All-way stop | 147.2 | 104.7 | 61.0 | 28.3 |
-| Two-way stop | — | 164.4 | — | 57.3 |
-| Roundabout | 16.4 | | | |
+| Fixed-time (Webster) | 30.5 | 38.0 | 28.9 | 21.2 |
+| Actuated (NEMA) | 37.6 | 54.2 | 26.5 | 17.9 |
+| Max-Pressure | 20.0 | 21.5 | 28.5 | 15.8 |
+| Predictive MPC | **16.8** | 25.7 | 23.2 | 14.1 |
+| Deep RL | 29.0 | 29.8 | 49.0 | 13.8 † |
+| **Hybrid (RL-tuned predictive)** | 17.5 | **21.4** | **22.2** | **13.2** |
+| All-way stop | 142.2 | 103.9 | 60.8 | 28.5 |
+| Two-way stop | — | 157.6 | — | 41.9 |
+| Roundabout | 16.2 | | | |
 
 † Deep RL's low delay on the T-junction comes with 43 s pedestrian waits (others ~22 s).
 Zero vehicle overlaps in every run.

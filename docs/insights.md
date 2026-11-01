@@ -12,11 +12,11 @@ the end.
 
 | Controller | Arterial | Major/minor | Town | T-junction |
 |---|---|---|---|---|
-| Fixed-time (Webster) | 30.5 s | 37.9 s | 28.6 s | 21.2 s |
-| Actuated (NEMA) | 38.4 s | 54.2 s | 25.5 s | 17.9 s |
-| Max-Pressure | 20.1 s | 21.6 s | 29.9 s | 15.8 s |
-| Predictive | **16.7 s** | 25.4 s | 23.1 s | 14.0 s |
-| Hybrid (RL-tuned predictive) | 17.4 s | **19.8 s** | **22.0 s** | **13.1 s** |
+| Fixed-time (Webster) | 30.5 s | 38.0 s | 28.9 s | 21.2 s |
+| Actuated (NEMA) | 37.6 s | 54.2 s | 26.5 s | 17.9 s |
+| Max-Pressure | 20.0 s | 21.5 s | 28.5 s | 15.8 s |
+| Predictive | **16.8 s** | 25.7 s | 23.2 s | 14.1 s |
+| Hybrid (RL-tuned predictive) | 17.5 s | **21.4 s** | **22.2 s** | **13.2 s** |
 
 - **Multi-lane layouts:** predictive control and Max-Pressure cut delay 30–45% against a
   well-tuned fixed plan, and cut pedestrian waits by a third to a half.
@@ -82,7 +82,7 @@ the end.
 
 ## 7. Choosing the intersection type
 
-- **Roundabout:** excellent at moderate traffic (16.4 s, comparable to the best signals).
+- **Roundabout:** excellent at moderate traffic (16.2 s, comparable to the best signals).
 - **Two-way stop:** fails once the major road is busy, because side-street drivers can't
   find gaps.
 - **All-way stop:** only competitive at low traffic once drivers take a realistic moment to
