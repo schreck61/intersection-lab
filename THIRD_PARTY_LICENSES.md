@@ -4806,7 +4806,7 @@ SOFTWARE.
 
 Used by:
 
-* intersection-lab 0.1.0 (https://github.com/schreck61/intersection-lab)
+* intersection-lab 0.2.0 (https://github.com/schreck61/intersection-lab)
 
 ```text
 MIT License
