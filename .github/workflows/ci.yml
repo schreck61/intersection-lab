@@ -1,8 +1,8 @@
 # Copyright (c) 2026 Jim Schreckengast
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
-# Build and test on every platform, build the browser version, and check licenses,
-# advisories and attributions.
+# Build and test on every platform, build the browser version, lint with clippy, and
+# check licenses, advisories and attributions.
 name: CI
 
 on:
@@ -41,6 +41,19 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked --release --target wasm32-unknown-unknown --bin intersection-lab
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --locked --release --all-targets -- -D warnings
+      - run: cargo clippy --locked --release --target wasm32-unknown-unknown --bin intersection-lab -- -D warnings
 
   licenses:
     name: Licenses and advisories
