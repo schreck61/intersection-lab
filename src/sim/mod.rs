@@ -1116,7 +1116,8 @@ impl Sim {
         None
     }
 
-    /// Is anyone (not stopping for a signal/sign) expected at conflict `cid` soon?
+    /// Is anyone (not stopping for a sign) expected at conflict `cid` soon? Vehicles held
+    /// at a red count: the light may change while we are still waiting in their path.
     fn live_threat(&self, i: usize, cid: usize, buf: &mut Vec<(usize, f64)>) -> bool {
         let a = &self.vehicles[i];
         let c = &self.net.conflicts[cid];
@@ -1125,7 +1126,8 @@ impl Sim {
         self.threats(other, s_other, c.zones(my_link).1.1, i, buf);
         buf.iter().any(|&(j, d_v)| {
             let w = &self.vehicles[j];
-            !self.vstat[j].excluded && d_v > -1.0 && Self::eta(d_v, w.v, w.spec().accel, w.v0) < 12.0
+            let sj = self.vstat[j];
+            (!sj.excluded || sj.reason_stop == 1) && d_v > -1.0 && Self::eta(d_v, w.v, w.spec().accel, w.v0) < 12.0
         })
     }
 

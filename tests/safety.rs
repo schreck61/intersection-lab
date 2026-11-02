@@ -56,17 +56,23 @@ fn identical_arrivals_across_controllers() {
 
 /// Busy arterials used to lock up now and then: vehicles caught in the box by a phase
 /// change, and permissive left-turners waiting for a gap, each stopped across another's
-/// path. These seeds all gridlocked before that was fixed.
+/// path, or across a path whose light was red but turned green while they waited. These
+/// seeds all gridlocked before that was fixed.
 #[test]
 fn no_gridlock_when_oversaturated() {
     use intersection_lab::sim::demand::DemandConfig;
     use intersection_lab::sim::network::Network;
     use std::collections::HashMap;
 
-    let cases = [(CtrlKind::Hybrid, 2, 1.25), (CtrlKind::Predictive, 11, 1.4), (CtrlKind::MaxPressure, 10, 1.4)];
+    let cases = [
+        (CtrlKind::Hybrid, 2, 1.25, 2400.0),
+        (CtrlKind::Predictive, 11, 1.4, 2400.0),
+        (CtrlKind::MaxPressure, 10, 1.4, 2400.0),
+        (CtrlKind::MaxPressure, 2, 1.25, 3800.0),
+    ];
     let handles: Vec<_> = cases
         .into_iter()
-        .map(|(c, seed, scale)| {
+        .map(|(c, seed, scale, until)| {
             std::thread::spawn(move || {
                 let net = Network::build(LayoutKind::Arterial4);
                 let mut demand = DemandConfig::default_for(&net);
@@ -74,7 +80,7 @@ fn no_gridlock_when_oversaturated() {
                 let mut sim = Sim::with_demand(net, ControlMode::Signal, c, demand, seed);
                 // How long each vehicle inside the intersection has been standing still.
                 let mut still: HashMap<u64, f64> = HashMap::new();
-                while sim.t < 2400.0 {
+                while sim.t < until {
                     sim.step();
                     for v in &sim.vehicles {
                         let t = still.entry(v.id).or_insert(0.0);

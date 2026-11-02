@@ -13,7 +13,7 @@ Every release also carries `SHA256SUMS.txt` and a signed build-provenance attest
 for each file. Users can verify a download with:
 
 ```bash
-gh attestation verify IntersectionLab-0.1.0-macos-universal.dmg --repo schreck61/intersection-lab
+gh attestation verify IntersectionLab-0.2.0-macos-universal.dmg --repo schreck61/intersection-lab
 ```
 
 ## Making a release
@@ -22,8 +22,8 @@ gh attestation verify IntersectionLab-0.1.0-macos-universal.dmg --repo schreck61
    regenerate the attributions if dependencies changed: `packaging/licenses.sh`.
 2. Commit, then tag and push:
    ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
+   git tag v0.2.0
+   git push origin v0.2.0
    ```
 3. The workflow checks that the tag matches `Cargo.toml`, verifies licenses and
    attributions, builds and signs every package, and creates a **draft** release with
