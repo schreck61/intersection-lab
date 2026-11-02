@@ -114,21 +114,21 @@ impl Hybrid {
     /// keeps the planner's default tuning (it behaves exactly like the predictive
     /// controller).
     pub fn load_or_new(net: &Network) -> Self {
-        if let Some((txt, source)) = super::weights::load(&weights_file(net.kind.key())) {
-            if let Ok(sv) = serde_json::from_str::<SavedHybrid>(&txt) {
-                let mut h = match sv.model {
-                    Some(m) if m.n_in == n_inputs(net) && m.n_out == N_ACTIONS => {
-                        let mut h = Self::with_agent(net, Dqn::from_net(m.net, Rng::new(11)));
-                        h.episodes = m.episodes;
-                        h.has_model = true;
-                        h
-                    }
-                    _ => Self::new(net, 11),
-                };
-                h.base_action = sv.base_action.min(N_ACTIONS - 1);
-                h.loaded_from = Some(source);
-                return h;
-            }
+        if let Some((txt, source)) = super::weights::load(&weights_file(net.kind.key()))
+            && let Ok(sv) = serde_json::from_str::<SavedHybrid>(&txt)
+        {
+            let mut h = match sv.model {
+                Some(m) if m.n_in == n_inputs(net) && m.n_out == N_ACTIONS => {
+                    let mut h = Self::with_agent(net, Dqn::from_net(m.net, Rng::new(11)));
+                    h.episodes = m.episodes;
+                    h.has_model = true;
+                    h
+                }
+                _ => Self::new(net, 11),
+            };
+            h.base_action = sv.base_action.min(N_ACTIONS - 1);
+            h.loaded_from = Some(source);
+            return h;
         }
         Self::new(net, 11)
     }
@@ -180,14 +180,12 @@ impl Controller for Hybrid {
         if ctx.t >= self.next_decision {
             self.next_decision = ctx.t + DECISION_DT;
             let s = RlController::features(ctx);
-            if let Some((ps, pa, pt)) = self.prev.take() {
-                if self.learning {
-                    let disc = GAMMA_PER_2S.powf((ctx.t - pt) / 2.0) as f32;
-                    let mask2 = vec![true; N_ACTIONS];
-                    self.agent.push(Transition { s: ps, a: pa, r: self.r_acc as f32, s2: s.clone(), disc, mask2 });
-                    for _ in 0..4 {
-                        self.agent.train_step();
-                    }
+            if let Some((ps, pa, pt)) = self.prev.take() && self.learning {
+                let disc = GAMMA_PER_2S.powf((ctx.t - pt) / 2.0) as f32;
+                let mask2 = vec![true; N_ACTIONS];
+                self.agent.push(Transition { s: ps, a: pa, r: self.r_acc as f32, s2: s.clone(), disc, mask2 });
+                for _ in 0..4 {
+                    self.agent.train_step();
                 }
             }
             self.r_acc = 0.0;

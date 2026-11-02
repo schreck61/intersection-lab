@@ -420,7 +420,7 @@ impl Network {
         }
     }
 
-    fn add_stages(&mut self, defs: &[(&str, &[&str], &[&str], &[&str])]) {
+    fn add_stages(&mut self, defs: &[StageDef]) {
         for (name, g, rt, p) in defs {
             let mut stat = vec![None; self.movements.len()];
             for (list, st) in [(*g, MStat::G), (*rt, MStat::Rt), (*p, MStat::P)] {
@@ -495,6 +495,9 @@ fn connect(links: &mut [Link], a: LinkId, b: LinkId) {
 }
 
 type LegDef = (Compass, Vec<Vec<Turn>>, usize, bool);
+
+/// A stage by name, then the movements it serves as green, right-turn and permissive.
+type StageDef<'a> = (&'a str, &'a [&'a str], &'a [&'a str], &'a [&'a str]);
 
 fn build_signal(kind: LayoutKind, defs: Vec<LegDef>, lane_w: f64, speed: f64, yellow: f64, all_red: f64) -> Network {
     let mut legs: Vec<Leg> = defs
@@ -822,10 +825,8 @@ impl Network {
         }
         for (i, pc) in pcs.iter().enumerate() {
             self.links[pc.link].ped_conflicts.push(i);
-            if let Some(m) = self.links[pc.link].movement {
-                if !self.movements[m].crosswalks.contains(&pc.cw) {
-                    self.movements[m].crosswalks.push(pc.cw);
-                }
+            if let Some(m) = self.links[pc.link].movement && !self.movements[m].crosswalks.contains(&pc.cw) {
+                self.movements[m].crosswalks.push(pc.cw);
             }
         }
         self.ped_conflicts = pcs;

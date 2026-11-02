@@ -65,27 +65,23 @@ pub fn line_chart(ui: &mut Ui, title: &str, unit: &str, xs: &[f64], series: &[(&
         let r = p.text(pos2(lx, plot.top()), Align2::LEFT_TOP, format!("● {name} {}{unit}", fmt_num(last)), FontId::proportional(10.0), *col);
         lx = r.right() + 10.0;
     }
-    if let Some(h) = resp.hover_pos() {
-        if plot.contains(h) {
-            let xv = x0 + ((h.x - plot.left()) / plot.width()) as f64 * (x1 - x0);
-            let i = xs.partition_point(|&x| x < xv).min(xs.len() - 1);
-            p.line_segment([pos2(tx(xs[i]), plot.top()), pos2(tx(xs[i]), plot.bottom())], Stroke::new(1.0, Color32::from_white_alpha(40)));
-            let mut txt = format!("t={:.1} min", xs[i] / 60.0);
-            for (name, ys, _) in series {
-                txt.push_str(&format!("\n{name}: {}{unit}", fmt_num(ys[i])));
-            }
-            let pos = pos2((tx(xs[i]) + 8.0).min(plot.right() - 90.0), plot.top() + 14.0);
-            let g = p.layout_no_wrap(txt, FontId::proportional(10.0), Color32::WHITE);
-            p.rect_filled(Rect::from_min_size(pos - vec2(3.0, 2.0), g.size() + vec2(6.0, 4.0)), 3.0, Color32::from_black_alpha(200));
-            p.galley(pos, g, Color32::WHITE);
+    if let Some(h) = resp.hover_pos() && plot.contains(h) {
+        let xv = x0 + ((h.x - plot.left()) / plot.width()) as f64 * (x1 - x0);
+        let i = xs.partition_point(|&x| x < xv).min(xs.len() - 1);
+        p.line_segment([pos2(tx(xs[i]), plot.top()), pos2(tx(xs[i]), plot.bottom())], Stroke::new(1.0, Color32::from_white_alpha(40)));
+        let mut txt = format!("t={:.1} min", xs[i] / 60.0);
+        for (name, ys, _) in series {
+            txt.push_str(&format!("\n{name}: {}{unit}", fmt_num(ys[i])));
         }
+        let pos = pos2((tx(xs[i]) + 8.0).min(plot.right() - 90.0), plot.top() + 14.0);
+        let g = p.layout_no_wrap(txt, FontId::proportional(10.0), Color32::WHITE);
+        p.rect_filled(Rect::from_min_size(pos - vec2(3.0, 2.0), g.size() + vec2(6.0, 4.0)), 3.0, Color32::from_black_alpha(200));
+        p.galley(pos, g, Color32::WHITE);
     }
 }
 
 pub fn fmt_num(v: f64) -> String {
-    if v.abs() >= 1000.0 {
-        format!("{:.0}", v)
-    } else if v.abs() >= 100.0 {
+    if v.abs() >= 100.0 {
         format!("{:.0}", v)
     } else if v.abs() >= 10.0 {
         format!("{:.1}", v)
@@ -157,12 +153,10 @@ pub fn histogram(ui: &mut Ui, bins: &[u32], bin_w: f64, height: f32) {
             p.text(pos2(x + bw / 2.0, plot.bottom() + 2.0), Align2::CENTER_TOP, label, FontId::proportional(9.0), AXIS_TXT);
         }
     }
-    if let Some(h) = resp.hover_pos() {
-        if plot.contains(h) {
-            let i = (((h.x - plot.left()) / bw) as usize).min(bins.len() - 1);
-            let pct = if total > 0 { 100.0 * bins[i] as f32 / total as f32 } else { 0.0 };
-            p.text(pos2(plot.right(), plot.top()), Align2::RIGHT_TOP, format!("{:.0}–{:.0}s: {} veh ({:.0}%)", i as f64 * bin_w, (i + 1) as f64 * bin_w, bins[i], pct), FontId::proportional(10.0), Color32::WHITE);
-        }
+    if let Some(h) = resp.hover_pos() && plot.contains(h) {
+        let i = (((h.x - plot.left()) / bw) as usize).min(bins.len() - 1);
+        let pct = if total > 0 { 100.0 * bins[i] as f32 / total as f32 } else { 0.0 };
+        p.text(pos2(plot.right(), plot.top()), Align2::RIGHT_TOP, format!("{:.0}–{:.0}s: {} veh ({:.0}%)", i as f64 * bin_w, (i + 1) as f64 * bin_w, bins[i], pct), FontId::proportional(10.0), Color32::WHITE);
     }
 }
 
@@ -207,11 +201,9 @@ pub fn timeline(ui: &mut Ui, sim: &crate::sim::Sim, window: f64) {
         let b = tx(h.end);
         p.rect_filled(Rect::from_min_max(pos2(a, y + 1.5), pos2(b.max(a + 1.0), y + row_h - 2.5)), 2.0, SERIES[h.stage % SERIES.len()]);
         // Clearance gap (yellow + all-red) before the next stage.
-        if let Some(nx) = hist.get(hi + 1) {
-            if nx.start > h.end + 0.05 {
-                let ya = plot.top() + h.stage as f32 * row_h;
-                p.rect_filled(Rect::from_min_max(pos2(b, ya + 1.5), pos2(tx(nx.start).max(b + 1.0), ya + row_h - 2.5)), 1.0, Color32::from_rgb(230, 190, 40));
-            }
+        if let Some(nx) = hist.get(hi + 1) && nx.start > h.end + 0.05 {
+            let ya = plot.top() + h.stage as f32 * row_h;
+            p.rect_filled(Rect::from_min_max(pos2(b, ya + 1.5), pos2(tx(nx.start).max(b + 1.0), ya + row_h - 2.5)), 1.0, Color32::from_rgb(230, 190, 40));
         }
     }
     if sim.signal.phase != crate::sim::signal::Phase::Green {

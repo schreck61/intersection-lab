@@ -8,7 +8,7 @@
 
 use std::time::Instant;
 use intersection_lab::control::CtrlKind;
-use intersection_lab::run_scenario;
+use intersection_lab::{run_scenario, scenario};
 use intersection_lab::sim::demand::{DemandConfig, Pattern};
 use intersection_lab::sim::network::{LayoutKind, Network};
 use intersection_lab::sim::sensors::{Conditions, SensorConfig};
@@ -19,47 +19,27 @@ use intersection_lab::sim::ControlMode;
 fn sensor_study(kind: LayoutKind, minutes: f64, seeds: u64) {
     let net = Network::build(kind);
     let demand = DemandConfig::default_for(&net);
-    let mut loops = SensorConfig::default();
-    loops.camera = false;
-    loops.radar = false;
-    loops.cv = false;
-    let mut cam = loops.clone();
-    cam.camera = true;
-    let mut rad = cam.clone();
-    rad.radar = true;
-    let mut cv30 = rad.clone();
-    cv30.cv = true;
-    cv30.cv_rate = 0.3;
-    let mut cv_only = loops.clone();
-    cv_only.loops = false;
-    cv_only.cv = true;
-    cv_only.cv_rate = 1.0;
+    let loops = SensorConfig { camera: false, radar: false, cv: false, ..Default::default() };
+    let cam = SensorConfig { camera: true, ..loops.clone() };
+    let rad = SensorConfig { radar: true, ..cam.clone() };
+    let cv30 = SensorConfig { cv: true, cv_rate: 0.3, ..rad.clone() };
+    let cv_only = SensorConfig { loops: false, cv: true, cv_rate: 1.0, ..loops.clone() };
     let packages: Vec<(String, SensorConfig)> = vec![
         ("loops".into(), loops.clone()),
-        ("loops+camera".into(), cam.clone()),
+        ("loops+camera".into(), cam),
         ("+radar".into(), rad.clone()),
         ("+30% CV".into(), cv30),
         ("100% CV only".into(), cv_only),
         ("+radar IDEAL".into(), rad.clone().ideal()),
     ];
-    let title = format!("Sensor packages (realistic errors, clear day; last column ideal sensors)");
-    table(kind, &title, &packages, &demand, minutes, seeds);
+    table(kind, "Sensor packages (realistic errors, clear day; last column ideal sensors)", &packages, &demand, minutes, seeds);
 
     let mut conds: Vec<(String, SensorConfig)> = Conditions::ALL
         .iter()
-        .map(|&c| {
-            let mut s = rad.clone();
-            s.conditions = c;
-            (c.name().to_string(), s)
-        })
+        .map(|&c| (c.name().to_string(), SensorConfig { conditions: c, ..rad.clone() }))
         .collect();
-    let mut faulty = loops.clone();
-    faulty.loop_fault = 0.25;
-    conds.push(("loops, 25% faulty".into(), faulty));
-    let mut fog_faulty = rad.clone();
-    fog_faulty.conditions = Conditions::Fog;
-    fog_faulty.loop_fault = 0.25;
-    conds.push(("fog + 25% faulty".into(), fog_faulty));
+    conds.push(("loops, 25% faulty".into(), SensorConfig { loop_fault: 0.25, ..loops }));
+    conds.push(("fog + 25% faulty".into(), SensorConfig { conditions: Conditions::Fog, loop_fault: 0.25, ..rad }));
     table(kind, "Weather and detector faults (loops + camera + radar unless noted)", &conds, &demand, minutes, seeds);
 }
 
@@ -77,7 +57,7 @@ fn table(kind: LayoutKind, title: &str, packages: &[(String, SensorConfig)], dem
                 let (d, s) = (demand.clone(), s.clone());
                 std::thread::spawn(move || {
                     (0..seeds)
-                        .map(|k| run_scenario(kind, ControlMode::Signal, c, &d, &s, 1000 + k, 300.0, minutes * 60.0).0.person_delay_all)
+                        .map(|k| run_scenario(scenario(kind, ControlMode::Signal, c, &d, &s, 1000 + k), 300.0, minutes * 60.0).0.person_delay_all)
                         .sum::<f64>()
                         / seeds as f64
                 })
@@ -152,16 +132,8 @@ fn main() {
                     let t0 = Instant::now();
                     let mut acc = [0.0f64; 8];
                     for seed in 0..seeds {
-                        let (s, coll) = run_scenario(
-                            kind,
-                            mode,
-                            c.unwrap_or(CtrlKind::Fixed),
-                            &demand,
-                            &sensors,
-                            1000 + seed,
-                            300.0,
-                            minutes * 60.0,
-                        );
+                        let sim = scenario(kind, mode, c.unwrap_or(CtrlKind::Fixed), &demand, &sensors, 1000 + seed);
+                        let (s, coll) = run_scenario(sim, 300.0, minutes * 60.0);
                         acc[0] += s.avg_delay;
                         acc[1] += s.p95_delay;
                         acc[2] += s.throughput_vph;

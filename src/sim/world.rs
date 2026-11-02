@@ -144,7 +144,7 @@ impl World {
         let n = self.sims.len();
         let mut rooms: Vec<Vec<Option<(f64, f64)>>> = self.sims.iter().map(|s| vec![None; s.net.legs.len()]).collect();
         let mut ups: Vec<Vec<UpstreamObs>> = vec![vec![]; n];
-        for i in 0..n {
+        for (i, room_i) in rooms.iter_mut().enumerate() {
             for c in [Compass::E, Compass::W] {
                 let (Some(j), Some(out_leg)) = (self.neighbour(i, c), self.sims[i].net.leg_index(c)) else { continue };
                 let down = &self.sims[j];
@@ -160,7 +160,7 @@ impl World {
                         .map(|&l| down.entry_room(l))
                         .fold((0.0, 0.0), |a, b| if b.0 > a.0 { (b.0.min(1e3), b.1) } else { a })
                 };
-                rooms[i][out_leg] = Some(room);
+                room_i[out_leg] = Some(room);
                 // Outflow heading our way: vehicles the upstream signal has released (past
                 // its stop line), whose arrival is predictable at cruising speed.
                 let approach = down.net.links[down.net.legs[in_leg].in_lanes[0]].length();
@@ -178,9 +178,9 @@ impl World {
                 }
             }
         }
-        for (i, s) in self.sims.iter_mut().enumerate() {
-            s.exit_room = std::mem::take(&mut rooms[i]);
-            s.upstream = std::mem::take(&mut ups[i]);
+        for ((s, room), up) in self.sims.iter_mut().zip(rooms).zip(ups) {
+            s.exit_room = room;
+            s.upstream = up;
         }
     }
 

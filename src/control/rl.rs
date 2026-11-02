@@ -94,15 +94,14 @@ impl RlController {
     }
 
     pub fn load_or_new(net: &Network) -> Self {
-        if let Some((txt, source)) = super::weights::load(&weights_file(net.kind.key())) {
-            if let Ok(m) = serde_json::from_str::<SavedModel>(&txt) {
-                if m.n_in == n_inputs(net) && m.n_out == net.stages.len() {
-                    let mut c = Self::with_agent(net, Dqn::from_net(m.net, Rng::new(7)));
-                    c.episodes = m.episodes;
-                    c.loaded_from = Some(source);
-                    return c;
-                }
-            }
+        if let Some((txt, source)) = super::weights::load(&weights_file(net.kind.key()))
+            && let Ok(m) = serde_json::from_str::<SavedModel>(&txt)
+            && m.n_in == n_inputs(net) && m.n_out == net.stages.len()
+        {
+            let mut c = Self::with_agent(net, Dqn::from_net(m.net, Rng::new(7)));
+            c.episodes = m.episodes;
+            c.loaded_from = Some(source);
+            return c;
         }
         let mut c = Self::new(net, 7);
         // An untrained network should learn rather than act randomly forever.
@@ -224,10 +223,8 @@ impl Controller for RlController {
 
     fn step(&mut self, ctx: &Ctx) -> Option<usize> {
         self.r_acc -= ctx.reward_delay / REWARD_SCALE;
-        if let Some(e) = self.expert.as_mut() {
-            if let Some(j) = e.step(ctx) {
-                self.expert_wish = Some((j, ctx.t));
-            }
+        if let Some(e) = self.expert.as_mut() && let Some(j) = e.step(ctx) {
+            self.expert_wish = Some((j, ctx.t));
         }
         if ctx.sig.phase != Phase::Green || !ctx.can_switch || ctx.t < self.next_decision {
             return None;
@@ -236,16 +233,14 @@ impl Controller for RlController {
         self.cur = ctx.sig.stage;
         let s = Self::features(ctx);
         let mask = Self::shield(ctx);
-        if let Some((ps, pa, pt)) = self.prev.take() {
-            if self.learning {
-                let disc = GAMMA_PER_2S.powf((ctx.t - pt) / 2.0) as f32;
-                self.agent.push(Transition { s: ps, a: pa, r: self.r_acc as f32, s2: s.clone(), disc, mask2: mask.clone() });
-                self.since_train += 1;
-                if self.since_train >= self.train_every {
-                    self.since_train = 0;
-                    self.agent.train_step();
-                    self.agent.train_step();
-                }
+        if let Some((ps, pa, pt)) = self.prev.take() && self.learning {
+            let disc = GAMMA_PER_2S.powf((ctx.t - pt) / 2.0) as f32;
+            self.agent.push(Transition { s: ps, a: pa, r: self.r_acc as f32, s2: s.clone(), disc, mask2: mask.clone() });
+            self.since_train += 1;
+            if self.since_train >= self.train_every {
+                self.since_train = 0;
+                self.agent.train_step();
+                self.agent.train_step();
             }
         }
         self.reward_sum += self.r_acc;

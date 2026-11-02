@@ -542,26 +542,21 @@ impl Sim {
         let wish = self.controller.step(&ctx);
         // Emergency-vehicle preemption overrides the controller.
         self.preempt_active = false;
-        if self.preemption {
-            if let Some(&(m, eta)) =
-                self.view.emergency.iter().min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
-            {
-                if eta < 30.0 {
-                    self.preempt_active = true;
-                    let serves = |st: usize| self.net.stages[st].stat[m].is_some();
-                    if !serves(self.signal.stage) && self.signal.phase == Phase::Green {
-                        let target = (0..self.net.stages.len())
-                            .find(|&st| self.net.stages[st].stat[m] == Some(network::MStat::G))
-                            .or_else(|| (0..self.net.stages.len()).find(|&st| serves(st)));
-                        if let Some(j) = target {
-                            if self.signal.green_elapsed > 2.0 {
-                                self.signal.request(&self.net, j, self.t);
-                            }
-                        }
-                    }
-                    return;
+        if self.preemption
+            && let Some(&(m, eta)) = self.view.emergency.iter().min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+            && eta < 30.0
+        {
+            self.preempt_active = true;
+            let serves = |st: usize| self.net.stages[st].stat[m].is_some();
+            if !serves(self.signal.stage) && self.signal.phase == Phase::Green {
+                let target = (0..self.net.stages.len())
+                    .find(|&st| self.net.stages[st].stat[m] == Some(network::MStat::G))
+                    .or_else(|| (0..self.net.stages.len()).find(|&st| serves(st)));
+                if let Some(j) = target && self.signal.green_elapsed > 2.0 {
+                    self.signal.request(&self.net, j, self.t);
                 }
             }
+            return;
         }
         if !can {
             return;
@@ -612,10 +607,8 @@ impl Sim {
             g.clear();
         }
         for (i, v) in self.vehicles.iter().enumerate() {
-            if let Some(l) = v.lc_from {
-                if v.ri == 0 && v.lc_t < GHOST_T {
-                    self.ghosts[l].push(i);
-                }
+            if let Some(l) = v.lc_from && v.ri == 0 && v.lc_t < GHOST_T {
+                self.ghosts[l].push(i);
             }
         }
     }
@@ -1034,9 +1027,7 @@ impl Sim {
                     + Self::eta(d_v + zv1m + wspec.length, w.v, wspec.accel, wm)
                         .max((d_v + zv1m + wspec.length).max(0.0) / w.v.max(3.0))
             };
-            let w_priority = if committed {
-                true
-            } else if sw.rank > sa.rank {
+            let w_priority = if committed || sw.rank > sa.rank {
                 true
             } else if sw.rank < sa.rank {
                 false
@@ -1295,11 +1286,9 @@ impl Sim {
                     fresh.push(c);
                 }
             }
-            if let Some(sd) = stop_done {
-                if sd && !v.stop_done {
-                    v.stop_done = true;
-                    v.stop_t = self.t;
-                }
+            if let Some(sd) = stop_done && sd && !v.stop_done {
+                v.stop_done = true;
+                v.stop_t = self.t;
             }
             if ydec.is_some() {
                 v.yellow_dec = ydec;
@@ -1325,9 +1314,7 @@ impl Sim {
         // Integrate.
         let mut done_idx = Vec::new();
         let mut person_delay = 0.0;
-        for i in 0..self.vehicles.len() {
-            let mut acc = accs[i];
-            let veh = &mut self.vehicles[i];
+        for (i, (veh, mut acc)) in self.vehicles.iter_mut().zip(accs.iter().copied()).enumerate() {
             let spec = veh.kind.spec();
             // Drivers take a moment to react before pulling away (start-up lost time).
             // While waiting the vehicle keeps re-deciding, so any gap it accepts is judged
@@ -1598,13 +1585,12 @@ impl Sim {
             }
         }
         // Don't enter the intersection without room to clear it on the far side.
-        if on_approach && !line_hold && v.commits.is_empty() && (can_stop(d_line) || v.v < 1.0) && d_line < 30.0 {
-            if let Some(room) = self.exit_space(v) {
-                if room < spec.length + spec.min_gap + 1.0 {
-                    line_hold = true;
-                    reason = Reason::Following;
-                }
-            }
+        if on_approach && !line_hold && v.commits.is_empty() && (can_stop(d_line) || v.v < 1.0) && d_line < 30.0
+            && let Some(room) = self.exit_space(v)
+            && room < spec.length + spec.min_gap + 1.0
+        {
+            line_hold = true;
+            reason = Reason::Following;
         }
         if line_hold {
             let a2 = stop_at(d_line);
@@ -1646,15 +1632,15 @@ impl Sim {
                         // A commitment grants priority, not room: if someone has stalled
                         // inside the zone since, or someone who committed in the same
                         // instant can no longer stop, stop short of it while we still can.
-                        if d - zn > 0.3 {
-                            if let Some(j) = self.stalled_in_zone(i, cid, buf).or_else(|| self.unstoppable_rival(i, cid, d, buf)) {
-                                let gap = d - zn - 0.8;
-                                if can_stop(gap) || v.v < 1.0 {
-                                    yield_to = Some(self.vehicles[j].id);
-                                    stale_drop.push(cid);
-                                    stop_gap = Some((gap, Reason::Yielding));
-                                    break 'outer;
-                                }
+                        if d - zn > 0.3
+                            && let Some(j) = self.stalled_in_zone(i, cid, buf).or_else(|| self.unstoppable_rival(i, cid, d, buf))
+                        {
+                            let gap = d - zn - 0.8;
+                            if can_stop(gap) || v.v < 1.0 {
+                                yield_to = Some(self.vehicles[j].id);
+                                stale_drop.push(cid);
+                                stop_gap = Some((gap, Reason::Yielding));
+                                break 'outer;
                             }
                         }
                         passing.push((cid, d, zone, zn));
@@ -1827,10 +1813,8 @@ impl Sim {
                 cands.extend(self.lane_target(v));
             } else {
                 for t in [k.wrapping_sub(1), k + 1] {
-                    if let Some(&l) = lanes.get(t) {
-                        if serves(l) {
-                            cands.push(l);
-                        }
+                    if let Some(&l) = lanes.get(t) && serves(l) {
+                        cands.push(l);
                     }
                 }
             }

@@ -40,24 +40,20 @@ fn main() {
             }
             for v in &sim.vehicles {
                 let p = prev_ri.insert(v.id, v.ri).unwrap_or(0);
-                if p == 0 && v.ri >= 1 && v.movement == m {
-                    if let Some(g) = green_start {
-                        let lane = v.route[0];
-                        let n = count.entry(lane).or_insert(0);
-                        *n += 1;
-                        let since = sim.t - g;
-                        if *n > 4 {
-                            if let Some(&t0) = last_cross.get(&lane) {
-                                if v.queue_since.is_some() || v.stops > 0 {
-                                    headways.push(sim.t - t0);
-                                }
-                            }
-                        } else if *n == 4 {
-                            first_four.push(since);
+                if p == 0 && v.ri >= 1 && v.movement == m && let Some(g) = green_start {
+                    let lane = v.route[0];
+                    let n = count.entry(lane).or_insert(0);
+                    *n += 1;
+                    let since = sim.t - g;
+                    if *n > 4 {
+                        if let Some(&t0) = last_cross.get(&lane) && (v.queue_since.is_some() || v.stops > 0) {
+                            headways.push(sim.t - t0);
                         }
-                        last_cross.insert(lane, sim.t);
-                        crossings.push((lane, *n, since));
+                    } else if *n == 4 {
+                        first_four.push(since);
                     }
+                    last_cross.insert(lane, sim.t);
+                    crossings.push((lane, *n, since));
                 }
             }
         }

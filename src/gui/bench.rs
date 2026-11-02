@@ -76,7 +76,7 @@ impl Bench {
             let demand = demand.clone();
             std::thread::spawn(move || {
                 let runs = (0..SEEDS)
-                    .map(|seed| crate::run_scenario(kind, job.mode, job.ctrl, &demand, &job.sensors, 500 + seed, WARMUP, DURATION).0)
+                    .map(|seed| crate::run_scenario(crate::scenario(kind, job.mode, job.ctrl, &demand, &job.sensors, 500 + seed), WARMUP, DURATION).0)
                     .collect();
                 tx.send((i, BenchRow { label: job.label, summary: average(runs) })).ok();
             });

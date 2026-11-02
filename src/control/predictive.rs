@@ -65,8 +65,8 @@ impl Predictive {
     fn cost(ctx: &Ctx, blocks: &[Block], arr: &[Vec<Arr>], horizon: f64, fairness: f64) -> f64 {
         let net = ctx.net;
         let mut total = 0.0;
-        for m in 0..net.movements.len() {
-            if arr[m].is_empty() {
+        for (m, arrivals) in arr.iter().enumerate() {
+            if arrivals.is_empty() {
                 continue;
             }
             let lanes = lanes_for(net, m);
@@ -87,7 +87,7 @@ impl Predictive {
             }
             let mut wi = 0;
             let mut tnext = 0.0;
-            for &(eta, w, wait0) in &arr[m] {
+            for &(eta, w, wait0) in arrivals {
                 let mut t = eta.max(tnext);
                 let mut served = false;
                 while wi < wins.len() {
@@ -166,14 +166,14 @@ impl Predictive {
         while t < horizon {
             let mut best = None;
             let mut bv = 0.5;
-            for k in 0..net.stages.len() {
+            for (k, h_k) in h_eff.iter().enumerate() {
                 if k == prev {
                     continue;
                 }
                 let mut v = 0.0;
                 for m in 0..nm {
                     if stat(net, k, m).is_some() {
-                        v += (count_before(&counts[m], t) - served[m]).max(0.0) / h_eff[k][m];
+                        v += (count_before(&counts[m], t) - served[m]).max(0.0) / h_k[m];
                     }
                 }
                 if v > bv {
@@ -248,7 +248,7 @@ impl Controller for Predictive {
             if x > 0.0 && e + x > self.max_green {
                 continue;
             }
-            for j in 0..ns {
+            for (j, sw) in switch_cost.iter_mut().enumerate() {
                 if j == cur {
                     continue;
                 }
@@ -257,7 +257,7 @@ impl Controller for Predictive {
                 let c = Self::cost(ctx, &blocks, &arr, self.horizon, self.fairness);
                 let c = if x > 0.0 { c * (1.0 + self.hold_bias) } else { c };
                 if x == 0.0 {
-                    switch_cost[j] = switch_cost[j].min(c);
+                    *sw = sw.min(c);
                 } else {
                     hold_cost = hold_cost.min(c);
                 }
@@ -267,10 +267,8 @@ impl Controller for Predictive {
             }
         }
         self.bars = vec![(format!("Hold {}", self.names[cur]), hold_cost, best.1 > 0.0)];
-        for j in 0..ns {
-            if j != cur {
-                self.bars.push((format!("→ {}", self.names[j]), switch_cost[j], best.1 == 0.0 && best.2 == j));
-            }
+        for (j, &sw) in switch_cost.iter().enumerate().filter(|&(j, _)| j != cur) {
+            self.bars.push((format!("→ {}", self.names[j]), sw, best.1 == 0.0 && best.2 == j));
         }
         self.note = if best.1 > 0.0 {
             format!("plan: hold ~{:.0} s more, then {}", best.1, self.names[best.2])

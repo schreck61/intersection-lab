@@ -52,15 +52,10 @@ impl Mlp {
         for (li, l) in self.layers.iter().enumerate() {
             let inp = acts.last().unwrap();
             let mut out = l.b.clone();
-            for o in 0..l.n_out {
-                let row = &l.w[o * l.n_in..(o + 1) * l.n_in];
-                let mut s = 0.0f32;
-                for i in 0..l.n_in {
-                    s += row[i] * inp[i];
-                }
-                out[o] += s;
-                if li + 1 < nl && out[o] < 0.0 {
-                    out[o] = 0.0;
+            for (y, row) in out.iter_mut().zip(l.w.chunks_exact(l.n_in)) {
+                *y += row.iter().zip(inp).fold(0.0f32, |s, (w, x)| s + w * x);
+                if li + 1 < nl && *y < 0.0 {
+                    *y = 0.0;
                 }
             }
             acts.push(out);

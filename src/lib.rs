@@ -16,18 +16,9 @@ use sim::sensors::SensorConfig;
 use sim::stats::Summary;
 use sim::{ControlMode, Sim};
 
-/// Run one headless scenario and summarise everything that exited after warm-up.
-pub fn run_scenario(
-    kind: LayoutKind,
-    mode: ControlMode,
-    ctrl: CtrlKind,
-    demand: &DemandConfig,
-    sensors: &SensorConfig,
-    seed: u64,
-    warmup: f64,
-    duration: f64,
-) -> (Summary, u64) {
-    let mut sim = scenario(kind, mode, ctrl, demand, sensors, seed);
+/// Run a headless simulation (see [`scenario`]) for `warmup + duration` seconds and
+/// summarise everything that exited after warm-up, with the number of overlaps.
+pub fn run_scenario(mut sim: Sim, warmup: f64, duration: f64) -> (Summary, u64) {
     sim.run_for(warmup + duration);
     let s = sim.stats.summary(warmup, sim.t, &sim.vehicles, &sim.queues);
     (s, sim.collisions)

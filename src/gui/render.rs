@@ -568,31 +568,27 @@ pub fn paint_dynamic(painter: &egui::Painter, dc: &DrawCtx) {
             painter.circle_stroke(cam.to_screen(p), (1.0 * cam.scale).max(3.0), Stroke::new(1.5, col));
         }
     }
-    if let Some(id) = dc.selected {
-        if let Some(v) = sim.vehicles.iter().find(|v| v.id == id) {
-            // Remaining route.
-            let mut pts = vec![];
-            for k in v.ri..v.route.len() {
-                let l = &sim.net.links[v.route[k]];
-                let s0 = if k == v.ri { v.s } else { 0.0 };
-                let mut s = s0;
-                while s < l.length() {
-                    pts.push(cam.to_screen(l.path.point(s)));
-                    s += 2.0;
-                }
+    if let Some(id) = dc.selected && let Some(v) = sim.vehicles.iter().find(|v| v.id == id) {
+        // Remaining route.
+        let mut pts = vec![];
+        for k in v.ri..v.route.len() {
+            let l = &sim.net.links[v.route[k]];
+            let s0 = if k == v.ri { v.s } else { 0.0 };
+            let mut s = s0;
+            while s < l.length() {
+                pts.push(cam.to_screen(l.path.point(s)));
+                s += 2.0;
             }
-            if pts.len() > 1 {
-                painter.add(Shape::dashed_line(&pts, Stroke::new(2.0, Color32::from_rgb(255, 255, 255)), 6.0, 4.0));
-            }
-            for (c, ax, hl, hw) in dc.body(v) {
-                let pts: Vec<Pos2> = rect_pts(c, ax, hl + 0.6, hw + 0.6).iter().map(|p| cam.to_screen(*p)).collect();
-                painter.add(Shape::closed_line(pts, Stroke::new(2.0, Color32::from_rgb(255, 255, 120))));
-            }
-            if let Some(yid) = v.yield_to {
-                if let Some(w) = sim.vehicles.iter().find(|w| w.id == yid) {
-                    painter.arrow(cam.to_screen(dc.front(v)), cam.to_screen(dc.center(w)) - cam.to_screen(dc.front(v)), Stroke::new(2.0, Color32::from_rgb(255, 160, 60)));
-                }
-            }
+        }
+        if pts.len() > 1 {
+            painter.add(Shape::dashed_line(&pts, Stroke::new(2.0, Color32::from_rgb(255, 255, 255)), 6.0, 4.0));
+        }
+        for (c, ax, hl, hw) in dc.body(v) {
+            let pts: Vec<Pos2> = rect_pts(c, ax, hl + 0.6, hw + 0.6).iter().map(|p| cam.to_screen(*p)).collect();
+            painter.add(Shape::closed_line(pts, Stroke::new(2.0, Color32::from_rgb(255, 255, 120))));
+        }
+        if let Some(yid) = v.yield_to && let Some(w) = sim.vehicles.iter().find(|w| w.id == yid) {
+            painter.arrow(cam.to_screen(dc.front(v)), cam.to_screen(dc.center(w)) - cam.to_screen(dc.front(v)), Stroke::new(2.0, Color32::from_rgb(255, 160, 60)));
         }
     }
 }

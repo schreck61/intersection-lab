@@ -205,13 +205,9 @@ impl Stats {
                 uw += now - p.arrival_t;
             }
         }
-        for v in live {
-            if v.arrival_t >= from_t || v.delay > 0.0 {
-                if v.delay > 30.0 {
-                    unserved += 1;
-                    uw += v.delay;
-                }
-            }
+        for v in live.iter().filter(|v| v.delay > 30.0) {
+            unserved += 1;
+            uw += v.delay;
         }
         s.unserved = unserved;
         s.unserved_wait = if unserved > 0 { uw / unserved as f64 } else { 0.0 };

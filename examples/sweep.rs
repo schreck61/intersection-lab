@@ -38,7 +38,7 @@ fn main() {
                         }
                         sim.run_for(1500.0);
                         total += sim.collisions;
-                        if first.is_empty() { if let Some(l) = sim.collision_log.first() { first = l.clone(); } }
+                        if first.is_empty() && let Some(l) = sim.collision_log.first() { first = l.clone(); }
                     }
                     (format!("{:<12} {:<28} {:<12}", kind.key(), mode.name(), c.short()), total, first)
                 }));

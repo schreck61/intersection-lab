@@ -1093,11 +1093,9 @@ impl App {
     fn bottom_panel(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.label(RichText::new("Signal timing (last 3 min)").strong().size(12.0));
-            if let Some((m, t)) = &self.message {
-                if t.elapsed().as_secs() < 5 {
-                    ui.separator();
-                    ui.label(RichText::new(m).color(Color32::from_rgb(255, 210, 120)));
-                }
+            if let Some((m, t)) = &self.message && t.elapsed().as_secs() < 5 {
+                ui.separator();
+                ui.label(RichText::new(m).color(Color32::from_rgb(255, 210, 120)));
             }
         });
         charts::timeline(ui, &self.world.sims[self.focus], 180.0);
@@ -1128,15 +1126,13 @@ impl App {
         if resp.hovered() {
             let (scroll, zoom) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
             let factor = zoom * (scroll * 0.0025).exp();
-            if (factor - 1.0).abs() > 1e-4 {
-                if let Some(h) = resp.hover_pos() {
-                    let cam = Camera { center: self.cam_center, scale: self.scale, rect };
-                    let before = cam.to_world(h);
-                    self.scale = (self.scale * factor).clamp(0.6, 40.0);
-                    let cam2 = Camera { center: self.cam_center, scale: self.scale, rect };
-                    let after = cam2.to_world(h);
-                    self.cam_center = self.cam_center + (before - after);
-                }
+            if (factor - 1.0).abs() > 1e-4 && let Some(h) = resp.hover_pos() {
+                let cam = Camera { center: self.cam_center, scale: self.scale, rect };
+                let before = cam.to_world(h);
+                self.scale = (self.scale * factor).clamp(0.6, 40.0);
+                let cam2 = Camera { center: self.cam_center, scale: self.scale, rect };
+                let after = cam2.to_world(h);
+                self.cam_center = self.cam_center + (before - after);
             }
         }
         // Side by side: A on the left half, B on the right, same camera.
@@ -1167,80 +1163,74 @@ impl App {
         self.legend(&painter, halves[0]);
 
         // Clicks: select / spawn (spawns go to both sides so arrivals stay identical).
-        if resp.clicked() {
-            if let Some(p) = resp.interact_pointer_pos() {
-                let k = halves.iter().position(|h| h.contains(p)).unwrap_or(0);
-                let cam = Camera { center: self.cam_center, scale: self.scale, rect: halves[k] };
-                let w = cam.to_world(p);
-                let (i, local) = self.locate(w);
-                match self.tool {
-                    Tool::Select if k == 0 => {
-                        let sim = &self.world.sims[i];
-                        self.selected = sim
-                            .vehicles
-                            .iter()
-                            .map(|v| (v.id, sim.center(v).dist(local) - v.len() * 0.5))
-                            .filter(|(_, d)| *d < 2.5)
-                            .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
-                            .map(|x| x.0);
-                        if self.selected.is_some() {
-                            self.focus = i;
+        if resp.clicked() && let Some(p) = resp.interact_pointer_pos() {
+            let k = halves.iter().position(|h| h.contains(p)).unwrap_or(0);
+            let cam = Camera { center: self.cam_center, scale: self.scale, rect: halves[k] };
+            let w = cam.to_world(p);
+            let (i, local) = self.locate(w);
+            match self.tool {
+                Tool::Select if k == 0 => {
+                    let sim = &self.world.sims[i];
+                    self.selected = sim
+                        .vehicles
+                        .iter()
+                        .map(|v| (v.id, sim.center(v).dist(local) - v.len() * 0.5))
+                        .filter(|(_, d)| *d < 2.5)
+                        .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+                        .map(|x| x.0);
+                    if self.selected.is_some() {
+                        self.focus = i;
+                    }
+                }
+                Tool::Select => {}
+                Tool::Vehicle => {
+                    let net = &self.world.sims[i].net;
+                    let leg = (0..net.legs.len())
+                        .map(|li| {
+                            let l = &net.legs[li];
+                            let r = local.dot(l.d);
+                            let lat = local.dot(l.in_side());
+                            let ok = r > l.stop_dist * 0.6 && lat > -l.out_width - 12.0 && lat < l.in_width + 12.0;
+                            (li, ok, (lat - l.in_width * 0.5).abs())
+                        })
+                        .filter(|x| x.1)
+                        .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap())
+                        .map(|x| x.0);
+                    if let Some(li) = leg {
+                        let ok = self.world.sims[i].spawn_manual(li, self.spawn_kind, self.spawn_turn);
+                        if let Some(t) = self.twin.as_mut() {
+                            t.sims[i].spawn_manual(li, self.spawn_kind, self.spawn_turn);
+                        }
+                        let bound = self.world.sims[i].net.legs[li].compass.bound();
+                        if !ok {
+                            self.notify(format!("{} has no {} movement", bound, self.spawn_turn.name()));
+                        } else {
+                            self.notify(format!("{} {} queued on {} (enters 260 m upstream)", self.spawn_kind.name(), self.spawn_turn.name(), bound));
                         }
                     }
-                    Tool::Select => {}
-                    Tool::Vehicle => {
-                        let net = &self.world.sims[i].net;
-                        let leg = (0..net.legs.len())
-                            .map(|li| {
-                                let l = &net.legs[li];
-                                let r = local.dot(l.d);
-                                let lat = local.dot(l.in_side());
-                                let ok = r > l.stop_dist * 0.6 && lat > -l.out_width - 12.0 && lat < l.in_width + 12.0;
-                                (li, ok, (lat - l.in_width * 0.5).abs())
-                            })
-                            .filter(|x| x.1)
-                            .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap())
-                            .map(|x| x.0);
-                        if let Some(li) = leg {
-                            let ok = self.world.sims[i].spawn_manual(li, self.spawn_kind, self.spawn_turn);
-                            if let Some(t) = self.twin.as_mut() {
-                                t.sims[i].spawn_manual(li, self.spawn_kind, self.spawn_turn);
-                            }
-                            let bound = self.world.sims[i].net.legs[li].compass.bound();
-                            if !ok {
-                                self.notify(format!("{} has no {} movement", bound, self.spawn_turn.name()));
-                            } else {
-                                self.notify(format!("{} {} queued on {} (enters 260 m upstream)", self.spawn_kind.name(), self.spawn_turn.name(), bound));
-                            }
-                        }
-                    }
-                    Tool::Pedestrian => {
-                        let best = self.world.sims[i]
-                            .net
-                            .crosswalks
-                            .iter()
-                            .flat_map(|c| [(c.id, false, c.a.dist(local)), (c.id, true, c.b.dist(local))])
-                            .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap());
-                        if let Some((cw, b, d)) = best {
-                            if d < 12.0 {
-                                self.world.sims[i].spawn_ped(cw, b);
-                                if let Some(t) = self.twin.as_mut() {
-                                    t.sims[i].spawn_ped(cw, b);
-                                }
-                            }
+                }
+                Tool::Pedestrian => {
+                    let best = self.world.sims[i]
+                        .net
+                        .crosswalks
+                        .iter()
+                        .flat_map(|c| [(c.id, false, c.a.dist(local)), (c.id, true, c.b.dist(local))])
+                        .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap());
+                    if let Some((cw, b, d)) = best && d < 12.0 {
+                        self.world.sims[i].spawn_ped(cw, b);
+                        if let Some(t) = self.twin.as_mut() {
+                            t.sims[i].spawn_ped(cw, b);
                         }
                     }
                 }
             }
         }
-        if self.tool != Tool::Select {
-            if let Some(h) = resp.hover_pos() {
-                let txt = match self.tool {
-                    Tool::Vehicle => format!("click an approach: {} {}", self.spawn_kind.name(), self.spawn_turn.name()),
-                    _ => "click a crosswalk corner".to_string(),
-                };
-                painter.text(h + vec2(14.0, 10.0), egui::Align2::LEFT_TOP, txt, egui::FontId::proportional(12.0), Color32::WHITE);
-            }
+        if self.tool != Tool::Select && let Some(h) = resp.hover_pos() {
+            let txt = match self.tool {
+                Tool::Vehicle => format!("click an approach: {} {}", self.spawn_kind.name(), self.spawn_turn.name()),
+                _ => "click a crosswalk corner".to_string(),
+            };
+            painter.text(h + vec2(14.0, 10.0), egui::Align2::LEFT_TOP, txt, egui::FontId::proportional(12.0), Color32::WHITE);
         }
     }
 
@@ -1319,11 +1309,9 @@ impl eframe::App for App {
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| self.canvas(ui));
         self.bench_window(&ctx);
         self.about_window(&ctx);
-        if let Some((path, after)) = self.shot.clone() {
-            if self.world.sims[self.focus].t >= after {
-                self.shot = None;
-                shot::request(&ctx, path);
-            }
+        if let Some((path, after)) = self.shot.clone() && self.world.sims[self.focus].t >= after {
+            self.shot = None;
+            shot::request(&ctx, path);
         }
     }
 }
