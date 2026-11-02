@@ -18,14 +18,14 @@ fn rgb(r: u8, g: u8, b: u8) -> Rgba {
     [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]
 }
 
-/// Signed distance to a rounded box centred at (cx, cy) with half-size (hx, hy), radius r.
+/// Signed distance to a rounded box centered at (cx, cy) with half-size (hx, hy), radius r.
 fn rbox(x: f32, y: f32, cx: f32, cy: f32, hx: f32, hy: f32, r: f32) -> f32 {
     let qx = (x - cx).abs() - hx + r;
     let qy = (y - cy).abs() - hy + r;
     (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - r
 }
 
-/// Colour of the icon at normalised coordinates (0..1, y down).
+/// Color of the icon at normalized coordinates (0..1, y down).
 fn shade(x: f32, y: f32) -> Rgba {
     // Tile: rounded square with the margins macOS icons use.
     let tile = rbox(x, y, 0.5, 0.5, 0.41, 0.41, 0.09);
@@ -44,7 +44,7 @@ fn shade(x: f32, y: f32) -> Rgba {
     }
     if in_v || in_h {
         c = rgb(58, 61, 70);
-        // Yellow centre lines outside the box, white stop bars at the box edge.
+        // Yellow center lines outside the box, white stop bars at the box edge.
         let off_box = !(in_v && in_h);
         if off_box && in_v && (x - 0.5).abs() < 0.008 && (y - 0.5).abs() > road_w + 0.03 {
             c = rgb(244, 200, 66);

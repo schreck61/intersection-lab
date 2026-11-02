@@ -26,7 +26,7 @@ pub struct Ctx<'a> {
     pub sensors: &'a SensorConfig,
     pub t: f64,
     pub dt: f64,
-    /// The signal state machine would honour a switch request now.
+    /// The signal state machine would honor a switch request now.
     pub can_switch: bool,
     /// Person-weighted delay accumulated during the last step (RL reward signal).
     pub reward_delay: f64,
@@ -106,8 +106,8 @@ impl CtrlKind {
             CtrlKind::Fixed => "Pre-timed cycle. Cycle length and splits from Webster's formula using historical demand. Uses no sensors.",
             CtrlKind::Actuated => "Fully actuated: min green, extends on loop actuations within the passage time, gaps out or maxes out, skips stages with no calls. Bus priority extension when a camera/CV sees a bus.",
             CtrlKind::MaxPressure => "Varaiya's throughput-optimal max-pressure: serves the stage with the largest upstream-minus-downstream queue pressure. Needs queue counts (camera).",
-            CtrlKind::Predictive => "Rolling-horizon, schedule-driven control in the spirit of SURTRAC: predicts every detected vehicle's arrival, simulates candidate signal schedules 90 s ahead and picks the one minimising person-delay. Benefits most from long-range radar / connected vehicles.",
-            CtrlKind::DeepRl => "Double DQN neural network trained by reinforcement learning (reward = negative person delay) on randomised demand. Observes queues, predicted arrivals, waits and pedestrian calls. Can keep learning online.",
+            CtrlKind::Predictive => "Rolling-horizon, schedule-driven control in the spirit of SURTRAC: predicts every detected vehicle's arrival, simulates candidate signal schedules 90 s ahead and picks the one minimizing person-delay. Benefits most from long-range radar / connected vehicles.",
+            CtrlKind::DeepRl => "Double DQN neural network trained by reinforcement learning (reward = negative person delay) on randomized demand. Observes queues, predicted arrivals, waits and pedestrian calls. Can keep learning online.",
             CtrlKind::Hybrid => "The predictive planner makes every signal decision; a reinforcement-learning agent re-tunes it every 10 s (fairness weight, hold/switch bias, max green) from the traffic it sees. Keeps the planner's safety; learns when to deviate from its defaults.",
         }
     }

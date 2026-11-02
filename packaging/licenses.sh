@@ -30,7 +30,7 @@ if [ -n "$fonts_dir" ]; then
     } >> "$tmp"
 fi
 
-# Some crates ship CRLF license files; normalise so the output is identical everywhere.
+# Some crates ship CRLF license files; normalize so the output is identical everywhere.
 tr -d '\r' < "$tmp" > "$tmp.lf" && mv "$tmp.lf" "$tmp"
 
 if [ "${1:-}" = "--check" ]; then

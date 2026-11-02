@@ -39,7 +39,7 @@ the end.
   fixed-time, but not the model-based controllers, and it is brittle on the town layout
   (40 s).
 - **Hidden cost:** its best result, on the T-junction, came with pedestrian waits twice as
-  long as the other controllers'. Optimising one number hid that.
+  long as the other controllers'. Optimizing one number hid that.
 
 ## 3. Sensors: coverage matters more than accuracy
 
@@ -63,7 +63,7 @@ the end.
   through-trip fell 14% on the arterial and 55% on the major/minor road (3.17 → 1.44).
 - **Adaptive control:** it beats the green wave even without coordinating anything
   (3 arterials: 17.8 s vs 26.7 s).
-- **Sharing upstream information:** telling each signal what its upstream neighbour just
+- **Sharing upstream information:** telling each signal what its upstream neighbor just
   released made no difference on the arterial at normal traffic (17.8 vs 17.9 s), helped
   only a little at 1.3× (36.4 → 35.5 s), and hurt on the major/minor road
   (15.1 → 16.4 s). More lookahead alone isn't enough; the real gains need coordinated
@@ -100,14 +100,14 @@ the end.
 
 ## 8. Lessons about the model itself
 
-- **Realism changes conclusions:** adding driver reaction time, realistic yellow behaviour
+- **Realism changes conclusions:** adding driver reaction time, realistic yellow behavior
   and real turn bays changed several results. All-way stops lost their low-traffic
   advantage, protected-left capacity had been badly understated, and bay spillback became
   visible.
 - **Stress testing finds bugs:** multi-seed runs at high traffic exposed right-of-way bugs
   that normal traffic never triggered: overlaps, and gridlocks in which vehicles waiting
   inside the box each blocked another's path. Overlaps are now zero at 1×, 1.35× and 1.6×
-  traffic, and 960 long runs (6 controllers × 16 seeds on every signalised layout, at
+  traffic, and 960 long runs (6 controllers × 16 seeds on every signalized layout, at
   1×–1.6× traffic for 5–20 simulated hours) finish with no gridlock and no overlaps.
 - **Honest baselines matter:** without comparing against the best fixed tuning, the hybrid
   would have looked like a 5–10% AI win when most of that gain was simply better settings.

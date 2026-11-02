@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jim Schreckengast
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Headless reinforcement-learning training, per signalised layout, on randomised
+//! Headless reinforcement-learning training, per signalized layout, on randomized
 //! demand (rates, turning shares, arrival pattern, pedestrians), keeping the weights
 //! that score best on fixed evaluation scenarios.
 //!
@@ -129,7 +129,7 @@ impl Agent {
 const EVAL_N: u64 = 12;
 
 /// Model-selection scenarios: six at the layout's default demand (different
-/// arrival seeds) plus randomised ones, so selection doesn't overfit a few cases.
+/// arrival seeds) plus randomized ones, so selection doesn't overfit a few cases.
 fn eval_demand(net: &Network, k: u64) -> DemandConfig {
     if k < 6 {
         DemandConfig::default_for(net)
@@ -245,7 +245,7 @@ fn train(kind: LayoutKind, episodes: u64, secs: f64, which: &str) {
         };
         agent.set(true, eps, expert);
         *agent.episodes() = first_ep + ep + 1;
-        // A share of episodes near the layout's design demand, the rest randomised.
+        // A share of episodes near the layout's design demand, the rest randomized.
         let d = if rng.chance(0.35) {
             let mut d = DemandConfig::default_for(&net);
             d.scale = rng.range(0.8, 1.2);

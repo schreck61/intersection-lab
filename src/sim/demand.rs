@@ -84,7 +84,7 @@ impl DemandConfig {
         d
     }
 
-    /// Hourly flow of one movement (used by fixed-time optimisation and as
+    /// Hourly flow of one movement (used by fixed-time optimization and as
     /// "historical" turning counts by controllers).
     pub fn movement_flow(&self, net: &Network, m: usize) -> f64 {
         let mv = &net.movements[m];

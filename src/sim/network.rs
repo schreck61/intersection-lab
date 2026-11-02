@@ -121,7 +121,7 @@ pub struct Link {
     pub conflicts: Vec<usize>,
     pub ped_conflicts: Vec<usize>,
     /// For a turn bay: distance along the lane where the bay opens (vehicles must
-    /// change into it from the neighbouring lane). 0 for full-length lanes.
+    /// change into it from the neighboring lane). 0 for full-length lanes.
     pub bay_start: f64,
 }
 
@@ -156,7 +156,7 @@ impl Conflict {
     }
 }
 
-/// Centre-line separation below which two vehicle bodies may touch (m).
+/// Center-line separation below which two vehicle bodies may touch (m).
 const CLEAR: f64 = 2.7;
 
 /// Interval of `pa` around `s0` that comes within `CLEAR` of `pb` near `sb0`.
@@ -319,7 +319,7 @@ pub struct Network {
     pub all_red: f64,
     pub in_len: f64,
     pub out_len: f64,
-    /// Roundabout ring centre radius (0 if none).
+    /// Roundabout ring center radius (0 if none).
     pub ring_r: f64,
     pub ring_w: f64,
 }

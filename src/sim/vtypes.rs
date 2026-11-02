@@ -43,7 +43,7 @@ pub struct VSpec {
     pub cda: f64,
     /// Idle fuel rate (mL/s).
     pub idle_fuel: f64,
-    /// kg CO2 per litre (gasoline 2.31, diesel 2.68).
+    /// kg CO2 per liter (gasoline 2.31, diesel 2.68).
     pub co2_per_l: f64,
 }
 

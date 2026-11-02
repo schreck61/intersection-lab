@@ -1,10 +1,10 @@
 // Copyright (c) 2026 Jim Schreckengast
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2D geometry: vectors, arc-length parametrised polylines, Bezier/arc builders and
+//! 2D geometry: vectors, arc-length parameterized polylines, Bezier/arc builders and
 //! path-path intersection used to discover conflict points inside the intersection.
 //!
-//! World coordinates are metres with +x = east and +y = south (screen convention).
+//! World coordinates are meters with +x = east and +y = south (screen convention).
 
 use std::ops::{Add, Mul, Neg, Sub};
 
@@ -78,7 +78,7 @@ impl Neg for V2 {
     }
 }
 
-/// Uniform sampling step of resampled paths (metres).
+/// Uniform sampling step of resampled paths (meters).
 pub const DS: f64 = 0.5;
 
 /// Polyline resampled at uniform arc-length steps for O(1) position lookup.

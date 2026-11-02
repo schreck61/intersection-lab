@@ -281,7 +281,7 @@ pub struct Sim {
     /// each leg's exit (room, speed of the vehicle there) when another intersection
     /// follows; vehicles the upstream intersection reports.
     pub collect_exits: bool,
-    /// Corridor coordination for fixed-time control: (cycle, offset, synchronised stage).
+    /// Corridor coordination for fixed-time control: (cycle, offset, synchronized stage).
     pub coordination: Option<(f64, f64, usize)>,
     pub exits: Vec<Exit>,
     pub exit_room: Vec<Option<(f64, f64)>>,
@@ -443,7 +443,7 @@ impl Sim {
             self.control_signal();
             self.signal.step(&self.net, dt, self.t + dt);
         }
-        // 5. Vehicle behaviour.
+        // 5. Vehicle behavior.
         self.compute_vstat();
         self.drive(dt);
         self.lane_changes(dt);
@@ -723,7 +723,7 @@ impl Sim {
         v.ri > 0 || self.net.movements[v.movement].routes.iter().any(|r| r.0 == v.route[0])
     }
 
-    /// Neighbouring lane a vehicle in the wrong lane must move into.
+    /// Neighboring lane a vehicle in the wrong lane must move into.
     fn lane_target(&self, v: &Vehicle) -> Option<LinkId> {
         let lanes = &self.net.legs[v.leg].in_lanes;
         let k = lanes.iter().position(|&x| x == v.route[0])?;
@@ -1133,7 +1133,7 @@ impl Sim {
             if p.cw != cw {
                 continue;
             }
-            // Unsignalised: a waiting pedestrian asserts right of way to any vehicle
+            // Unsignalized: a waiting pedestrian asserts right of way to any vehicle
             // that can still stop comfortably.
             let comfortable = !in_box && a.v * a.v / (2.0 * (d_a - 2.6).max(0.1)) < 2.5;
             let active = match p.state {
@@ -1822,7 +1822,7 @@ impl Sim {
             let b_safe = if mandatory { 4.0 } else { 2.0 };
             let min_gap = if mandatory { 0.8 } else { 2.0 };
             // Leader / follower of the vehicle on a lane (excluding itself).
-            let neighbours = |l: LinkId| {
+            let neighbors = |l: LinkId| {
                 let (mut lead, mut fol): (Option<usize>, Option<usize>) = (None, None);
                 for &j in &self.occ[l] {
                     if j == i {
@@ -1846,13 +1846,13 @@ impl Sim {
                 }
                 None => Self::idm(me.spec(), me.v, me.v0, 1e9, 0.0),
             };
-            let (old_lead, old_fol) = neighbours(lane);
+            let (old_lead, old_fol) = neighbors(lane);
             let mut best: Option<(LinkId, f64)> = None;
             for t in cands {
                 if v.s < self.net.links[t].bay_start + 3.0 {
                     continue;
                 }
-                let (lead, fol) = neighbours(t);
+                let (lead, fol) = neighbors(t);
                 let gap_lead = lead.map(|j| self.vehicles[j].s - self.vehicles[j].len() - v.s).unwrap_or(1e9);
                 let gap_fol = fol.map(|j| v.s - v.len() - self.vehicles[j].s).unwrap_or(1e9);
                 if gap_lead < min_gap || gap_fol < min_gap {
@@ -1952,13 +1952,13 @@ impl Sim {
         v.lc_off * (1.0 - x * x * (3.0 - 2.0 * x))
     }
 
-    /// Body as a chain of oriented rectangles (centre, unit axis, half-length,
+    /// Body as a chain of oriented rectangles (center, unit axis, half-length,
     /// half-width) that follows the path, so long vehicles bend through turns.
     pub fn body(&self, v: &Vehicle) -> Vec<(V2, V2, f64, f64)> {
         self.body_lagged(v, 0.0)
     }
 
-    /// Body drawn `lag` metres back along the route (see [`Sim::lag`]).
+    /// Body drawn `lag` meters back along the route (see [`Sim::lag`]).
     pub fn body_lagged(&self, v: &Vehicle, lag: f64) -> Vec<(V2, V2, f64, f64)> {
         let len = v.len();
         let n = (len / 4.5).ceil().max(1.0) as usize;

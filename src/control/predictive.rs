@@ -23,7 +23,7 @@ pub struct Predictive {
     /// Weight of the super-linear penalty on long waits (fairness).
     pub fairness: f64,
     /// Relative cost adjustment for plans that keep the current stage (negative
-    /// favours longer greens, positive favours switching sooner).
+    /// favors longer greens, positive favors switching sooner).
     pub hold_bias: f64,
     names: Vec<String>,
     bars: Vec<(String, f64, bool)>,

@@ -196,7 +196,7 @@ impl App {
         let demand = if keep_demand && old.net.kind == self.layout { old.demand.clone() } else { DemandConfig::default_for(&net) };
         let template = Self::settings_of(old);
         self.world = self.make_world(self.mode, self.ctrl, demand, &template);
-        // The view is centred on the middle of the corridor: start the panels there.
+        // The view is centered on the middle of the corridor: start the panels there.
         self.focus = self.world.sims.len() / 2;
         self.rebuild_twin();
         if self.scene.kind != self.layout {
@@ -415,7 +415,7 @@ impl App {
                 let mut gw = self.green_wave;
                 if ui
                     .checkbox(&mut gw, "Fixed-time green wave")
-                    .on_hover_text("Common cycle and offsets that maximise the two-way green band (applies to fixed-time signals)")
+                    .on_hover_text("Common cycle and offsets that maximize the two-way green band (applies to fixed-time signals)")
                     .changed()
                 {
                     self.green_wave = gw;
@@ -548,7 +548,7 @@ impl App {
                 changed |= ui.add(egui::Slider::new(&mut self.world.sims[self.focus].demand.ped_rate, 0.0..=600.0).text("peds/h").step_by(5.0)).changed();
             }
             if changed {
-                // Fixed-time plans are re-optimised from the new demand (Webster).
+                // Fixed-time plans are re-optimized from the new demand (Webster).
                 self.sync_settings();
                 for w in std::iter::once(&mut self.world).chain(self.twin.as_mut()) {
                     for sim in &mut w.sims {
@@ -572,7 +572,7 @@ impl App {
             ui.add_enabled(s.cv, egui::Slider::new(&mut s.cv_rate, 0.0..=1.0).text("CV penetration"));
             if self.corridor_n > 1 {
                 ui.checkbox(&mut s.upstream_link, "Upstream signal shares its outflow")
-                    .on_hover_text("Corridor: each signal is told which vehicles its upstream neighbour has just released toward it");
+                    .on_hover_text("Corridor: each signal is told which vehicles its upstream neighbor has just released toward it");
             }
             ui.checkbox(&mut s.realistic, "Field-realistic sensor errors")
                 .on_hover_text("Cameras miss vehicles (weather, night, range, behind trucks) and only read intent from turn signals; loops fail and miss motorcycles; radar and connected-vehicle data are noisy");
@@ -784,7 +784,7 @@ impl App {
                 .small()
                 .color(Color32::from_gray(160)),
             );
-            ui.label(RichText::new("* includes vehicles still queued (penalises starving an approach)").small().color(Color32::from_gray(120)));
+            ui.label(RichText::new("* includes vehicles still queued (penalizes starving an approach)").small().color(Color32::from_gray(120)));
             if self.twin.is_some() {
                 ui.separator();
                 ui.label(RichText::new("Side by side (same arrivals)").strong());
@@ -1248,7 +1248,7 @@ impl App {
         let n = world.sims.len();
         for i in 0..n {
             // Each intersection's scenery covers its own block (half-way to each
-            // neighbour), so one block's terrain doesn't paint over the next one's road.
+            // neighbor), so one block's terrain doesn't paint over the next one's road.
             let cam = cam_for(i);
             let half = SPACING / 2.0;
             let x0 = if i == 0 { rect.left() } else { cam.to_screen(v2(-half, 0.0)).x };

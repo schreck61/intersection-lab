@@ -256,7 +256,7 @@ impl Scene {
             }
             self.polyline(&arc, 0.3, CURB);
         }
-        // Centre fill (covers seams between leg rectangles).
+        // Center fill (covers seams between leg rectangles).
         for leg in &net.legs {
             let (d, ins) = (leg.d, leg.in_side());
             let p = |r: f64, lat: f64| d * r + ins * lat;
@@ -268,7 +268,7 @@ impl Scene {
             let p = |r: f64, lat: f64| d * r + ins * lat;
             let r0 = leg.stop_dist;
             let w = leg.lane_w;
-            // Centre double-yellow and median.
+            // Center double-yellow and median.
             self.quad_line(p(r0, 0.12), p(far, 0.12), 0.12, YELLOW);
             self.quad_line(p(r0, -0.12), p(far, -0.12), 0.12, YELLOW);
             if leg.med_out > 0.1 {

@@ -65,7 +65,7 @@ The macOS and Windows jobs run in that environment on tag builds.
 The workflow imports the certificate into a temporary keychain, signs by certificate
 hash with the hardened runtime, notarizes the app and the DMG with `notarytool` (printing
 Apple's log if a submission is rejected), staples both, and deletes the keychain and key
-afterwards. The Developer ID certificate expires; renew it and update `MACOS_CERT_P12`
+afterward. The Developer ID certificate expires; renew it and update `MACOS_CERT_P12`
 before then.
 
 ### Windows (Azure Trusted Signing)

@@ -79,13 +79,13 @@ Keyboard: `Space` pauses. Mouse wheel zooms, drag pans.
 |---|---|
 | Car following | Intelligent Driver Model, per-class parameters, desired-speed spread, 0.6–1.2 s driver reaction when pulling away from a stop |
 | Calibration | A saturated through lane of cars discharges at **1,863 veh/h/ln** with **2.2 s** start-up lost time (HCM base: 1,900 and ~2 s); the default mix (8% heavy vehicles) gives 1,698, in line with HCM's heavy-vehicle factor (`examples/satflow.rs`) |
-| Yellow | Dilemma-zone behaviour: drivers under ~2 s from the line (or facing hard braking) continue; the all-red covers them |
+| Yellow | Dilemma-zone behavior: drivers under ~2 s from the line (or facing hard braking) continue; the all-red covers them |
 | Turning speed | Curvature of each connector → comfortable lateral acceleration |
 | Lanes | Left-turn bays are 75 m storage lanes carved out of the median; left-turners arrive in the next lane and merge in, and wait behind the bay queue when it is full (bay spillback). Discretionary lane changes use **MOBIL** (safety criterion + politeness-weighted incentive), never across the solid line in the last 25 m |
-| Right of way | Paths are intersected into **conflict points** with measured zones. Vehicles compare priority (signal, stop order, circulating vs entering) and predicted occupancy windows, accept gaps for the whole manoeuvre, and **commit** once they can't stop. A commitment grants priority, not room: committed vehicles still stop for anyone stalled in the zone, and a vehicle waiting inside a zone holds it. Wait-for cycles are broken by ignoring vehicles that are themselves waiting, and gridlock is avoided by never pulling into a crossing behind a vehicle that is still creeping up to where it will wait, and by not waiting inside the box across a path whose traffic is only held by a red light. If two vehicles commit to a crossing in the same instant, the one that can still stop gives way; followers keep seeing a long vehicle that turns off until its tail clears the split |
+| Right of way | Paths are intersected into **conflict points** with measured zones. Vehicles compare priority (signal, stop order, circulating vs entering) and predicted occupancy windows, accept gaps for the whole maneuver, and **commit** once they can't stop. A commitment grants priority, not room: committed vehicles still stop for anyone stalled in the zone, and a vehicle waiting inside a zone holds it. Wait-for cycles are broken by ignoring vehicles that are themselves waiting, and gridlock is avoided by never pulling into a crossing behind a vehicle that is still creeping up to where it will wait, and by not waiting inside the box across a path whose traffic is only held by a red light. If two vehicles commit to a crossing in the same instant, the one that can still stop yields; followers keep seeing a long vehicle that turns off until its tail clears the split |
 | Corridors | Vehicles leaving an intersection enter the next one's approach; when it is full they wait on the exit road, and drivers don't enter the box without room to clear it |
 | Signals | Stage-based state machine with yellow and all-red, pedestrian WALK + flashing DON'T WALK, min green stretched for pedestrians, right turn on red, optional LPI |
-| Pedestrians | Push-button calls, walk in compatible stages, vehicles yield; at unsignalised crosswalks they assert right of way to vehicles that can stop comfortably |
+| Pedestrians | Push-button calls, walk in compatible stages, vehicles yield; at unsignalized crosswalks they assert right of way to vehicles that can stop comfortably |
 | Stats | Control delay = travel time − free-flow time on the vehicle's own route; person delay weights by occupancy |
 | Safety | Separating-axis overlap test between segmented vehicle bodies, in the intersection and within lanes. `tests/safety.rs` and `examples/sweep.rs` require zero overlaps, and `tests/safety.rs` replays busy seeds that used to gridlock |
 
@@ -98,13 +98,13 @@ All controllers see only the `SensorView`, never ground truth.
 1. **Fixed-time (Webster).** Cycle and splits from critical flow ratios of historical
    demand; every green covers its pedestrian interval. In a corridor it can be
    **coordinated**: common cycle, main-road stage first, spare time to it, offsets chosen to
-   maximise the two-way green band, force-offs, no late walk.
+   maximize the two-way green band, force-offs, no late walk.
 2. **Actuated (NEMA-style).** Min green, passage-time extension, gap-out/max-out, phase
    skipping, transit-priority extension. Detector stations flagged faulty go on max recall.
 3. **Max-Pressure (Varaiya 2013).** Serve the stage with the largest upstream-minus-downstream
    queue pressure.
 4. **Predictive, schedule-driven MPC (in the spirit of SURTRAC).** Every second, predicts
-   each detected vehicle's arrival, simulates candidate schedules over 90 s, and minimises
+   each detected vehicle's arrival, simulates candidate schedules over 90 s, and minimizes
    person delay with a fairness penalty on long waits.
 5. **AI: Deep RL (Double DQN).** A pure-Rust MLP chooses the next stage from per-movement
    queues, predicted arrivals, waits, bus presence, stage and pedestrians, under a safety
@@ -222,7 +222,7 @@ A fuller write-up of every finding, with the commands that reproduce it, is in
 [docs/insights.md](docs/insights.md).
 
 * **Model-based adaptive control is the strong default.** Predictive MPC and Max-Pressure
-  cut person delay 25–45% against an optimised Webster plan on the multi-lane layouts, and
+  cut person delay 25–45% against an optimized Webster plan on the multi-lane layouts, and
   cut pedestrian waits by a fifth to a half on the four-way ones.
 * **The best use of RL here is tuning a planner, not replacing it.** The hybrid is the best
   or near-best controller on every layout. Most of its gain comes from a better *static*

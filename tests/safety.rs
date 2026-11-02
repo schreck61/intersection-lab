@@ -99,7 +99,7 @@ fn no_gridlock_when_oversaturated() {
 }
 
 /// A left-turner clearing the box and a car going through on the late yellow used to
-/// commit to the same crossing in the same instant; the slower one now gives way.
+/// commit to the same crossing in the same instant; the slower one now yields.
 /// These seeds all collided before that was fixed.
 #[test]
 fn no_collision_between_late_yellow_and_clearing_turn() {

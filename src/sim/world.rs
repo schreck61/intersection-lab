@@ -9,7 +9,7 @@
 //! next one's approach; when that approach is full they wait at the end of the exit
 //! road, so queues spill back through upstream intersections. Each intersection keeps
 //! its own controller and sensors; with `upstream_link` on, it is also told about the
-//! vehicles its upstream neighbour is sending (as adaptive corridor systems share
+//! vehicles its upstream neighbor is sending (as adaptive corridor systems share
 //! their projected outflows).
 
 use super::demand::{DemandConfig, Pending};
@@ -19,7 +19,7 @@ use super::rng::Rng;
 use super::{ControlMode, Exit, Sim, UpstreamObs};
 use crate::control::CtrlKind;
 
-/// Distance between neighbouring intersections (exit road + approach).
+/// Distance between neighboring intersections (exit road + approach).
 pub const SPACING: f64 = IN_LEN + OUT_LEN;
 
 /// A completed trip through the corridor.
@@ -31,7 +31,7 @@ pub struct Journey {
     pub stops: u32,
     pub delay: f64,
     pub persons: f64,
-    /// Travelled the whole main road: +1 eastbound, -1 westbound, 0 otherwise.
+    /// Traveled the whole main road: +1 eastbound, -1 westbound, 0 otherwise.
     pub through: i8,
 }
 
@@ -49,7 +49,7 @@ pub struct CorridorSummary {
 
 pub struct World {
     pub sims: Vec<Sim>,
-    /// Centre of each intersection in world coordinates.
+    /// Center of each intersection in world coordinates.
     pub offsets: Vec<V2>,
     pub journeys: Vec<Journey>,
     /// Fixed-time intersections run a coordinated (green wave) plan.
@@ -63,7 +63,7 @@ impl World {
     }
 
     /// `n` intersections of `kind` along the east-west main road. Interior approaches
-    /// of the main road are fed by the neighbouring intersection instead of random
+    /// of the main road are fed by the neighboring intersection instead of random
     /// arrivals; each intersection draws its other arrivals from its own stream.
     pub fn corridor(n: usize, kind: LayoutKind, mode: ControlMode, ctrl: CtrlKind, demand: &DemandConfig, seed: u64) -> World {
         let n = n.max(1);
@@ -110,7 +110,7 @@ impl World {
 
     pub fn step(&mut self) {
         if self.is_corridor() {
-            self.link_neighbours();
+            self.link_neighbors();
         }
         for s in &mut self.sims {
             s.step();
@@ -120,8 +120,8 @@ impl World {
         }
     }
 
-    /// Main-road leg (E or W) of intersection `i` and the neighbour it leads to.
-    fn neighbour(&self, i: usize, c: Compass) -> Option<usize> {
+    /// Main-road leg (E or W) of intersection `i` and the neighbor it leads to.
+    fn neighbor(&self, i: usize, c: Compass) -> Option<usize> {
         match c {
             Compass::E if i + 1 < self.sims.len() => Some(i + 1),
             Compass::W if i > 0 => Some(i - 1),
@@ -140,13 +140,13 @@ impl World {
 
     /// Before a step: tell each intersection how much room the next one has for its
     /// exiting traffic, and what the previous one is about to send.
-    fn link_neighbours(&mut self) {
+    fn link_neighbors(&mut self) {
         let n = self.sims.len();
         let mut rooms: Vec<Vec<Option<(f64, f64)>>> = self.sims.iter().map(|s| vec![None; s.net.legs.len()]).collect();
         let mut ups: Vec<Vec<UpstreamObs>> = vec![vec![]; n];
         for (i, room_i) in rooms.iter_mut().enumerate() {
             for c in [Compass::E, Compass::W] {
-                let (Some(j), Some(out_leg)) = (self.neighbour(i, c), self.sims[i].net.leg_index(c)) else { continue };
+                let (Some(j), Some(out_leg)) = (self.neighbor(i, c), self.sims[i].net.leg_index(c)) else { continue };
                 let down = &self.sims[j];
                 let Some(in_leg) = down.net.leg_index(Self::opposite(c)) else { continue };
                 // Space on the downstream approach's entry lanes (bays excluded).
@@ -184,8 +184,8 @@ impl World {
         }
     }
 
-    /// After a step: move vehicles that left an intersection toward a neighbour onto
-    /// that neighbour's approach; record trips that left the corridor.
+    /// After a step: move vehicles that left an intersection toward a neighbor onto
+    /// that neighbor's approach; record trips that left the corridor.
     fn hand_over(&mut self) {
         let n = self.sims.len();
         let t = self.t();
@@ -201,7 +201,7 @@ impl World {
                         _ => 0,
                     };
                 }
-                match self.neighbour(i, c) {
+                match self.neighbor(i, c) {
                     Some(j) => {
                         let down = &self.sims[j];
                         let Some(in_leg) = down.net.leg_index(Self::opposite(c)) else { continue };
@@ -270,7 +270,7 @@ impl World {
 
     /// Turn the fixed-time green wave on or off. A common cycle (the longest Webster
     /// cycle), the main-road through stage first in each cycle, and offsets chosen
-    /// greedily to maximise the two-way green band at progression speed.
+    /// greedily to maximize the two-way green band at progression speed.
     pub fn set_coordination(&mut self, on: bool) {
         self.coordinated = on;
         if !on || !self.is_corridor() {

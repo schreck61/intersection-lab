@@ -210,7 +210,7 @@ pub struct SensorView {
     pub ped_max_wait: Vec<f64>,
     pub ped_call: Vec<bool>,
     pub emergency: Vec<(usize, f64)>,
-    /// (vehicle id, best source) for visualisation.
+    /// (vehicle id, best source) for visualization.
     pub detections: Vec<(u64, Source)>,
 }
 

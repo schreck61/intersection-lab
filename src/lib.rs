@@ -17,7 +17,7 @@ use sim::stats::Summary;
 use sim::{ControlMode, Sim};
 
 /// Run a headless simulation (see [`scenario`]) for `warmup + duration` seconds and
-/// summarise everything that exited after warm-up, with the number of overlaps.
+/// summarize everything that exited after warm-up, with the number of overlaps.
 pub fn run_scenario(mut sim: Sim, warmup: f64, duration: f64) -> (Summary, u64) {
     sim.run_for(warmup + duration);
     let s = sim.stats.summary(warmup, sim.t, &sim.vehicles, &sim.queues);
