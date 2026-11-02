@@ -1,7 +1,7 @@
 [package]
 name = "intersection-lab"
 default-run = "intersection-lab"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Microscopic traffic-intersection simulator for comparing signal control, sensing and AI"
 authors = ["Jim Schreckengast"]
