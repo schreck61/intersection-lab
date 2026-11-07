@@ -28,7 +28,8 @@ pub struct Ctx<'a> {
     pub dt: f64,
     /// The signal state machine would honor a switch request now.
     pub can_switch: bool,
-    /// Person-weighted delay accumulated during the last step (RL reward signal).
+    /// Person delay accumulated during the last step, including vehicles held at the map
+    /// edge and pedestrians waiting to cross (RL reward signal).
     pub reward_delay: f64,
 }
 

@@ -1391,7 +1391,12 @@ impl Sim {
                 veh.commits = keep;
             }
         }
-        self.last_reward = person_delay;
+        // Vehicles held at the edge of the map and pedestrians waiting to cross are
+        // delayed people too; leaving them out would let a controller starve an approach
+        // or a crosswalk at no cost.
+        let held: f64 = self.queues.iter().flatten().map(|p| p.kind.spec().occupancy).sum();
+        let waiting = self.peds.iter().filter(|p| p.state == PedState::Waiting).count() as f64;
+        self.last_reward = person_delay + dt * (held + waiting);
         // Surrogate safety: a vehicle crossing a crosswalk within ~1.5 s of a walking
         // pedestrian's path (post-encroachment time) counts as a near-miss.
         for v in &self.vehicles {

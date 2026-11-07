@@ -24,7 +24,7 @@ cargo run --release                               # the interactive app
 cargo run --release --bin bench                   # headless controller comparison (all layouts)
 cargo run --release --bin bench sensors all       # sensor study: packages, weather, failed loops
 cargo run --release --bin train all 800 900 dqn   # train the Deep-RL agents (writes weights/)
-cargo run --release --bin train all 400 900 hybrid  # train the hybrid agents (writes weights/)
+cargo run --release --bin train all 800 900 hybrid  # train the hybrid agents (writes weights/)
 cargo run --release --example corridor            # corridor study (green wave, adaptive, upstream link)
 cargo run --release --example lpi                 # pedestrian safety treatments
 cargo run --release --example fya                 # left-turn phasing modes
@@ -110,7 +110,7 @@ All controllers see only the `SensorView`, never ground truth.
 5. **AI: Deep RL (Double DQN).** A pure-Rust MLP with one hidden layer chooses the next
    stage from per-movement queues, predicted arrivals, waits, bus presence, stage and
    pedestrians, under a safety shield (max green, no holding or switching to empty
-   stages).
+   stages, a walk for any pedestrian who has waited 40 s).
 6. **AI: Hybrid (RL-tuned predictive).** The predictive planner makes every signal decision;
    a DQN re-tunes it every 10 s (fairness weight, hold/switch bias, max green: 48 tunings).
    Training first searches for the layout's best *static* tuning, which becomes the fallback
@@ -142,35 +142,58 @@ those still queued, so a policy can't look good by starving an approach. Lower i
 | Fixed-time (Webster) | 30.5 | 38.1 | 28.1 | 21.2 |
 | Actuated (NEMA) | 37.5 | 57.5 | 26.5 | 18.3 |
 | Max-Pressure | 20.4 | 23.2 | 30.2 | 15.8 |
-| Predictive MPC | **16.9** | 25.4 | **21.8** | 14.8 |
-| Deep RL | 19.4 | 24.4 | 30.0 | **11.7** † |
-| **Hybrid (RL-tuned predictive)** | 17.9 | **21.5** | 22.4 | 13.4 |
+| Predictive MPC | 16.9 | 25.4 | 21.8 | 14.8 |
+| Deep RL | 21.3 | 26.0 | 29.0 | **12.3** |
+| **Hybrid (RL-tuned predictive)** | **16.8** | **21.5** | **21.6** | 13.7 |
 | All-way stop | 142.2 | 103.9 | 60.8 | 28.5 |
 | Two-way stop | — | 157.6 | — | 41.9 |
 | Roundabout | 16.2 | | | |
 
-† Deep RL's low delay on the T-junction comes with 46 s pedestrian waits (others ~21 s);
-the hybrid is best without that trade-off. Zero vehicle overlaps in every run.
+Zero vehicle overlaps in every run.
 
-Deep RL's networks have one hidden layer of 128 units and were trained on the current
-model for 800 episodes. On held-out scenarios, one hidden layer beat the earlier two on
-every layout, by 1.8 to 4.5 s, and doubling the training didn't close the gap. The
-smaller networks cut Deep RL's person delay by 1.4 to 11.7 s and its pedestrian waits on
-the four-way layouts by 4 to 10 s.
+Training rewards every person's delay: people in vehicles on the road, in vehicles held
+at the edge of the map, and pedestrians waiting to cross. Episodes vary demand, weather
+and failed loop detectors. Checkpoints are chosen on 16 validation scenarios (design
+demand, 0.8× and 1.2× traffic, randomized demand, bad weather, a quarter of the loops
+failed), and a checkpoint is accepted only if its pedestrian waits stay within 5 s of the
+predictive controller's. The chosen weights are then scored on 24 test scenarios of the
+same kinds that no choice ever uses.
 
-The hybrid's networks are the earlier ones, with two hidden layers, trained before the 0.2
-right-of-way fixes. Those fixes only matter near saturation and barely change normal
-traffic (the untrained controllers moved by tenths of a second). Retraining the hybrid
-with one hidden layer made it worse on the town layout (25.8 s) and the T-junction
-(14.3 s), so the earlier networks were kept. Hybrid training (evaluation set, person
-delay, from that earlier training run):
+Both networks have one hidden layer of 128 units and were trained this way for 800
+episodes. For Deep RL, one hidden layer beat two on every layout, by 1.8 to 4.5 s on
+held-out scenarios; for the hybrid, one and two did the same within noise. Held-out test
+set, person delay / pedestrian wait (s):
 
-| | Predictive (defaults) | Best static tuning | Hybrid |
-|---|---|---|---|
-| Arterial | 17.9 | 17.2 | **17.0** (network kept) |
-| Major/minor | 21.1 | 20.1 | 20.1 (static tuning) |
-| Town | 20.9 | 19.7 | 19.7 (static tuning) |
-| T-junction | 13.9 | 13.5 | **13.0** (network kept) |
+| | Predictive | Best static tuning | Hybrid | Deep RL |
+|---|---|---|---|---|
+| Arterial | 18.2 / 13.2 | 17.7 / 12.9 | **17.5 / 12.2** (network kept) | 19.7 / 18.5 |
+| Major/minor | 22.4 / 11.8 | **21.1 / 10.1** | **21.1 / 10.1** (static tuning) | 23.0 / 16.3 |
+| Town | 25.6 / 9.5 | 25.8 / 9.6 | **24.3 / 8.6** (network kept) | 27.1 / 11.1 |
+| T-junction | 14.4 / 21.3 | 14.0 / 20.8 | 14.0 / 20.8 (static tuning) | **12.9 / 19.9** |
+
+Counting each waiting pedestrian like one vehicle occupant wasn't enough to protect
+pedestrians, who are a small share of the people at an intersection: Deep RL trained that
+way found a checkpoint that passed the pedestrian check in only 2 of 9 runs on the
+arterial, major/minor and T-junction layouts. So Deep RL's safety shield now also gives
+the next walk to any pedestrian who has waited 40 s. With that rule every run passed,
+and the check never had to reject a checkpoint.
+
+The rule costs people in vehicles little, and on most layouts it helps them. Deep RL
+trained three ways, held-out test set, mean of three training seeds, person delay /
+pedestrian wait (s):
+
+| | 0.3.0 | New training, no rule | New training + 40 s rule | Predictive |
+|---|---|---|---|---|
+| Arterial | 19.9 / 21.5 | 21.7 / 25.1 | 20.3 / 17.7 | 18.2 / 13.2 |
+| Major/minor | 25.5 / 28.3 | 24.8 / 27.7 | 23.4 / 16.0 | 22.4 / 11.8 |
+| Town | 27.3 / 14.8 | 28.7 / 11.8 | 26.7 / 10.7 | 25.6 / 9.6 |
+| T-junction | 12.0 / 45.6 | 11.5 / 36.8 | 12.6 / 19.7 | 14.4 / 21.3 |
+
+With everything else the same, the rule cut person delay by 1.4 to 2.0 s on the
+four-way layouts as well as shortening pedestrian waits; only on the T-junction did it
+cost 1.1 s. Against 0.3.0, person delay is within 0.6 s on three layouts and 2.1 s lower
+on major/minor, and pedestrian waits are 4 to 26 s shorter. A single network's benchmark
+score can mislead here: Deep RL networks trained from different seeds differ by 1 to 3 s.
 
 ### Sensors (`bench sensors all 20 4`)
 
@@ -180,8 +203,8 @@ Arterial, person delay\* (s):
 |---|---|---|---|---|---|---|
 | Max-Pressure | 21.2 | 21.5 | 21.2 | 21.5 | 20.9 | 20.5 |
 | Predictive | 20.5 | 17.5 | 17.3 | 17.5 | 17.3 | 18.0 |
-| Hybrid | 22.6 | 19.0 | 18.9 | 19.6 | 17.3 | 18.5 |
-| Deep RL | 24.7 | 22.0 | 20.4 | 20.2 | 21.1 | 20.9 |
+| Hybrid | 20.9 | 19.0 | 17.3 | 18.1 | 17.9 | 18.9 |
+| Deep RL | 30.3 | 21.0 | 21.8 | 21.7 | 21.6 | 21.5 |
 
 Weather and failed loops (loops + camera + radar unless noted), predictive control:
 
@@ -199,10 +222,10 @@ Weather and failed loops (loops + camera + radar unless noted), predictive contr
 | Fixed (coordinated green wave) | 26.7 | 166 s | 1.92 |
 | Actuated | 37.2 | 211 s | 2.15 |
 | Max-Pressure | 19.5 | 144 s | 1.79 |
-| Predictive | 17.8 | **137 s** | **1.51** |
+| Predictive | **17.8** | **137 s** | **1.51** |
 | Predictive + upstream link | 17.9 | 140 s | 1.55 |
-| Hybrid + upstream link | **17.2** | 140 s | 1.60 |
-| Deep RL + upstream link | 20.4 | 144 s | 1.54 |
+| Hybrid + upstream link | 18.3 | 142 s | 1.63 |
+| Deep RL + upstream link | 19.6 | 142 s | 1.52 |
 
 On a 4-signal major/minor corridor the green wave cuts through-trip stops from 3.17 to
 **1.44** (time 249 s → 193 s). Predictive control is best overall (15.1 s); the upstream
@@ -235,14 +258,21 @@ A fuller write-up of every finding, with the commands that reproduce it, is in
   cut person delay 25–45% against an optimized Webster plan on the multi-lane layouts, and
   cut pedestrian waits by a fifth to a half on the four-way ones.
 * **The best use of RL here is tuning a planner, not replacing it.** The hybrid is the best
-  or near-best controller on every layout. Most of its gain comes from a better *static*
-  tuning of the planner, which a one-off search finds. The state-dependent network adds a
-  little on two layouts (arterial, T-junction) and nothing on the other two. Pure Deep RL
-  cuts person delay by about a third against fixed-time on the multi-lane layouts and
-  comes within 1–2.5 s of the best model-based controller there, but trails fixed-time
-  and actuated control on the single-lane town layout.
-* **Smaller networks learned better.** One hidden layer of 128 units beat two on every
-  layout. Switching to it cut Deep RL's person delay by 10–12 s on the four-way layouts.
+  or near-best controller on every layout, and it beats predictive control on every
+  layout's held-out test set, by 0.4 to 1.3 s. Most of its gain comes from a better
+  *static* tuning of the planner, which a one-off search finds. The state-dependent
+  network adds 0.2 s on the arterial and 1.5 s on the town layout, and nothing on the other
+  two. Pure Deep RL cuts person delay by about 30% against fixed-time on the multi-lane
+  layouts and has the lowest delay on the T-junction, but trails the best controller, the
+  hybrid, by about 4.5 s on the multi-lane layouts and trails fixed-time and actuated
+  control on the single-lane town layout.
+* **Pedestrians need a hard rule, not just a share of the reward.** Counting waiting
+  pedestrians in Deep RL's reward left their waits long; a 40 s maximum wait in its
+  shield fixed that on every layout, and on the three four-way layouts it lowered
+  vehicle delay too.
+* **Smaller networks learned better for Deep RL.** One hidden layer of 128 units beat two
+  on every layout and cut Deep RL's person delay by 10–12 s on the four-way layouts. For
+  the hybrid, one and two layers did the same.
 * **Coverage matters more than per-sensor accuracy.** With realistic errors, a camera is
   still the most valuable single upgrade (intent and queues; town 47.7 → 22.5 s for
   predictive). Weather costs adaptive control 0–3 s on the multi-lane layouts because radar

@@ -46,10 +46,10 @@ pub struct SavedModel {
 }
 
 impl Dqn {
-    pub fn new(n_in: usize, n_out: usize, seed: u64) -> Dqn {
+    pub fn new(n_in: usize, n_out: usize, hidden: &[usize], seed: u64) -> Dqn {
         let mut rng = Rng::new(seed);
-        // One hidden layer: on every layout it trained to lower delay than two.
-        let online = Mlp::new(&[n_in, 128, n_out], &mut rng);
+        let sizes: Vec<usize> = std::iter::once(n_in).chain(hidden.iter().copied()).chain(std::iter::once(n_out)).collect();
+        let online = Mlp::new(&sizes, &mut rng);
         Self::from_net(online, rng)
     }
 

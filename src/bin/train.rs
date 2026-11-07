@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Headless reinforcement-learning training, per signalized layout, on randomized
-//! demand (rates, turning shares, arrival pattern, pedestrians), keeping the weights
-//! that score best on fixed evaluation scenarios.
+//! demand (rates, turning shares, arrival pattern, pedestrians) and sensor conditions.
+//! Checkpoints are chosen on a validation set; a separate test set, never used for any
+//! choice, reports how the chosen weights do.
 //!
 //! * `dqn`: the Deep RL controller chooses stages; the predictive controller acts as a
 //!   decaying "expert" for exploration.
@@ -11,6 +12,9 @@
 //!   tuning is the decaying expert.
 //!
 //! usage: train [layout|all] [episodes] [episode-seconds] [dqn|hybrid|both]
+//!
+//! Environment: `RESUME=1` fine-tunes the saved weights, `SEED=n` changes the random
+//! seed, and `HIDDEN=128,128` overrides the hidden layer sizes of a new network.
 
 use std::time::Instant;
 use intersection_lab::control::hybrid::{self, Hybrid};
@@ -19,7 +23,12 @@ use intersection_lab::control::{Controller, CtrlKind, make};
 use intersection_lab::sim::demand::{DemandConfig, Pattern};
 use intersection_lab::sim::network::{LayoutKind, Network};
 use intersection_lab::sim::rng::Rng;
+use intersection_lab::sim::sensors::{Conditions, SensorConfig};
 use intersection_lab::sim::{ControlMode, Sim};
+
+/// A checkpoint is accepted only if its mean pedestrian wait is within this many
+/// seconds of the predictive controller's on the same scenarios.
+const PED_MARGIN: f64 = 5.0;
 
 fn random_demand(net: &Network, rng: &mut Rng) -> DemandConfig {
     let mut d = DemandConfig::default_for(net);
@@ -37,6 +46,44 @@ fn random_demand(net: &Network, rng: &mut Rng) -> DemandConfig {
     d.ped_rate = rng.range(0.0, 140.0);
     d.mix[3] = rng.range(0.0, 0.08); // buses
     d
+}
+
+/// Demand, sensors and arrival seed for one run.
+struct Scenario {
+    demand: DemandConfig,
+    sensors: SensorConfig,
+    seed: u64,
+}
+
+/// A fixed scenario set. Every block of eight holds two runs at design demand, one each
+/// at 0.8× and 1.2×, two with randomized demand, one in bad weather and one with a
+/// quarter of the loop detectors failed.
+fn scenario_set(net: &Network, base: u64, n: u64) -> Vec<Scenario> {
+    (0..n)
+        .map(|k| {
+            let mut demand = DemandConfig::default_for(net);
+            let mut sensors = SensorConfig::default();
+            match k % 8 {
+                2 => demand.scale = 0.8,
+                3 => demand.scale = 1.2,
+                4 | 5 => demand = random_demand(net, &mut Rng::new(base + k)),
+                6 => sensors.conditions = Conditions::ALL[1 + ((k / 8 + base / 1000) % 4) as usize],
+                7 => sensors.loop_fault = 0.25,
+                _ => {}
+            }
+            Scenario { demand, sensors, seed: base + k }
+        })
+        .collect()
+}
+
+/// Model selection (checkpoints, the hybrid's static tuning).
+fn validation_set(net: &Network) -> Vec<Scenario> {
+    scenario_set(net, 9000, 16)
+}
+
+/// Held out from every choice; reported only.
+fn test_set(net: &Network) -> Vec<Scenario> {
+    scenario_set(net, 50000, 24)
 }
 
 /// The two trainable controllers behind one interface.
@@ -114,125 +161,134 @@ impl Agent {
             Agent::Hybrid(a) => a.agent.set_lr(lr),
         }
     }
-    /// Run one episode with this agent in control.
-    fn run(self, net: &Network, d: DemandConfig, seed: u64, secs: f64) -> (f64, Agent) {
+    /// Run one episode with this agent in control: person delay and pedestrian wait.
+    fn run(self, net: &Network, sc: &Scenario, secs: f64) -> ((f64, f64), Agent) {
         let kind = self.kind();
-        let mut sim = Sim::with_demand(net.clone(), ControlMode::Signal, kind, d, seed);
+        let mut sim = Sim::with_demand(net.clone(), ControlMode::Signal, kind, sc.demand.clone(), sc.seed);
+        sim.sensors = sc.sensors.clone();
         sim.controller = self.into_controller();
         sim.run_for(secs);
-        let pd = sim.stats.summary(120.0, sim.t, &sim.vehicles, &sim.queues).person_delay_all;
+        let s = sim.stats.summary(120.0, sim.t, &sim.vehicles, &sim.queues);
         let c = std::mem::replace(&mut sim.controller, make(CtrlKind::Fixed, net, &sim.demand));
-        (pd, Agent::from_controller(c, kind))
+        ((s.person_delay_all, s.ped_avg_wait), Agent::from_controller(c, kind))
     }
 }
 
-const EVAL_N: u64 = 12;
-
-/// Model-selection scenarios: six at the layout's default demand (different
-/// arrival seeds) plus randomized ones, so selection doesn't overfit a few cases.
-fn eval_demand(net: &Network, k: u64) -> DemandConfig {
-    if k < 6 {
-        DemandConfig::default_for(net)
-    } else {
-        random_demand(net, &mut Rng::new(9000 + k))
-    }
-}
-
-/// Mean person-delay over fixed evaluation scenarios (greedy policy).
-fn evaluate(net: &Network, agent: Agent, secs: f64) -> (f64, Agent) {
+/// Mean person delay and pedestrian wait over a scenario set (greedy policy).
+fn evaluate(net: &Network, agent: Agent, set: &[Scenario], secs: f64) -> ((f64, f64), Agent) {
     let mut agent = agent;
     let saved = agent.schedule();
     agent.set(false, 0.0, 0.0);
     let had_model = if let Agent::Hybrid(h) = &mut agent { std::mem::replace(&mut h.has_model, true) } else { false };
-    let mut total = 0.0;
-    for k in 0..EVAL_N {
+    let (mut pd, mut pw) = (0.0, 0.0);
+    for sc in set {
         agent.new_episode(net);
-        let (pd, back) = agent.run(net, eval_demand(net, k), 9000 + k, secs);
-        total += pd;
+        let (r, back) = agent.run(net, sc, secs);
+        pd += r.0;
+        pw += r.1;
         agent = back;
     }
     agent.set(saved.0, saved.1, saved.2);
     if let Agent::Hybrid(h) = &mut agent {
         h.has_model = had_model;
     }
-    (total / EVAL_N as f64, agent)
+    let n = set.len() as f64;
+    ((pd / n, pw / n), agent)
 }
 
-fn baseline(net: &Network, kind: CtrlKind, secs: f64) -> f64 {
-    let mut total = 0.0;
-    for k in 0..EVAL_N {
-        let d = eval_demand(net, k);
-        let mut sim = Sim::with_demand(net.clone(), ControlMode::Signal, kind, d, 9000 + k);
+fn baseline(net: &Network, kind: CtrlKind, set: &[Scenario], secs: f64) -> (f64, f64) {
+    let (mut pd, mut pw) = (0.0, 0.0);
+    for sc in set {
+        let mut sim = Sim::with_demand(net.clone(), ControlMode::Signal, kind, sc.demand.clone(), sc.seed);
+        sim.sensors = sc.sensors.clone();
         sim.run_for(secs);
-        total += sim.stats.summary(120.0, sim.t, &sim.vehicles, &sim.queues).person_delay_all;
+        let s = sim.stats.summary(120.0, sim.t, &sim.vehicles, &sim.queues);
+        pd += s.person_delay_all;
+        pw += s.ped_avg_wait;
     }
-    total / EVAL_N as f64
+    let n = set.len() as f64;
+    (pd / n, pw / n)
+}
+
+/// A hybrid pinned to one tuning, with no network.
+fn static_hybrid(net: &Network, action: usize) -> Agent {
+    let mut h = Box::new(Hybrid::new(net, 1));
+    h.fixed_action = Some(action);
+    Agent::Hybrid(h)
 }
 
 fn train(kind: LayoutKind, episodes: u64, secs: f64, which: &str) {
     let net = Network::build(kind);
-    let base_pred = baseline(&net, CtrlKind::Predictive, secs);
-    let base_mp = baseline(&net, CtrlKind::MaxPressure, secs);
-    let base_fixed = baseline(&net, CtrlKind::Fixed, secs);
+    let val = validation_set(&net);
+    let base_pred = baseline(&net, CtrlKind::Predictive, &val, secs);
+    let base_mp = baseline(&net, CtrlKind::MaxPressure, &val, secs);
+    let base_fixed = baseline(&net, CtrlKind::Fixed, &val, secs);
+    let ped_limit = base_pred.1 + PED_MARGIN;
     println!(
-        "[{}] eval baselines (person delay s): fixed {:.1}  max-pressure {:.1}  predictive {:.1}",
+        "[{}] validation baselines (person delay s): fixed {:.1}  max-pressure {:.1}  predictive {:.1} (pedestrian wait {:.1}, limit {:.1})",
         kind.key(),
-        base_fixed,
-        base_mp,
-        base_pred
+        base_fixed.0,
+        base_mp.0,
+        base_pred.0,
+        base_pred.1,
+        ped_limit
     );
     let hybrid = which == "hybrid";
     let mut base = (f64::INFINITY, hybrid::DEFAULT_ACTION);
     if hybrid {
         // The bar the agent must clear to add anything: the best single tuning.
-        let scores: Vec<(f64, usize)> = (0..hybrid::N_ACTIONS)
-            .map(|a| {
-                let mut h = Box::new(Hybrid::new(&net, 1));
-                h.fixed_action = Some(a);
-                let (s, _) = evaluate(&net, Agent::Hybrid(h), secs);
-                (s, a)
-            })
-            .collect();
-        let best_static = scores.iter().copied().fold((f64::INFINITY, 0), |a, b| if b.0 < a.0 { b } else { a });
-        base = best_static;
+        let scores: Vec<((f64, f64), usize)> =
+            (0..hybrid::N_ACTIONS).map(|a| (evaluate(&net, static_hybrid(&net, a), &val, secs).0, a)).collect();
+        base = scores
+            .iter()
+            .filter(|(s, _)| s.1 <= ped_limit)
+            .fold(base, |b, &(s, a)| if s.0 < b.0 { (s.0, a) } else { b });
         println!(
             "[{}:hybrid] best static tuning: {} -> {:.1} s (default tuning {:.1} s)",
             kind.key(),
-            hybrid::preset_name(best_static.1),
-            best_static.0,
-            scores[hybrid::DEFAULT_ACTION].0
+            hybrid::preset_name(base.1),
+            base.0,
+            scores[hybrid::DEFAULT_ACTION].0.0
         );
     }
-    let mut rng = Rng::new(kind as u64 * 7777 + 1 + resume_salt() + if hybrid { 31 } else { 0 });
+    let mut rng = Rng::new(kind as u64 * 7777 + 1 + resume_salt() + if hybrid { 31 } else { 0 } + seed() * 1000);
     let mut best = f64::INFINITY;
-    // RESUME=1 fine-tunes the saved weights (lower learning rate, no expert).
     let resume = std::env::var_os("RESUME").is_some();
+    let hidden: Vec<usize> = std::env::var("HIDDEN")
+        .ok()
+        .map(|h| h.split(',').map(|x| x.trim().parse().expect("HIDDEN: comma-separated layer sizes")).collect())
+        .unwrap_or_else(|| (if hybrid { hybrid::HIDDEN } else { rl::HIDDEN }).to_vec());
     let mut agent = match (hybrid, resume) {
         (false, true) => Agent::Dqn(Box::new(RlController::load_or_new(&net))),
-        (false, false) => Agent::Dqn(Box::new(RlController::new(&net, 42))),
+        (false, false) => Agent::Dqn(Box::new(RlController::with_hidden(&net, &hidden, 42 + seed()))),
         (true, true) => Agent::Hybrid(Box::new(Hybrid::load_or_new(&net))),
-        (true, false) => Agent::Hybrid(Box::new(Hybrid::new(&net, 42))),
+        (true, false) => Agent::Hybrid(Box::new(Hybrid::with_hidden(&net, &hidden, 42 + seed()))),
     };
     if let Agent::Dqn(a) = &mut agent {
         a.set_expert_predictive(&net);
     }
+    // Whether the weights file now holds this run's result.
+    let mut saved_any = false;
     if let Agent::Hybrid(h) = &mut agent {
-        // The base tuning is the exploration expert and the score to beat; save it now
-        // so the hybrid falls back to it if no network does better.
+        // The base tuning is the exploration expert and the score to beat, also when
+        // resuming; save it now so the hybrid falls back to it if no network does better.
         h.base_action = base.1;
-        if !resume {
-            best = base.0;
-            std::fs::create_dir_all("weights").ok();
-            h.save(&hybrid::weights_path(kind.key()), base.0, false).ok();
-        }
+        best = base.0;
+        std::fs::create_dir_all("weights").ok();
+        h.save(&hybrid::weights_path(kind.key()), base.0, false).ok();
+        saved_any = true;
     }
     agent.set(true, 0.0, 0.0);
     if resume {
         agent.set_lr(1.5e-4);
-        let (score, back) = evaluate(&net, agent, secs);
+        let (score, back) = evaluate(&net, agent, &val, secs);
         agent = back;
-        best = score;
-        println!("[{}:{}] resumed from saved weights, eval pd {:.1}", kind.key(), agent.tag(), score);
+        println!("[{}:{}] resumed from saved weights, validation pd {:.1}", kind.key(), agent.tag(), score.0);
+        if score.0 < best && score.1 <= ped_limit {
+            best = score.0;
+            agent.save(kind, score.0);
+            saved_any = true;
+        }
     }
     let first_ep = *agent.episodes();
     let t0 = Instant::now();
@@ -245,34 +301,44 @@ fn train(kind: LayoutKind, episodes: u64, secs: f64, which: &str) {
         };
         agent.set(true, eps, expert);
         *agent.episodes() = first_ep + ep + 1;
-        // A share of episodes near the layout's design demand, the rest randomized.
-        let d = if rng.chance(0.35) {
+        // A share of episodes near the layout's design demand, the rest randomized; some
+        // in bad weather or with failed loop detectors.
+        let demand = if rng.chance(0.35) {
             let mut d = DemandConfig::default_for(&net);
             d.scale = rng.range(0.8, 1.2);
             d
         } else {
             random_demand(&net, &mut rng)
         };
+        let mut sensors = SensorConfig::default();
+        if rng.chance(0.25) {
+            sensors.conditions = Conditions::ALL[1 + rng.below(4)];
+        }
+        if rng.chance(0.1) {
+            sensors.loop_fault = 0.25;
+        }
         agent.new_episode(&net);
-        let (pd, back) = agent.run(&net, d, 100 + ep, secs);
+        let (r, back) = agent.run(&net, &Scenario { demand, sensors, seed: 100 + ep }, secs);
         agent = back;
         if (ep + 1) % 10 == 0 || ep + 1 == episodes {
-            let (score, back) = evaluate(&net, agent, secs);
+            let (score, back) = evaluate(&net, agent, &val, secs);
             agent = back;
-            let saved = if score < best {
-                best = score;
-                agent.save(kind, score);
+            let saved = if score.0 < best && score.1 <= ped_limit {
+                best = score.0;
+                agent.save(kind, score.0);
+                saved_any = true;
                 " (saved)"
             } else {
                 ""
             };
             println!(
-                "[{}:{}] ep {:4}  train pd {:6.1}  eval pd {:6.1}  best {:6.1}  eps {:.2} expert {:.2}  loss {:.4}  {:.0}s{}",
+                "[{}:{}] ep {:4}  train pd {:6.1}  val pd {:6.1} ped {:5.1}  best {:6.1}  eps {:.2} expert {:.2}  loss {:.4}  {:.0}s{}",
                 kind.key(),
                 agent.tag(),
                 ep + 1,
-                pd,
-                score,
+                r.0,
+                score.0,
+                score.1,
                 best,
                 eps,
                 expert,
@@ -283,18 +349,57 @@ fn train(kind: LayoutKind, episodes: u64, secs: f64, which: &str) {
         }
     }
     println!(
-        "[{}:{}] done. best eval person-delay {:.1} s (fixed {:.1}, max-pressure {:.1}, predictive {:.1})",
+        "[{}:{}] done. best validation person-delay {:.1} s (fixed {:.1}, max-pressure {:.1}, predictive {:.1})",
         kind.key(),
         agent.tag(),
         best,
-        base_fixed,
-        base_mp,
-        base_pred
+        base_fixed.0,
+        base_mp.0,
+        base_pred.0
     );
+    report_test(kind, &net, hybrid, base.1, saved_any, secs);
+}
+
+/// Score the saved weights, and the baselines, on the held-out test set.
+fn report_test(kind: LayoutKind, net: &Network, hybrid: bool, base_action: usize, saved_any: bool, secs: f64) {
+    let test = test_set(net);
+    let fmt = |r: (f64, f64)| format!("{:.1} / {:.1}", r.0, r.1);
+    let mut line = format!(
+        "[{}:{}] TEST person delay / pedestrian wait (s): fixed {}  max-pressure {}  predictive {}",
+        kind.key(),
+        if hybrid { "hybrid" } else { "dqn" },
+        fmt(baseline(net, CtrlKind::Fixed, &test, secs)),
+        fmt(baseline(net, CtrlKind::MaxPressure, &test, secs)),
+        fmt(baseline(net, CtrlKind::Predictive, &test, secs))
+    );
+    if hybrid {
+        line += &format!("  static {}", fmt(evaluate(net, static_hybrid(net, base_action), &test, secs).0));
+    }
+    let agent = match (hybrid, saved_any) {
+        (_, false) => {
+            println!("{line}  agent: no checkpoint met the pedestrian limit, weights not written");
+            return;
+        }
+        (true, true) => {
+            let h = Hybrid::load_or_new(net);
+            if h.has_model {
+                Agent::Hybrid(Box::new(h))
+            } else {
+                line += "  (no network kept)";
+                static_hybrid(net, h.base_action)
+            }
+        }
+        (false, true) => Agent::Dqn(Box::new(RlController::load_or_new(net))),
+    };
+    println!("{line}  agent {}", fmt(evaluate(net, agent, &test, secs).0));
 }
 
 fn resume_salt() -> u64 {
     if std::env::var_os("RESUME").is_some() { 99 } else { 0 }
+}
+
+fn seed() -> u64 {
+    std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(0)
 }
 
 fn main() {

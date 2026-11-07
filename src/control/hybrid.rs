@@ -49,6 +49,9 @@ pub fn weights_file(layout: &str) -> String {
     format!("hybrid_{layout}.json")
 }
 
+/// Hidden layer sizes of a newly trained network.
+pub const HIDDEN: &[usize] = &[128];
+
 /// On-disk form: the best static tuning plus, if it earned its place, the network.
 #[derive(Serialize, Deserialize)]
 pub struct SavedHybrid {
@@ -84,7 +87,11 @@ pub struct Hybrid {
 
 impl Hybrid {
     pub fn new(net: &Network, seed: u64) -> Self {
-        Self::with_agent(net, Dqn::new(n_inputs(net), N_ACTIONS, seed))
+        Self::with_hidden(net, HIDDEN, seed)
+    }
+
+    pub fn with_hidden(net: &Network, hidden: &[usize], seed: u64) -> Self {
+        Self::with_agent(net, Dqn::new(n_inputs(net), N_ACTIONS, hidden, seed))
     }
 
     fn with_agent(net: &Network, agent: Dqn) -> Self {

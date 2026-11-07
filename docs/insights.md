@@ -15,8 +15,8 @@ the end.
 | Fixed-time (Webster) | 30.5 s | 38.1 s | 28.1 s | 21.2 s |
 | Actuated (NEMA) | 37.5 s | 57.5 s | 26.5 s | 18.3 s |
 | Max-Pressure | 20.4 s | 23.2 s | 30.2 s | 15.8 s |
-| Predictive | **16.9 s** | 25.4 s | **21.8 s** | 14.8 s |
-| Hybrid (RL-tuned predictive) | 17.9 s | **21.5 s** | 22.4 s | **13.4 s** |
+| Predictive | 16.9 s | 25.4 s | 21.8 s | 14.8 s |
+| Hybrid (RL-tuned predictive) | **16.8 s** | **21.5 s** | **21.6 s** | **13.7 s** |
 
 - **Multi-lane layouts:** predictive control and Max-Pressure cut delay 25–45% against a
   well-tuned fixed plan, and on the four-way layouts cut pedestrian waits by a fifth to a
@@ -29,22 +29,42 @@ the end.
 ## 2. AI is most useful tuning a planner, not replacing it
 
 - **Hybrid:** the predictive controller makes every decision and a neural network
-  re-tunes it every 10 s. It was best or near-best on every layout.
+  re-tunes it every 10 s. It was best or near-best on every layout, and on held-out test
+  scenarios (varied demand, weather and failed loops) it beat predictive control on every
+  layout, by 0.4 to 1.3 s.
 - **Where the gain comes from:** mostly a better *fixed* tuning of the predictive
-  controller, which a one-off search finds. The adaptive part added a little on two
-  layouts (arterial 17.2 → 17.0 s, T-junction 13.5 → 13.0 s) and nothing on the other two.
-  These figures are from the training run, before the 0.2 right-of-way fixes; the networks
-  were kept because those fixes barely change normal traffic.
-- **Pure Deep RL:** on the multi-lane layouts it cuts delay by about a third against
-  fixed-time and comes within 1–2.5 s of the best model-based controller (arterial 19.4 s,
-  major/minor 24.4 s). On the single-lane town layout it trails fixed-time and actuated
-  control (30.0 s).
-- **Network size:** one hidden layer of 128 units beat two hidden layers on every layout,
+  controller, which a one-off search finds. On the test set the adaptive part added
+  0.2 s on the arterial (17.7 → 17.5 s) and 1.5 s on the town layout (25.8 → 24.3 s), and
+  nothing on the other two, where no network beat the fixed tuning.
+- **Pure Deep RL:** on the multi-lane layouts it cuts delay by about 30% against
+  fixed-time but trails the best controller, the hybrid, by about 4.5 s (arterial 21.3 s,
+  major/minor 26.0 s). It has the lowest delay of any controller on the T-junction
+  (12.3 s), and on the single-lane town layout it trails fixed-time and actuated control
+  (29.0 s).
+- **Network size:** for Deep RL, one hidden layer of 128 units beat two on every layout,
   by 1.8 to 4.5 s on held-out scenarios, and doubling the training didn't close the gap.
-  Switching to it cut Deep RL's delay by 10–12 s on the four-way layouts. Retraining the
-  hybrid the same way didn't help, so it keeps its earlier two-layer networks.
-- **Hidden cost:** its best result, on the T-junction, came with pedestrian waits twice as
-  long as the other controllers'. Optimizing one number hid that.
+  Switching to it cut Deep RL's delay by 10–12 s on the four-way layouts. For the hybrid,
+  one and two layers did the same within noise.
+- **Hidden cost:** Deep RL's best result, on the T-junction, used to come with pedestrian
+  waits twice as long as the other controllers' (46 s). Optimizing one number hid that.
+- **Pedestrians need a hard rule:** adding waiting pedestrians to Deep RL's reward, each
+  counted like one vehicle occupant, didn't fix it. Pedestrians are a small share of the
+  people at an intersection, so the network still traded their waits for vehicle delay,
+  and only 2 of 9 runs on the arterial, major/minor and T-junction layouts met a check
+  that pedestrian waits stay within 5 s of predictive control's. Weighting pedestrians
+  three times as heavily didn't reliably fix it either. A shield rule that gives
+  the next walk to anyone who has waited 40 s did: every run passed, and the T-junction
+  wait fell to 21 s. The hybrid passed without any rule, because the planner serves
+  pedestrians itself.
+- **The rule helps vehicles too, mostly:** trained the same way with and without it
+  (three seeds each, held-out test set), the rule cut person delay by 1.4 s on the
+  arterial and major/minor layouts and 2.0 s on the town layout, and cost 1.1 s only on
+  the T-junction. One guess, not tested, is that it forces a regular rotation through the
+  stages that the network otherwise has to learn. Against 0.3.0's Deep RL, person delay
+  is within 0.6 s on three layouts and 2.1 s lower on major/minor, and pedestrian waits
+  are 4 to 26 s shorter. The README's benchmark, which scores one network per layout,
+  first suggested the rule cost more; networks trained from different seeds differ by 1
+  to 3 s, so one network per layout can't settle a gap that small.
 
 ## 3. Sensors: coverage matters more than accuracy
 
@@ -116,21 +136,23 @@ the end.
   1×–1.6× traffic for 5–20 simulated hours) finish with no gridlock and no overlaps.
 - **Honest baselines matter:** without comparing against the best fixed tuning, the hybrid
   would have looked like a 5–10% AI win when most of that gain was simply better settings.
+- **Held-out testing matters:** the earlier hybrid scored 0.9 s better than predictive
+  control on the 12 scenarios used to choose it, and 1.0 s worse in the benchmark. Models
+  are now chosen on one scenario set and reported on another that no choice uses.
 
 ## Caveats
 
 - **Safety measures:** drivers in the model are law-abiding, so safety is measured through
   near-misses and overlaps, not crashes.
 - **Corridors:** they run east–west only.
-- **Training data:** the RL agents were trained on simulated traffic only. The hybrid's
-  networks date from before the 0.2 right-of-way fixes and have not been retrained since.
+- **Training data:** the RL agents were trained on simulated traffic only.
 
 ## Reproducing the results
 
 ```bash
 cargo run --release --bin bench all 20 6               # sections 1 and 7
 cargo run --release --bin train all 800 900 dqn        # section 2 (Deep RL)
-cargo run --release --bin train all 400 900 hybrid     # section 2 (hybrid vs best static tuning)
+cargo run --release --bin train all 800 900 hybrid     # section 2 (hybrid vs best static tuning)
 cargo run --release --bin bench sensors all 20 4       # section 3
 cargo run --release --example corridor arterial4 3 20 8
 cargo run --release --example corridor majorminor4 4 20 8   # section 4

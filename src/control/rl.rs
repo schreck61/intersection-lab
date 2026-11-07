@@ -21,6 +21,10 @@ use std::path::PathBuf;
 pub const MAX_CW: usize = 4;
 pub const GAMMA_PER_2S: f64 = 0.96;
 pub const REWARD_SCALE: f64 = 150.0;
+/// Once a pedestrian has waited this long (s), the shield allows only stages that let
+/// them walk. Counting pedestrians in the reward alone left their waits far longer than
+/// under the other controllers.
+pub const PED_MAX_WAIT: f64 = 40.0;
 
 pub struct RlController {
     pub agent: Dqn,
@@ -60,9 +64,16 @@ pub fn weights_file(layout: &str) -> String {
     format!("dqn_{layout}.json")
 }
 
+/// Hidden layer sizes: one layer trained to lower delay than two on every layout.
+pub const HIDDEN: &[usize] = &[128];
+
 impl RlController {
     pub fn new(net: &Network, seed: u64) -> Self {
-        let agent = Dqn::new(n_inputs(net), net.stages.len().max(1), seed);
+        Self::with_hidden(net, HIDDEN, seed)
+    }
+
+    pub fn with_hidden(net: &Network, hidden: &[usize], seed: u64) -> Self {
+        let agent = Dqn::new(n_inputs(net), net.stages.len().max(1), hidden, seed);
         Self::with_agent(net, agent)
     }
 
@@ -145,6 +156,17 @@ impl RlController {
     pub fn shield(ctx: &Ctx) -> Vec<bool> {
         let net = ctx.net;
         let cur = ctx.sig.stage;
+        // A pedestrian who has waited past PED_MAX_WAIT gets the next walk.
+        let w = &ctx.view.ped_max_wait;
+        let late = (0..w.len()).filter(|&cw| w[cw] > PED_MAX_WAIT).max_by(|&a, &b| w[a].total_cmp(&w[b]));
+        if let Some(cw) = late
+            && !net.stages[cur].walk.contains(&cw)
+        {
+            let serve: Vec<bool> = net.stages.iter().map(|s| s.walk.contains(&cw)).collect();
+            if serve.iter().any(|&s| s) {
+                return serve;
+            }
+        }
         let demand: Vec<f64> = (0..net.stages.len())
             .map(|j| {
                 let mut d = 0.0;

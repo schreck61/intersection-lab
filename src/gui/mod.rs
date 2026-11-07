@@ -678,7 +678,7 @@ impl App {
                     }
                 }
                 if !WEB {
-                    ui.label(RichText::new("Training: cargo run --release --bin train all 400 900 hybrid").small().monospace());
+                    ui.label(RichText::new("Training: cargo run --release --bin train all 800 900 hybrid").small().monospace());
                 }
             }
 
