@@ -138,7 +138,7 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       - name: Sign executable (Azure Trusted Signing)
         if: env.SIGN == 'true'
-        uses: azure/trusted-signing-action@v0
+        uses: azure/trusted-signing-action@v2
         with:
           # Authenticate through the Azure CLI session from azure/login.
           exclude-environment-credential: true
@@ -165,7 +165,7 @@ jobs:
         run: packaging/windows/package.ps1 -Arch ${{ matrix.arch }}
       - name: Sign installer (Azure Trusted Signing)
         if: env.SIGN == 'true'
-        uses: azure/trusted-signing-action@v0
+        uses: azure/trusted-signing-action@v2
         with:
           exclude-environment-credential: true
           exclude-workload-identity-credential: true
