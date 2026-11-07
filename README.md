@@ -23,7 +23,8 @@ for macOS, an MSI (or portable zip) for Windows on x64 and ARM64, and `.deb`, `.
 cargo run --release                               # the interactive app
 cargo run --release --bin bench                   # headless controller comparison (all layouts)
 cargo run --release --bin bench sensors all       # sensor study: packages, weather, failed loops
-cargo run --release --bin train all 400 900 both  # train the Deep-RL and hybrid agents (writes weights/)
+cargo run --release --bin train all 800 900 dqn   # train the Deep-RL agents (writes weights/)
+cargo run --release --bin train all 400 900 hybrid  # train the hybrid agents (writes weights/)
 cargo run --release --example corridor            # corridor study (green wave, adaptive, upstream link)
 cargo run --release --example lpi                 # pedestrian safety treatments
 cargo run --release --example fya                 # left-turn phasing modes
@@ -106,9 +107,10 @@ All controllers see only the `SensorView`, never ground truth.
 4. **Predictive, schedule-driven MPC (in the spirit of SURTRAC).** Every second, predicts
    each detected vehicle's arrival, simulates candidate schedules over 90 s, and minimizes
    person delay with a fairness penalty on long waits.
-5. **AI: Deep RL (Double DQN).** A pure-Rust MLP chooses the next stage from per-movement
-   queues, predicted arrivals, waits, bus presence, stage and pedestrians, under a safety
-   shield (max green, no holding or switching to empty stages).
+5. **AI: Deep RL (Double DQN).** A pure-Rust MLP with one hidden layer chooses the next
+   stage from per-movement queues, predicted arrivals, waits, bus presence, stage and
+   pedestrians, under a safety shield (max green, no holding or switching to empty
+   stages).
 6. **AI: Hybrid (RL-tuned predictive).** The predictive planner makes every signal decision;
    a DQN re-tunes it every 10 s (fairness weight, hold/switch bias, max green: 48 tunings).
    Training first searches for the layout's best *static* tuning, which becomes the fallback
@@ -141,19 +143,27 @@ those still queued, so a policy can't look good by starving an approach. Lower i
 | Actuated (NEMA) | 37.5 | 57.5 | 26.5 | 18.3 |
 | Max-Pressure | 20.4 | 23.2 | 30.2 | 15.8 |
 | Predictive MPC | **16.9** | 25.4 | **21.8** | 14.8 |
-| Deep RL | 31.1 | 34.3 | 40.0 | **13.1** † |
+| Deep RL | 19.4 | 24.4 | 30.0 | **11.7** † |
 | **Hybrid (RL-tuned predictive)** | 17.9 | **21.5** | 22.4 | 13.4 |
 | All-way stop | 142.2 | 103.9 | 60.8 | 28.5 |
 | Two-way stop | — | 157.6 | — | 41.9 |
 | Roundabout | 16.2 | | | |
 
-† Deep RL's low delay on the T-junction comes with 45 s pedestrian waits (others ~21 s);
+† Deep RL's low delay on the T-junction comes with 46 s pedestrian waits (others ~21 s);
 the hybrid is best without that trade-off. Zero vehicle overlaps in every run.
 
-Deep RL and the hybrid use the networks in `weights/`, trained before the 0.2
+Deep RL's networks have one hidden layer of 128 units and were trained on the current
+model for 800 episodes. On held-out scenarios, one hidden layer beat the earlier two on
+every layout, by 1.8 to 4.5 s, and doubling the training didn't close the gap. The
+smaller networks cut Deep RL's person delay by 1.4 to 11.7 s and its pedestrian waits on
+the four-way layouts by 4 to 10 s.
+
+The hybrid's networks are the earlier ones, with two hidden layers, trained before the 0.2
 right-of-way fixes. Those fixes only matter near saturation and barely change normal
-traffic (the untrained controllers moved by tenths of a second), so the networks were
-kept. Hybrid training (evaluation set, person delay, from that training run):
+traffic (the untrained controllers moved by tenths of a second). Retraining the hybrid
+with one hidden layer made it worse on the town layout (25.8 s) and the T-junction
+(14.3 s), so the earlier networks were kept. Hybrid training (evaluation set, person
+delay, from that earlier training run):
 
 | | Predictive (defaults) | Best static tuning | Hybrid |
 |---|---|---|---|
@@ -171,7 +181,7 @@ Arterial, person delay\* (s):
 | Max-Pressure | 21.2 | 21.5 | 21.2 | 21.5 | 20.9 | 20.5 |
 | Predictive | 20.5 | 17.5 | 17.3 | 17.5 | 17.3 | 18.0 |
 | Hybrid | 22.6 | 19.0 | 18.9 | 19.6 | 17.3 | 18.5 |
-| Deep RL | 35.3 | 29.6 | 31.8 | 23.9 | 26.0 | 28.1 |
+| Deep RL | 24.7 | 22.0 | 20.4 | 20.2 | 21.1 | 20.9 |
 
 Weather and failed loops (loops + camera + radar unless noted), predictive control:
 
@@ -192,7 +202,7 @@ Weather and failed loops (loops + camera + radar unless noted), predictive contr
 | Predictive | 17.8 | **137 s** | **1.51** |
 | Predictive + upstream link | 17.9 | 140 s | 1.55 |
 | Hybrid + upstream link | **17.2** | 140 s | 1.60 |
-| Deep RL + upstream link | 27.1 | 163 s | 1.83 |
+| Deep RL + upstream link | 20.4 | 144 s | 1.54 |
 
 On a 4-signal major/minor corridor the green wave cuts through-trip stops from 3.17 to
 **1.44** (time 249 s → 193 s). Predictive control is best overall (15.1 s); the upstream
@@ -228,8 +238,11 @@ A fuller write-up of every finding, with the commands that reproduce it, is in
   or near-best controller on every layout. Most of its gain comes from a better *static*
   tuning of the planner, which a one-off search finds. The state-dependent network adds a
   little on two layouts (arterial, T-junction) and nothing on the other two. Pure Deep RL
-  beats actuated control on the bigger layouts and roughly matches fixed-time, but not the
-  model-based controllers, and stays brittle on the single-lane town layout.
+  cuts person delay by about a third against fixed-time on the multi-lane layouts and
+  comes within 1–2.5 s of the best model-based controller there, but trails fixed-time
+  and actuated control on the single-lane town layout.
+* **Smaller networks learned better.** One hidden layer of 128 units beat two on every
+  layout. Switching to it cut Deep RL's person delay by 10–12 s on the four-way layouts.
 * **Coverage matters more than per-sensor accuracy.** With realistic errors, a camera is
   still the most valuable single upgrade (intent and queues; town 47.7 → 22.5 s for
   predictive). Weather costs adaptive control 0–3 s on the multi-lane layouts because radar

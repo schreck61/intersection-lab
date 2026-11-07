@@ -48,7 +48,8 @@ pub struct SavedModel {
 impl Dqn {
     pub fn new(n_in: usize, n_out: usize, seed: u64) -> Dqn {
         let mut rng = Rng::new(seed);
-        let online = Mlp::new(&[n_in, 128, 128, n_out], &mut rng);
+        // One hidden layer: on every layout it trained to lower delay than two.
+        let online = Mlp::new(&[n_in, 128, n_out], &mut rng);
         Self::from_net(online, rng)
     }
 

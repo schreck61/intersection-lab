@@ -35,9 +35,14 @@ the end.
   layouts (arterial 17.2 → 17.0 s, T-junction 13.5 → 13.0 s) and nothing on the other two.
   These figures are from the training run, before the 0.2 right-of-way fixes; the networks
   were kept because those fixes barely change normal traffic.
-- **Pure Deep RL:** it beats actuated control on the big layouts and roughly matches
-  fixed-time, but not the model-based controllers, and it is brittle on the town layout
-  (40 s).
+- **Pure Deep RL:** on the multi-lane layouts it cuts delay by about a third against
+  fixed-time and comes within 1–2.5 s of the best model-based controller (arterial 19.4 s,
+  major/minor 24.4 s). On the single-lane town layout it trails fixed-time and actuated
+  control (30.0 s).
+- **Network size:** one hidden layer of 128 units beat two hidden layers on every layout,
+  by 1.8 to 4.5 s on held-out scenarios, and doubling the training didn't close the gap.
+  Switching to it cut Deep RL's delay by 10–12 s on the four-way layouts. Retraining the
+  hybrid the same way didn't help, so it keeps its earlier two-layer networks.
 - **Hidden cost:** its best result, on the T-junction, came with pedestrian waits twice as
   long as the other controllers'. Optimizing one number hid that.
 
@@ -117,14 +122,15 @@ the end.
 - **Safety measures:** drivers in the model are law-abiding, so safety is measured through
   near-misses and overlaps, not crashes.
 - **Corridors:** they run east–west only.
-- **Training data:** the RL agents were trained on simulated traffic only, before the 0.2
-  right-of-way fixes, and have not been retrained since.
+- **Training data:** the RL agents were trained on simulated traffic only. The hybrid's
+  networks date from before the 0.2 right-of-way fixes and have not been retrained since.
 
 ## Reproducing the results
 
 ```bash
 cargo run --release --bin bench all 20 6               # sections 1 and 7
-cargo run --release --bin train all 400 900 both       # section 2 (hybrid vs best static tuning)
+cargo run --release --bin train all 800 900 dqn        # section 2 (Deep RL)
+cargo run --release --bin train all 400 900 hybrid     # section 2 (hybrid vs best static tuning)
 cargo run --release --bin bench sensors all 20 4       # section 3
 cargo run --release --example corridor arterial4 3 20 8
 cargo run --release --example corridor majorminor4 4 20 8   # section 4

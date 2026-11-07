@@ -653,7 +653,7 @@ impl App {
                     }
                 }
                 if !WEB {
-                    ui.label(RichText::new("Thorough training: cargo run --release --bin train").small().monospace());
+                    ui.label(RichText::new("Thorough training: cargo run --release --bin train all 800 900 dqn").small().monospace());
                 }
             }
             if self.ctrl == CtrlKind::Hybrid && self.mode == ControlMode::Signal {
