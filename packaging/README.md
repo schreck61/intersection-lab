@@ -6,7 +6,7 @@ GitHub Actions builds them all from a version tag ([`.github/workflows/release.y
 | Platform | Architectures | Packages | Signing |
 |---|---|---|---|
 | macOS 11+ | Apple silicon + Intel (one universal app) | `.dmg` | Developer ID, hardened runtime, notarized and stapled |
-| Windows 10/11 | x64, ARM64 | `.msi` installer, portable `.zip` | Azure Trusted Signing (executable and MSI) |
+| Windows 10/11 | x64, ARM64 | `.msi` installer, portable `.zip` | Azure Artifact Signing (executable and MSI) |
 | Linux (glibc 2.35+) | x86_64, aarch64 | `.deb`, `.rpm`, `.tar.gz` | Build provenance attestations + SHA-256 checksums |
 
 Every release also carries `SHA256SUMS.txt` and a signed build-provenance attestation
@@ -68,7 +68,7 @@ Apple's log if a submission is rejected), staples both, and deletes the keychain
 afterward. The Developer ID certificate expires; renew it and update `MACOS_CERT_P12`
 before then.
 
-### Windows (Azure Trusted Signing)
+### Windows (Azure Artifact Signing)
 
 The workflow signs in to Azure with GitHub's OIDC token (no client secret is stored), so
 everything here is a **variable**, set on the repository or on the `release` environment:
@@ -79,12 +79,12 @@ everything here is a **variable**, set on the repository or on the `release` env
 | `AZURE_CLIENT_ID` | App registration (service principal) client ID |
 | `AZURE_SUBSCRIPTION_ID` | Subscription that holds the signing account |
 | `AZURE_SIGNING_ENDPOINT` | Your account's region endpoint, e.g. `https://eus.codesigning.azure.net` |
-| `AZURE_SIGNING_ACCOUNT` | Trusted Signing account name |
+| `AZURE_SIGNING_ACCOUNT` | Artifact Signing account name |
 | `AZURE_SIGNING_PROFILE` | Certificate profile name |
 
-1. In the Azure portal, create a *Trusted Signing* account (Microsoft has since renamed
-   the service *Artifact Signing*), complete identity validation for yourself, and
-   create a *Public Trust* certificate profile.
+1. In the Azure portal, create an *Artifact Signing* account (formerly *Trusted
+   Signing*), complete identity validation for yourself, and create a *Public Trust*
+   certificate profile.
 2. Create an app registration and give it the *Trusted Signing Certificate Profile
    Signer* role on the account.
 3. In GitHub, create an environment named `release` (*Settings → Environments*) and
@@ -100,8 +100,9 @@ everything here is a **variable**, set on the repository or on the `release` env
 Only tag builds run the Windows jobs in the `release` environment, so only they can sign;
 manual runs build the same packages unsigned. The workflow signs `intersection-lab.exe`
 before packaging (so the zip and the MSI both carry the signed executable) and then signs
-the MSI, with SHA-256 digests and an RFC 3161 timestamp. If Microsoft retires `azure/trusted-signing-action`, switch the two signing
-steps to its successor action; the inputs are the same.
+the MSI, with SHA-256 digests and an RFC 3161 timestamp. Both steps use
+`azure/artifact-signing-action`, which was called `azure/trusted-signing-action` before
+version 1.
 
 ### Linux
 

@@ -136,16 +136,16 @@ jobs:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      - name: Sign executable (Azure Trusted Signing)
+      - name: Sign executable (Azure Artifact Signing)
         if: env.SIGN == 'true'
-        uses: azure/trusted-signing-action@v2
+        uses: azure/artifact-signing-action@v2
         with:
           # Authenticate through the Azure CLI session from azure/login.
           exclude-environment-credential: true
           exclude-workload-identity-credential: true
           exclude-managed-identity-credential: true
           endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
-          trusted-signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
           files-folder: target/${{ matrix.target }}/release
           files-folder-filter: exe
@@ -163,15 +163,15 @@ jobs:
       - name: Package (zip + MSI)
         shell: pwsh
         run: packaging/windows/package.ps1 -Arch ${{ matrix.arch }}
-      - name: Sign installer (Azure Trusted Signing)
+      - name: Sign installer (Azure Artifact Signing)
         if: env.SIGN == 'true'
-        uses: azure/trusted-signing-action@v2
+        uses: azure/artifact-signing-action@v2
         with:
           exclude-environment-credential: true
           exclude-workload-identity-credential: true
           exclude-managed-identity-credential: true
           endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
-          trusted-signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
           files-folder: dist
           files-folder-filter: msi
