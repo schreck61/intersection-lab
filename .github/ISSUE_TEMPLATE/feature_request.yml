@@ -1,0 +1,43 @@
+name: Feature or experiment idea
+description: Suggest a new capability, controller, scenario or study.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like to explore or do?
+      description: The question you want to answer or the problem you're running into.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: How it might work in the app or the tools. References to real-world practice, standards or papers are welcome.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Signal control or AI controllers
+        - Vehicles, pedestrians or right of way
+        - Layouts and corridors
+        - Sensors
+        - Demand and scenarios
+        - Results, charts and benchmarks
+        - App interface
+        - Browser version
+        - Packaging and releases
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contributing
+      options:
+        - label: I'd like to work on this myself (see [CONTRIBUTING.md](https://github.com/schreck61/intersection-lab/blob/main/CONTRIBUTING.md)).

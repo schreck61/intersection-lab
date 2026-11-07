@@ -318,6 +318,12 @@ examples/       corridor, lpi, fya, satflow, preempt, sweep (multi-seed safety s
 
 ![Side-by-side comparison](docs/compare.png)
 
+## Contributing
+
+Bug reports, realism fixes and new experiments are welcome; see
+[CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md). Please
+report security vulnerabilities privately, as described in [SECURITY.md](SECURITY.md).
+
 ## License
 
 Copyright (c) 2026 Jim Schreckengast.

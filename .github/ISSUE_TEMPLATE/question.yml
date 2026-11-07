@@ -1,0 +1,19 @@
+name: Question
+description: Ask how something works or how to run an experiment.
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The [README](https://github.com/schreck61/intersection-lab#readme) and [docs/insights.md](https://github.com/schreck61/intersection-lab/blob/main/docs/insights.md) cover how the simulation and controllers work and what the experiments found.
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What you've tried, and the layout, settings or command involved.

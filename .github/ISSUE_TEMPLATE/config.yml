@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/schreck61/intersection-lab/security/advisories/new
+    about: Please report vulnerabilities privately, not in a public issue.
+  - name: Try it in your browser
+    url: https://schreck61.github.io/intersection-lab/
+    about: The app runs in the browser with no install needed.

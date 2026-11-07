@@ -1,0 +1,90 @@
+# Contributing to Intersection Lab
+
+Thanks for your interest in improving Intersection Lab. Bug reports, realism fixes,
+new controllers or experiments, and documentation improvements are all welcome.
+
+By taking part, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md). To report a
+security vulnerability, follow the [security policy](SECURITY.md) instead of opening a
+public issue.
+
+## Before you start
+
+* **Bugs and small fixes:** open a pull request directly, or an issue first if you'd like
+  to discuss it.
+* **Anything larger:** open an issue describing the change before writing much code. That
+  includes new controllers, changes to vehicle, pedestrian or signal behavior, new
+  dependencies, and anything that would change the published results. Agreeing on the
+  approach first saves rework.
+* **Simulation realism:** if something behaves unrealistically, say what real traffic
+  would do and, where you can, cite a source (for example the *Highway Capacity Manual*,
+  the *MUTCD* or a published study).
+
+## Setting up
+
+You need the latest stable [Rust](https://rustup.rs/) (the crate uses the 2024 edition).
+
+```bash
+cargo run --release          # the interactive app
+cargo test --release         # safety and throughput regression tests
+```
+
+The README's [Build from source](README.md#build-from-source) section lists the
+benchmark, training and example commands. To work on the browser version, add the
+WebAssembly target and use [Trunk](https://trunk-rs.github.io/trunk/):
+
+```bash
+rustup target add wasm32-unknown-unknown
+trunk serve --release --open
+```
+
+## Checks your change must pass
+
+CI runs these on every pull request. Running them locally first saves a round trip:
+
+```bash
+cargo build --locked --release --all-targets
+cargo test --locked --release
+cargo clippy --locked --release --all-targets -- -D warnings
+cargo clippy --locked --release --target wasm32-unknown-unknown --bin intersection-lab -- -D warnings
+cargo deny --locked check
+```
+
+If you add or update a dependency, also regenerate the third-party license list with
+`packaging/licenses.sh` (it needs `cargo-about` 0.9.1). CI fails if
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) is out of date.
+
+## Guidelines
+
+* **Keep runs deterministic.** The same layout, settings and seed must give the same
+  result, which the side-by-side view, the benchmarks and training all depend on. Draw
+  random numbers from the simulation's own generator (`src/sim/rng.rs`), never from the
+  clock or another source.
+* **Safety comes first.** The regression tests require zero vehicle overlaps, and most
+  arrivals served, on every layout, control mode and controller. A change that
+  introduces an overlap isn't ready, however much it helps delay.
+* **Report results with your change.** If it changes how traffic behaves, include before
+  and after numbers from `cargo run --release --bin bench all 20 6` (and the corridor or
+  sensor study where relevant), and update the tables in the README and
+  [docs/insights.md](docs/insights.md) to match. Results from a single seed are noisy;
+  use several.
+* **Retrained weights:** say which command produced them (for example
+  `cargo run --release --bin train all 800 900 dqn`) and include the held-out `TEST` lines
+  that `train` prints, which compare the new networks with the baselines. Training is
+  deterministic for a given seed and code, so others can reproduce them.
+* **Few dependencies.** The project builds for desktop and the browser from one codebase
+  and implements its own neural network and simulation, so new crates need a good reason.
+  They must use a license allowed in [deny.toml](deny.toml).
+* **Style:** match the surrounding code; the project doesn't run `rustfmt`, so please
+  don't reformat code you aren't changing. New source files start with the same
+  copyright and `SPDX-License-Identifier: MIT OR Apache-2.0` header as the others.
+* **Spelling:** use American spelling in code, comments, documentation and UI text.
+* **Pull requests:** keep each one focused on a single change, explain what it does and
+  why, and note anything you couldn't test (for example a platform you don't have).
+
+## License
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for
+inclusion in this project by you, as defined in the Apache-2.0 license, shall be dual
+licensed under the [MIT license](LICENSE-MIT) and the
+[Apache License, Version 2.0](LICENSE-APACHE), without any additional terms or
+conditions.

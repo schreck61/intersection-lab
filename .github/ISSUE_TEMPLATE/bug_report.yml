@@ -1,0 +1,70 @@
+name: Bug report
+description: Something crashes, looks wrong, or behaves unrealistically.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a problem. For a security vulnerability, please use the [security policy](https://github.com/schreck61/intersection-lab/security/policy) instead.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of problem
+      options:
+        - Crash, freeze or error message
+        - Unrealistic simulation behavior or results
+        - Display or controls
+        - Installation or packaging
+        - Benchmark, training or example tools
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead. For unrealistic behavior, say what real traffic would do and cite a source if you can.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Settings that matter, such as the layout, control mode and controller, seed, demand, sensors and weather, or the command you ran. The same seed and settings reproduce the same run.
+      placeholder: |
+        1. Layout: 4-Way Arterial, Traffic signal, Predictive, seed 1
+        2. Set demand to 1.3x
+        3. After about 5 simulated minutes, ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Shown in the app's About window. For a source build, give the commit.
+      placeholder: "0.3.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Browser version
+        - macOS
+        - Windows x64
+        - Windows ARM64
+        - Linux x86_64
+        - Linux aarch64
+    validations:
+      required: true
+  - type: input
+    id: platform-details
+    attributes:
+      label: OS and browser version
+      placeholder: "macOS 26.1, or Windows 11 24H2 with Edge 142"
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots, logs or anything else
+      description: Screenshots help a lot for display problems. Paste any error output here.
