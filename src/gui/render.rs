@@ -93,7 +93,7 @@ pub fn delay_color(d: f64) -> Color32 {
     if t < 0.5 {
         lerp_color(Color32::from_rgb(70, 200, 110), Color32::from_rgb(240, 210, 60), t * 2.0)
     } else {
-        lerp_color(Color32::from_rgb(240, 210, 60), Color32::from_rgb(230, 60, 60), (t - 0.5) * 2.0)
+        lerp_color(Color32::from_rgb(240, 210, 60), Color32::from_rgb(240, 90, 90), (t - 0.5) * 2.0)
     }
 }
 

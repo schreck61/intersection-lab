@@ -84,6 +84,8 @@ impl App {
         style.visuals.panel_fill = Color32::from_rgb(28, 30, 36);
         style.visuals.window_fill = Color32::from_rgb(30, 32, 38);
         style.spacing.item_spacing = vec2(6.0, 5.0);
+        // egui's small text is 9 px, too small to read comfortably.
+        style.text_styles.insert(egui::TextStyle::Small, egui::FontId::proportional(11.0));
         cc.egui_ctx.set_global_style(style);
         let layout = LayoutKind::Arterial4;
         let ctrl = CtrlKind::Predictive;
@@ -391,7 +393,7 @@ impl App {
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.heading("Scenario");
             let mut layout = self.layout;
-            ui.label("Intersection");
+            let label = ui.label("Intersection");
             egui::ComboBox::from_id_salt("layout")
                 .selected_text(layout.name())
                 .width(270.0)
@@ -399,7 +401,9 @@ impl App {
                     for k in LayoutKind::ALL {
                         ui.selectable_value(&mut layout, k, k.name());
                     }
-                });
+                })
+                .response
+                .labelled_by(label.id);
             if layout != self.layout {
                 self.layout = layout;
                 self.rebuild(false);
@@ -426,7 +430,7 @@ impl App {
                 }
             }
             let mut mode = self.mode;
-            ui.label("Control");
+            let label = ui.label("Control");
             egui::ComboBox::from_id_salt("mode")
                 .selected_text(mode.name())
                 .width(270.0)
@@ -434,22 +438,26 @@ impl App {
                     for m in ControlMode::options(self.layout) {
                         ui.selectable_value(&mut mode, m, m.name());
                     }
-                });
+                })
+                .response
+                .labelled_by(label.id);
             if mode != self.mode {
                 self.mode = mode;
                 self.rebuild(true);
             }
             if self.mode == ControlMode::Signal {
                 let mut c = self.ctrl;
-                ui.label("Controller");
-            egui::ComboBox::from_id_salt("ctrl")
+                let label = ui.label("Controller");
+                egui::ComboBox::from_id_salt("ctrl")
                     .selected_text(c.name())
                     .width(270.0)
                     .show_ui(ui, |ui| {
                         for k in CtrlKind::ALL {
                             ui.selectable_value(&mut c, k, k.name());
                         }
-                    });
+                    })
+                    .response
+                    .labelled_by(label.id);
                 if c != self.ctrl {
                     // Hot-swap: traffic keeps flowing, only the brain changes.
                     self.ctrl = c;
@@ -459,8 +467,8 @@ impl App {
                 ui.label(RichText::new(self.ctrl.description()).small().color(Color32::from_gray(170)));
             }
             ui.horizontal(|ui| {
-                ui.label("Seed");
-                ui.add(egui::DragValue::new(&mut self.seed).range(1..=99_999));
+                let label = ui.label("Seed");
+                ui.add(egui::DragValue::new(&mut self.seed).range(1..=99_999)).labelled_by(label.id);
                 if ui.button("Restart").clicked() {
                     self.rebuild(true);
                 }
@@ -478,17 +486,27 @@ impl App {
                 let (mut m, mut c) = (self.twin_mode, self.twin_ctrl);
                 ui.horizontal(|ui| {
                     ui.label("B:");
-                    egui::ComboBox::from_id_salt("twin_mode").selected_text(m.name()).width(120.0).show_ui(ui, |ui| {
-                        for x in ControlMode::options(self.layout) {
-                            ui.selectable_value(&mut m, x, x.name());
-                        }
-                    });
-                    if m == ControlMode::Signal {
-                        egui::ComboBox::from_id_salt("twin_ctrl").selected_text(c.short()).width(110.0).show_ui(ui, |ui| {
-                            for k in CtrlKind::ALL {
-                                ui.selectable_value(&mut c, k, k.name());
+                    egui::ComboBox::from_id_salt("twin_mode")
+                        .selected_text(m.name())
+                        .width(120.0)
+                        .show_ui(ui, |ui| {
+                            for x in ControlMode::options(self.layout) {
+                                ui.selectable_value(&mut m, x, x.name());
                             }
-                        });
+                        })
+                        .response
+                        .accessible_name("B control");
+                    if m == ControlMode::Signal {
+                        egui::ComboBox::from_id_salt("twin_ctrl")
+                            .selected_text(c.short())
+                            .width(110.0)
+                            .show_ui(ui, |ui| {
+                                for k in CtrlKind::ALL {
+                                    ui.selectable_value(&mut c, k, k.name());
+                                }
+                            })
+                            .response
+                            .accessible_name("B controller");
                     }
                 });
                 if m != self.twin_mode {
@@ -510,14 +528,16 @@ impl App {
             let d = &mut self.world.sims[self.focus].demand;
             changed |= ui.add(egui::Slider::new(&mut d.scale, 0.0..=2.0).text("demand ×")).changed();
             let mut pat = d.pattern;
-            ui.label("Arrivals");
+            let label = ui.label("Arrivals");
             egui::ComboBox::from_id_salt("pattern")
                 .selected_text(pat.name())
                 .show_ui(ui, |ui| {
                     for p in Pattern::ALL {
                         ui.selectable_value(&mut pat, p, p.name());
                     }
-                });
+                })
+                .response
+                .labelled_by(label.id);
             if pat != d.pattern {
                 d.pattern = pat;
                 changed = true;
@@ -759,7 +779,7 @@ impl App {
                 "C" => Color32::from_rgb(190, 210, 80),
                 "D" => Color32::from_rgb(240, 200, 60),
                 "E" => Color32::from_rgb(240, 140, 60),
-                _ => Color32::from_rgb(235, 70, 60),
+                _ => Color32::from_rgb(240, 90, 90),
             };
             egui::Grid::new("kpis").num_columns(3).spacing(vec2(16.0, 6.0)).show(ui, |ui| {
                 Self::kpi(ui, "avg control delay", format!("{:.1} s", s.avg_delay), render::delay_color(s.avg_delay));
@@ -784,7 +804,7 @@ impl App {
                 .small()
                 .color(Color32::from_gray(160)),
             );
-            ui.label(RichText::new("* includes vehicles still queued (penalizes starving an approach)").small().color(Color32::from_gray(120)));
+            ui.label(RichText::new("* includes vehicles still queued (penalizes starving an approach)").small().color(Color32::from_gray(150)));
             if self.twin.is_some() {
                 ui.separator();
                 ui.label(RichText::new("Side by side (same arrivals)").strong());
@@ -1298,8 +1318,18 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.advance(&ctx);
-        if ui.input(|i| i.key_pressed(egui::Key::Space)) {
+        // Space pauses unless a control has keyboard focus, where it activates that control.
+        if ui.input(|i| i.key_pressed(egui::Key::Space)) && ctx.memory(|m| m.focused().is_none()) {
             self.paused = !self.paused;
+        }
+        // Escape closes the About window, then the benchmark window (an open dropdown
+        // closes first).
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) && !egui::Popup::is_any_open(&ctx) {
+            if self.show_about {
+                self.show_about = false;
+            } else if self.bench.is_some() {
+                self.show_bench = false;
+            }
         }
         egui::Panel::top("top").show(ui, |ui| self.top_bar(ui));
         egui::Panel::left("left").default_size(300.0).resizable(true).show(ui, |ui| self.left_panel(ui));
