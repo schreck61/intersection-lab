@@ -1,5 +1,7 @@
 # Intersection Lab
 
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/16447/badge)](https://www.bestpractices.dev/projects/16447)
+
 A graphically rich, microscopic traffic-intersection simulator in Rust for exploring how
 signal control, sensing, pedestrian treatments and AI affect what drivers, transit riders
 and pedestrians actually experience, at one intersection or along a corridor.
@@ -331,7 +333,8 @@ the known barriers, and how to report one.
 Copyright (c) 2026 Jim Schreckengast.
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
-[MIT license](LICENSE-MIT) at your option. Third-party components and their licenses
+[MIT license](LICENSE-MIT) at your option; [LICENSES/](LICENSES) has the same texts
+under their SPDX names. Third-party components and their licenses
 are listed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) and ship with every
 binary package.
 
