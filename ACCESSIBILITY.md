@@ -5,7 +5,7 @@ and a set of live charts. That makes some of it hard or impossible to use withou
 and some of it hard to use without a mouse. This page says what works today, what
 doesn't, and how to get every result without the visual app.
 
-Last reviewed: November 2026, for the browser version and the release after 0.3.0.
+Last reviewed: November 2026, version 0.4.0.
 
 ## Every result is available as text
 
