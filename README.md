@@ -1,6 +1,7 @@
 # Intersection Lab
 
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/16447/badge)](https://www.bestpractices.dev/projects/16447)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/schreck61/intersection-lab/badge)](https://scorecard.dev/viewer/?uri=github.com/schreck61/intersection-lab)
 
 A graphically rich, microscopic traffic-intersection simulator in Rust for exploring how
 signal control, sensing, pedestrian treatments and AI affect what drivers, transit riders
