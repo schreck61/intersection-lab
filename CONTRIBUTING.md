@@ -25,7 +25,7 @@ You need the latest stable [Rust](https://rustup.rs/) (the crate uses the 2024 e
 
 ```bash
 cargo run --release          # the interactive app
-cargo test --release         # safety and throughput regression tests
+cargo test --release         # regression tests
 ```
 
 The README's [Build from source](README.md#build-from-source) section lists the
@@ -62,6 +62,14 @@ If you add or update a dependency, also regenerate the third-party license list 
 * **Safety comes first.** The regression tests require zero vehicle overlaps, and most
   arrivals served, on every layout, control mode and controller. A change that
   introduces an overlap isn't ready, however much it helps delay.
+* **Add tests with your change.** New functionality, such as a controller, a safety rule,
+  a change to the reward or new simulation behavior, comes with automated tests that
+  check it, and a bug fix comes with a test that fails without the fix. Put tests that
+  use the public API in [tests/](tests/) (see
+  [tests/pedestrian_rule.rs](tests/pedestrian_rule.rs) for an example) and narrower ones
+  in a `#[cfg(test)]` module next to the code. Use fixed seeds so tests are
+  deterministic, and keep them fast enough to run on every pull request. Changes to
+  documentation, UI text or styling don't need tests.
 * **Report results with your change.** If it changes how traffic behaves, include before
   and after numbers from `cargo run --release --bin bench all 20 6` (and the corridor or
   sensor study where relevant), and update the tables in the README and
