@@ -323,6 +323,8 @@ examples/       corridor, lpi, fya, satflow, preempt, sweep (multi-seed safety s
 Bug reports, realism fixes and new experiments are welcome; see
 [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md). Please
 report security vulnerabilities privately, as described in [SECURITY.md](SECURITY.md).
+[ACCESSIBILITY.md](ACCESSIBILITY.md) describes what works with assistive technology,
+the known barriers, and how to report one.
 
 ## License
 
