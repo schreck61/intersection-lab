@@ -16,6 +16,10 @@ for each file. Users can verify a download with:
 gh attestation verify IntersectionLab-0.4.0-macos-universal.dmg --repo schreck61/intersection-lab
 ```
 
+The signed attestation is also attached to the release as
+`IntersectionLab-<version>.sigstore.json`, so a download can be checked without fetching
+it from GitHub's attestation store: add `--bundle IntersectionLab-0.4.0.sigstore.json`.
+
 ## Making a release
 
 1. Update `version` in `Cargo.toml`, run `cargo build` (refreshes `Cargo.lock`), and

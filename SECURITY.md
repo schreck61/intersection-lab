@@ -52,6 +52,9 @@ each file. To check that a download was built by this repository's release workf
 gh attestation verify <downloaded-file> --repo schreck61/intersection-lab
 ```
 
+Each release also includes the signed attestation as `IntersectionLab-<version>.sigstore.json`;
+pass it with `--bundle` to verify without fetching it from GitHub.
+
 The macOS app is also signed with a Developer ID and notarized, and the Windows
 executable and installer are signed with Azure Artifact Signing. See
 [packaging/README.md](packaging/README.md) for details.

@@ -26,7 +26,7 @@ jobs:
     name: Version, licenses and attributions
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Tag matches Cargo.toml version
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
@@ -35,8 +35,8 @@ jobs:
             echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
             exit 1
           fi
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: taiki-e/install-action@v2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         with:
           tool: cargo-deny@0.20.2,cargo-about@0.9.1
       - run: cargo deny --locked check licenses bans sources
@@ -52,8 +52,8 @@ jobs:
     env:
       SIGN: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.MACOS_CERT_P12 != '' }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - name: Import Developer ID certificate
@@ -96,7 +96,7 @@ jobs:
         run: |
           security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2> /dev/null || true
           rm -f "$RUNNER_TEMP/AuthKey.p8"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos
           path: dist/*
@@ -123,22 +123,22 @@ jobs:
     env:
       SIGN: ${{ startsWith(github.ref, 'refs/tags/v') && vars.AZURE_CLIENT_ID != '' }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: ${{ matrix.target }}
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }} --bin intersection-lab
       - name: Azure login (OIDC)
         if: env.SIGN == 'true'
-        uses: azure/login@v3
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       - name: Sign executable (Azure Artifact Signing)
         if: env.SIGN == 'true'
-        uses: azure/artifact-signing-action@v2
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
           # Authenticate through the Azure CLI session from azure/login.
           exclude-environment-credential: true
@@ -153,7 +153,7 @@ jobs:
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: 8.0.x
       - name: Install WiX
@@ -165,7 +165,7 @@ jobs:
         run: packaging/windows/package.ps1 -Arch ${{ matrix.arch }}
       - name: Sign installer (Azure Artifact Signing)
         if: env.SIGN == 'true'
-        uses: azure/artifact-signing-action@v2
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
           exclude-environment-credential: true
           exclude-workload-identity-credential: true
@@ -178,7 +178,7 @@ jobs:
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-${{ matrix.arch }}
           path: dist/*
@@ -197,16 +197,16 @@ jobs:
             runner: ubuntu-22.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: ${{ matrix.arch }}-unknown-linux-gnu
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         with:
           tool: cargo-deb,cargo-generate-rpm
       - name: Build and package (.deb, .rpm, .tar.gz)
         run: packaging/linux/package.sh
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-${{ matrix.arch }}
           path: dist/*
@@ -222,7 +222,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
           merge-multiple: true
@@ -232,9 +232,16 @@ jobs:
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
       - name: Build provenance attestations
-        uses: actions/attest-build-provenance@v4
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/*
+      # Publish the signed Sigstore bundle with the release too, so downloads can be
+      # verified offline and tools that look for release signatures find one.
+      - name: Attach the attestation bundle
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: cp "$BUNDLE" "dist/IntersectionLab-${GITHUB_REF_NAME#v}.sigstore.json"
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
