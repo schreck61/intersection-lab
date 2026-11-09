@@ -1,0 +1,26 @@
+# Fuzz targets for cargo-fuzz (https://rust-fuzz.github.io/book/cargo-fuzz.html), which
+# needs nightly Rust; CONTRIBUTING.md shows how to run them. This is its own workspace,
+# so it stays out of the app's build, tests and published crate.
+[package]
+name = "intersection-lab-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+intersection-lab = { path = ".." }
+libfuzzer-sys = "0.4.13"
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "weights"
+path = "fuzz_targets/weights.rs"
+test = false
+doc = false
+bench = false

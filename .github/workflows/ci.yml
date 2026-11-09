@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # Build and test on every platform, build the browser version, lint with clippy, build
-# the crate from the files crates.io would get, and check licenses, advisories and
-# attributions.
+# the crate from the files crates.io would get, check licenses, advisories and
+# attributions, and fuzz the loading of weights files.
 name: CI
 
 on:
@@ -90,3 +90,35 @@ jobs:
         run: cargo deny --locked check
       - name: THIRD_PARTY_LICENSES.md is up to date
         run: packaging/licenses.sh --check
+
+  # The app reads weights files from disk, so whatever they contain must not crash it
+  # (see fuzz/fuzz_targets/weights.rs).
+  fuzz:
+    name: Fuzz (weights)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # cargo-fuzz needs nightly Rust; the pinned action takes the toolchain as an input.
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: nightly
+      # Fuzz with the dependency versions the app is built with.
+      - run: cp Cargo.lock fuzz/
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: fuzz
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      # One minute, starting from the small weights files in fuzz/seeds. New inputs go to
+      # fuzz/corpus, which libFuzzer needs to exist.
+      - run: |
+          mkdir -p fuzz/corpus/weights
+          cargo fuzz run weights fuzz/corpus/weights fuzz/seeds/weights -- -max_total_time=60
+      # The input that crashed; `cargo +nightly fuzz run weights <file>` reproduces it.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: fuzz-crash
+          path: fuzz/artifacts
+          if-no-files-found: ignore
