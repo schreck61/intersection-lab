@@ -1,0 +1,107 @@
+// Copyright (c) 2026 Jim Schreckengast
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! Weights files are read from disk, where they can be damaged or edited by hand. The
+//! loaders must reject a network that doesn't fit its controller, and nothing an
+//! accepted network computes may crash the app.
+
+use intersection_lab::control::hybrid::{Hybrid, N_ACTIONS};
+use intersection_lab::control::rl::{RlController, n_inputs};
+use intersection_lab::control::{Controller, CtrlKind};
+use intersection_lab::sim::network::{LayoutKind, Network};
+use intersection_lab::sim::{ControlMode, Sim};
+use serde_json::{Value, json};
+
+const DQN_TEE: &str = include_str!("../weights/dqn_tee.json");
+
+/// The shipped tee-intersection network with `edit` applied to its layers.
+fn edited(edit: impl FnOnce(&mut Vec<Value>)) -> String {
+    let mut v: Value = serde_json::from_str(DQN_TEE).unwrap();
+    edit(v["net"]["layers"].as_array_mut().unwrap());
+    v.to_string()
+}
+
+/// A hybrid weights file for the tee intersection whose network has `layers`, declaring
+/// the sizes the controller expects.
+fn hybrid_file(net: &Network, layers: Value) -> String {
+    let model = json!({ "layout": "tee", "n_in": n_inputs(net), "n_out": N_ACTIONS, "episodes": 1, "net": { "layers": layers } });
+    json!({ "base_action": 10, "base_score": 0.0, "model": model }).to_string()
+}
+
+/// Layers with finite weights whose sums overflow f32: both hidden units become
+/// infinite, so every output is inf - inf = NaN.
+fn overflowing_layers(n_in: usize, n_out: usize) -> Value {
+    json!([
+        { "n_in": n_in, "n_out": 2, "w": vec![3e38; 2 * n_in], "b": [3e38, 3e38] },
+        { "n_in": 2, "n_out": n_out, "w": ([1.0, -1.0].repeat(n_out)), "b": vec![0.0; n_out] },
+    ])
+}
+
+/// Twenty seconds of the tee intersection under `ctrl`, then the explanation the app
+/// shows beside the simulation.
+fn run(ctrl: Box<dyn Controller>, kind: CtrlKind) {
+    let mut sim = Sim::new(LayoutKind::Tee, ControlMode::Signal, CtrlKind::Fixed, 1);
+    sim.controller = ctrl;
+    sim.ctrl_kind = kind;
+    sim.run_for(20.0);
+    sim.controller.brain();
+}
+
+#[test]
+fn shipped_weights_load() {
+    for kind in [LayoutKind::Arterial4, LayoutKind::MajorMinor4, LayoutKind::Town4, LayoutKind::Tee] {
+        let net = Network::build(kind);
+        let key = kind.key();
+        let dqn = std::fs::read_to_string(format!("weights/dqn_{key}.json")).unwrap();
+        assert!(RlController::from_saved(&net, &dqn).is_some(), "dqn_{key}.json was rejected");
+        let hybrid = std::fs::read_to_string(format!("weights/hybrid_{key}.json")).unwrap();
+        let with_model = serde_json::from_str::<Value>(&hybrid).unwrap()["model"].is_object();
+        assert_eq!(Hybrid::from_saved(&net, &hybrid).unwrap().has_model, with_model, "hybrid_{key}.json");
+    }
+}
+
+#[test]
+fn misshapen_networks_are_rejected() {
+    let net = Network::build(LayoutKind::Tee);
+    // Each file still declares the 45 inputs and 4 outputs the controller expects.
+    let cases = [
+        ("no layers", edited(|l| l.clear())),
+        ("a layer with no inputs", edited(|l| l[0]["n_in"] = json!(0))),
+        ("too few weights", edited(|l| _ = l[0]["w"].as_array_mut().unwrap().pop())),
+        ("too few biases", edited(|l| _ = l[1]["b"].as_array_mut().unwrap().pop())),
+        ("layers that don't connect", edited(|l| {
+            l[1]["n_in"] = json!(64);
+            l[1]["w"].as_array_mut().unwrap().truncate(64 * 4);
+        })),
+        ("three outputs", edited(|l| {
+            l[1]["n_out"] = json!(3);
+            l[1]["w"].as_array_mut().unwrap().truncate(128 * 3);
+            l[1]["b"].as_array_mut().unwrap().pop();
+        })),
+        ("a weight too large for f32", edited(|l| l[0]["w"][0] = json!(1e39))),
+    ];
+    for (what, txt) in &cases {
+        assert!(RlController::from_saved(&net, txt).is_none(), "accepted a network with {what}");
+    }
+}
+
+#[test]
+fn hybrid_without_a_fitting_network_keeps_its_base_tuning() {
+    let net = Network::build(LayoutKind::Tee);
+    let h = Hybrid::from_saved(&net, &hybrid_file(&net, json!([]))).unwrap();
+    assert!(!h.has_model);
+    assert_eq!(h.base_action, 10);
+}
+
+#[test]
+fn networks_that_overflow_do_not_crash() {
+    let net = Network::build(LayoutKind::Tee);
+    let n = n_inputs(&net);
+    let h = Hybrid::from_saved(&net, &hybrid_file(&net, overflowing_layers(n, N_ACTIONS))).unwrap();
+    assert!(h.has_model);
+    run(Box::new(h), CtrlKind::Hybrid);
+
+    let dqn = json!({ "layout": "tee", "n_in": n, "n_out": 4, "episodes": 1, "net": { "layers": overflowing_layers(n, 4) } });
+    let c = RlController::from_saved(&net, &dqn.to_string()).unwrap();
+    run(Box::new(c), CtrlKind::DeepRl);
+}

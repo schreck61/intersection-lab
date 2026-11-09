@@ -45,6 +45,15 @@ pub struct SavedModel {
     pub net: Mlp,
 }
 
+impl SavedModel {
+    /// Whether the saved network can run where `n_in` inputs and `n_out` outputs are
+    /// expected, going by both the sizes the file declares and the network's own shape
+    /// (see [`Mlp::fits`]).
+    pub fn fits(&self, n_in: usize, n_out: usize) -> bool {
+        self.n_in == n_in && self.n_out == n_out && self.net.fits(n_in, n_out)
+    }
+}
+
 impl Dqn {
     pub fn new(n_in: usize, n_out: usize, hidden: &[usize], seed: u64) -> Dqn {
         let mut rng = Rng::new(seed);

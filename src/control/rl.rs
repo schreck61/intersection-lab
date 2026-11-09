@@ -106,11 +106,8 @@ impl RlController {
 
     pub fn load_or_new(net: &Network) -> Self {
         if let Some((txt, source)) = super::weights::load(&weights_file(net.kind.key()))
-            && let Ok(m) = serde_json::from_str::<SavedModel>(&txt)
-            && m.n_in == n_inputs(net) && m.n_out == net.stages.len()
+            && let Some(mut c) = Self::from_saved(net, &txt)
         {
-            let mut c = Self::with_agent(net, Dqn::from_net(m.net, Rng::new(7)));
-            c.episodes = m.episodes;
             c.loaded_from = Some(source);
             return c;
         }
@@ -119,6 +116,16 @@ impl RlController {
         c.learning = true;
         c.epsilon = 0.2;
         c
+    }
+
+    /// The controller saved as `txt` (a weights file's contents), or `None` if it
+    /// doesn't parse or its network doesn't fit this layout. Weights files can be
+    /// damaged or edited by hand, so a network is checked before it runs.
+    pub fn from_saved(net: &Network, txt: &str) -> Option<Self> {
+        let m = serde_json::from_str::<SavedModel>(txt).ok().filter(|m| m.fits(n_inputs(net), net.stages.len()))?;
+        let mut c = Self::with_agent(net, Dqn::from_net(m.net, Rng::new(7)));
+        c.episodes = m.episodes;
+        Some(c)
     }
 
     pub fn save(&self, path: &std::path::Path) -> std::io::Result<()> {
