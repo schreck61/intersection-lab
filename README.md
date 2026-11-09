@@ -483,8 +483,8 @@ Bug reports, realism fixes and new experiments are welcome; see
 [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md). Every
 commit must be signed off under the
 [Developer Certificate of Origin](https://developercertificate.org/) (`git commit -s`).
-Please report security vulnerabilities privately, as described in
-[SECURITY.md](SECURITY.md).
+[GOVERNANCE.md](GOVERNANCE.md) describes how decisions are made and who does what. Please
+report security vulnerabilities privately, as described in [SECURITY.md](SECURITY.md).
 [ACCESSIBILITY.md](ACCESSIBILITY.md) describes what works with assistive technology,
 the known barriers, and how to report one.
 
