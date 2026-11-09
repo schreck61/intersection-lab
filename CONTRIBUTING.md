@@ -53,6 +53,21 @@ If you add or update a dependency, also regenerate the third-party license list 
 `packaging/licenses.sh` (it needs `cargo-about` 0.9.1). CI fails if
 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) is out of date.
 
+CI also fuzzes the loading of weights files for a minute, since the app reads them from
+disk (see [fuzz/](fuzz/)). If you change how weights are loaded or used, run it locally
+too. It needs nightly Rust and
+[cargo-fuzz](https://rust-fuzz.github.io/book/cargo-fuzz.html):
+
+```bash
+cargo install cargo-fuzz --locked
+cp Cargo.lock fuzz/
+mkdir -p fuzz/corpus/weights
+cargo +nightly fuzz run weights fuzz/corpus/weights fuzz/seeds/weights -- -max_total_time=60
+```
+
+An input that crashes is saved under `fuzz/artifacts/weights/`. To reproduce the crash,
+pass that file's path in place of the two folders.
+
 ## Guidelines
 
 * **Keep runs deterministic.** The same layout, settings and seed must give the same

@@ -1,0 +1,6 @@
+/target
+/corpus
+/artifacts
+/coverage
+# Copied from the app before fuzzing, so both build with the same dependency versions.
+/Cargo.lock
