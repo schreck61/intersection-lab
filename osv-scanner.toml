@@ -1,0 +1,29 @@
+# Advisories that OSV-Scanner, and the OpenSSF Scorecard's Vulnerabilities check
+# that runs it, should not report, each with the reason it doesn't affect this
+# project. deny.toml ignores the same IDs; remove an entry from both files once
+# no dependency needs the crate. Each entry lapses on its ignoreUntil date so
+# that it comes back up for review.
+#
+# Keep ignoreUntil rather than the newer effectiveUntil: the osv-scanner in the
+# Scorecard action (2.5) rejects the whole file if it finds a key it doesn't know.
+# https://google.github.io/osv-scanner/configuration/
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0192"
+ignoreUntil = 2027-05-09
+reason = "ttf-parser is unmaintained, with no known flaw. Only the Linux build uses it, to draw the Wayland window title from an installed font (winit 0.30, sctk-adwaita, ab_glyph), and no winit 0.30 release drops it."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0370"
+ignoreUntil = 2027-05-09
+reason = "zvariant is unmaintained, with no known flaw, since it was merged into zbus 6. Only the Linux build uses it, for AccessKit's screen-reader bridge, and the newest AccessKit still needs zbus 5."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0371"
+ignoreUntil = 2027-05-09
+reason = "zbus_names is unmaintained, with no known flaw, since it was merged into zbus 6. Only the Linux build uses it, for AccessKit's screen-reader bridge, and the newest AccessKit still needs zbus 5."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0372"
+ignoreUntil = 2027-05-09
+reason = "zvariant_derive is unmaintained, with no known flaw, since it was merged into zbus 6. Only the Linux build uses it, for AccessKit's screen-reader bridge, and the newest AccessKit still needs zbus 5."

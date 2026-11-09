@@ -37,8 +37,9 @@ In scope:
 * the release packages and how they're built, signed and published (the GitHub Actions
   workflows, code signing, checksums and build-provenance attestations);
 * vulnerable dependencies that actually affect this project. CI already checks
-  dependencies against the RustSec advisory database with `cargo deny`; please report
-  problems in a dependency itself to that project.
+  dependencies against the RustSec advisory database with `cargo deny`, and
+  `deny.toml` and `osv-scanner.toml` list the advisories that don't affect it, each
+  with the reason. Please report problems in a dependency itself to that project.
 
 Out of scope: unrealistic simulation behavior or results. Those are welcome as ordinary
 [issues](https://github.com/schreck61/intersection-lab/issues).

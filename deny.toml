@@ -24,9 +24,19 @@ allow = [
 confidence-threshold = 0.9
 
 [advisories]
-# Unmaintained crates are reported but don't fail the build; vulnerabilities do.
-unmaintained = "workspace"
+# Every advisory fails the check, including one for an unmaintained crate deep in
+# the dependency tree, unless it's ignored below with the reason it doesn't affect
+# this project. osv-scanner.toml ignores the same IDs for the OpenSSF Scorecard;
+# remove an entry from both files once no dependency needs the crate (cargo-deny
+# warns when an ignored advisory no longer applies).
+unmaintained = "all"
 yanked = "warn"
+ignore = [
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained, with no known flaw; only the Linux build uses it, for the Wayland window title (winit 0.30, sctk-adwaita, ab_glyph), and no winit 0.30 release drops it" },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant is unmaintained, with no known flaw, since it was merged into zbus 6; only the Linux build uses it, for AccessKit's screen-reader bridge, which still needs zbus 5" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names is unmaintained, with no known flaw, since it was merged into zbus 6; only the Linux build uses it, for AccessKit's screen-reader bridge, which still needs zbus 5" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive is unmaintained, with no known flaw, since it was merged into zbus 6; only the Linux build uses it, for AccessKit's screen-reader bridge, which still needs zbus 5" },
+]
 
 [bans]
 multiple-versions = "allow"
