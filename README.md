@@ -15,6 +15,20 @@ needed, or download it for your desktop below.
 
 ![Arterial intersection under predictive control](docs/arterial.png)
 
+## Quick start
+
+1. Open the [browser version](https://schreck61.github.io/intersection-lab/), or
+   [install](#install) the app and start it. Traffic starts flowing right away.
+2. In the *Scenario* panel on the left, pick an *Intersection* and how it's controlled:
+   a *Control* mode and, for traffic signals, a *Controller*. Watch the delay and queue
+   charts on the right respond.
+3. Under *Benchmark* on the right, press *▶ Compare controllers* to run every option on
+   identical arrivals and chart the results.
+4. Click a vehicle to see its speed, delay, stops and who it's yielding to. `Space`
+   pauses.
+
+[What you can do in the app](#what-you-can-do-in-the-app) covers the rest.
+
 ## Install
 
 Download the package for your platform from the
