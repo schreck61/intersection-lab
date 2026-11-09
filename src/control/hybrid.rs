@@ -122,22 +122,30 @@ impl Hybrid {
     /// controller).
     pub fn load_or_new(net: &Network) -> Self {
         if let Some((txt, source)) = super::weights::load(&weights_file(net.kind.key()))
-            && let Ok(sv) = serde_json::from_str::<SavedHybrid>(&txt)
+            && let Some(mut h) = Self::from_saved(net, &txt)
         {
-            let mut h = match sv.model {
-                Some(m) if m.n_in == n_inputs(net) && m.n_out == N_ACTIONS => {
-                    let mut h = Self::with_agent(net, Dqn::from_net(m.net, Rng::new(11)));
-                    h.episodes = m.episodes;
-                    h.has_model = true;
-                    h
-                }
-                _ => Self::new(net, 11),
-            };
-            h.base_action = sv.base_action.min(N_ACTIONS - 1);
             h.loaded_from = Some(source);
             return h;
         }
         Self::new(net, 11)
+    }
+
+    /// The tuning and network saved as `txt` (a weights file's contents), or `None` if
+    /// it doesn't parse. Weights files can be damaged or edited by hand, so a network
+    /// that doesn't fit this layout is left out and only the saved base tuning is kept.
+    pub fn from_saved(net: &Network, txt: &str) -> Option<Self> {
+        let sv = serde_json::from_str::<SavedHybrid>(txt).ok()?;
+        let mut h = match sv.model {
+            Some(m) if m.fits(n_inputs(net), N_ACTIONS) => {
+                let mut h = Self::with_agent(net, Dqn::from_net(m.net, Rng::new(11)));
+                h.episodes = m.episodes;
+                h.has_model = true;
+                h
+            }
+            _ => Self::new(net, 11),
+        };
+        h.base_action = sv.base_action.min(N_ACTIONS - 1);
+        Some(h)
     }
 
     pub fn save(&self, path: &std::path::Path, base_score: f64, with_model: bool) -> std::io::Result<()> {
@@ -227,7 +235,8 @@ impl Controller for Hybrid {
         });
         if !self.last_q.is_empty() {
             let mut order: Vec<usize> = (0..N_ACTIONS).collect();
-            order.sort_by(|&a, &b| self.last_q[b].partial_cmp(&self.last_q[a]).unwrap());
+            // A network can overflow to NaN even with finite weights, so no partial_cmp.
+            order.sort_by(|&a, &b| self.last_q[b].total_cmp(&self.last_q[a]));
             let top: Vec<String> = order.iter().take(3).map(|&a| format!("{} ({:.2})", preset_name(a), self.last_q[a])).collect();
             notes.push(format!("best tunings by Q: {}", top.join("; ")));
         }

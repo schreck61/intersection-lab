@@ -45,6 +45,26 @@ impl Mlp {
         self.layers.last().unwrap().n_out
     }
 
+    /// Whether the layers take `n_in` inputs to `n_out` outputs, each feeding the next,
+    /// with weight and bias arrays of the lengths their sizes call for and only finite
+    /// values. The passes below index by the declared sizes, so a network read from a
+    /// weights file is checked with this before it's used.
+    pub fn fits(&self, n_in: usize, n_out: usize) -> bool {
+        let mut width = n_in;
+        for l in &self.layers {
+            let shaped = l.n_in == width
+                && l.n_in > 0
+                && l.n_out > 0
+                && l.n_in.checked_mul(l.n_out) == Some(l.w.len())
+                && l.b.len() == l.n_out;
+            if !shaped || !l.w.iter().chain(&l.b).all(|v| v.is_finite()) {
+                return false;
+            }
+            width = l.n_out;
+        }
+        !self.layers.is_empty() && width == n_out
+    }
+
     /// Forward pass keeping every layer's (post-activation) output.
     pub fn forward_all(&self, x: &[f32]) -> Vec<Vec<f32>> {
         let mut acts = vec![x.to_vec()];
