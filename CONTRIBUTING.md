@@ -53,6 +53,9 @@ If you add or update a dependency, also regenerate the third-party license list 
 `packaging/licenses.sh` (it needs `cargo-about` 0.9.1). CI fails if
 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) is out of date.
 
+CI also checks that every commit in the pull request is
+[signed off](#sign-off-your-commits).
+
 CI also fuzzes the loading of weights files for a minute, since the app reads them from
 disk (see [fuzz/](fuzz/)). If you change how weights are loaded or used, run it locally
 too. It needs nightly Rust and
@@ -103,6 +106,28 @@ pass that file's path in place of the two folders.
 * **Spelling:** use American spelling in code, comments, documentation and UI text.
 * **Pull requests:** keep each one focused on a single change, explain what it does and
   why, and note anything you couldn't test (for example a platform you don't have).
+
+## Sign off your commits
+
+Every commit must be signed off under the
+[Developer Certificate of Origin](https://developercertificate.org/) (DCO) 1.1. Signing
+off certifies that you wrote the change, or otherwise have the right to submit it under
+the project's licenses. Add the sign-off with `git commit -s`, which ends the commit
+message with a line like this:
+
+```
+Signed-off-by: Your Name <you@example.com>
+```
+
+The name and email must match the commit's author. The *DCO* check fails a pull request
+that has a commit without a sign-off. To add sign-offs to commits you've already made,
+rebase over them with `--signoff` and force-push. For the last three commits, for
+example:
+
+```bash
+git rebase --signoff HEAD~3
+git push --force-with-lease
+```
 
 ## License
 
