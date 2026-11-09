@@ -15,12 +15,12 @@ Every release also carries `SHA256SUMS.txt` and a signed build-provenance attest
 for each file. Users can verify a download with:
 
 ```bash
-gh attestation verify IntersectionLab-0.5.0-macos-universal.dmg --repo schreck61/intersection-lab
+gh attestation verify IntersectionLab-0.5.1-macos-universal.dmg --repo schreck61/intersection-lab
 ```
 
 The signed attestation is also attached to the release as
 `IntersectionLab-<version>.sigstore.json`, so a download can be checked without fetching
-it from GitHub's attestation store: add `--bundle IntersectionLab-0.5.0.sigstore.json`.
+it from GitHub's attestation store: add `--bundle IntersectionLab-0.5.1.sigstore.json`.
 
 ## Making a release
 
@@ -31,8 +31,8 @@ it from GitHub's attestation store: add `--bundle IntersectionLab-0.5.0.sigstore
    commit on `main` afterward and push the tag:
    ```bash
    git switch main && git pull
-   git tag v0.5.0
-   git push origin v0.5.0
+   git tag v0.5.1
+   git push origin v0.5.1
    ```
 3. The workflow checks that the tag matches `Cargo.toml`, verifies licenses and
    attributions, builds and signs every package, and creates a **draft** release with
