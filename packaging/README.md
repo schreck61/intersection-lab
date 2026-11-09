@@ -25,9 +25,12 @@ it from GitHub's attestation store: add `--bundle IntersectionLab-0.5.0.sigstore
 ## Making a release
 
 1. Update `version` in `Cargo.toml`, run `cargo build` (refreshes `Cargo.lock`), and
-   regenerate the attributions if dependencies changed: `packaging/licenses.sh`.
-2. Commit, then tag and push:
+   regenerate the attributions, which list the app's own version: `packaging/licenses.sh`.
+2. Open a pull request with the change: `main` takes changes only through pull requests
+   whose required checks pass. Merging gives the commits new hashes, so tag the merged
+   commit on `main` afterward and push the tag:
    ```bash
+   git switch main && git pull
    git tag v0.5.0
    git push origin v0.5.0
    ```
