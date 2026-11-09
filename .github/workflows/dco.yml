@@ -1,0 +1,53 @@
+# Copyright (c) 2026 Jim Schreckengast
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# Check that every commit in a pull request is signed off under the Developer
+# Certificate of Origin (https://developercertificate.org/), as CONTRIBUTING.md asks.
+name: DCO
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  dco:
+    name: DCO
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # A commit passes if it has a Signed-off-by line with its author's email. Dependabot
+      # signs off as dependabot[bot] <support@github.com> rather than with its author
+      # address, so a bot's commits need only a sign-off. Merge commits are skipped.
+      - name: Every commit is signed off
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          missing=0
+          for c in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            author=$(git log -1 --format='%an' "$c")
+            email=$(git log -1 --format='%ae' "$c")
+            signoffs=$(git log -1 --format='%(trailers:key=Signed-off-by,valueonly)' "$c")
+            case "$author" in
+              *'[bot]') ok=$([ -n "$signoffs" ] && echo y) ;;
+              *) ok=$(printf '%s\n' "$signoffs" | grep -qiF "<$email>" && echo y) ;;
+            esac
+            if [ -z "$ok" ]; then
+              echo "::error::$(git log -1 --format='%h %s' "$c") is not signed off by its author ($author <$email>)"
+              missing=1
+            fi
+          done
+          if [ "$missing" = 1 ]; then
+            n=$(git rev-list --count --no-merges "$BASE..$HEAD")
+            echo "Sign off new commits with 'git commit -s'. To add sign-offs to this pull request's"
+            echo "commits, rebase over them and force-push:"
+            echo "  git rebase --signoff HEAD~$n && git push --force-with-lease"
+            echo "See CONTRIBUTING.md#sign-off-your-commits."
+            exit 1
+          fi
+          echo "Every commit is signed off."
