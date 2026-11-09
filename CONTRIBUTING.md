@@ -5,7 +5,8 @@ new controllers or experiments, and documentation improvements are all welcome.
 
 By taking part, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md). To report a
 security vulnerability, follow the [security policy](SECURITY.md) instead of opening a
-public issue.
+public issue. How decisions are made and who does what is described in
+[GOVERNANCE.md](GOVERNANCE.md).
 
 ## Before you start
 
