@@ -43,7 +43,7 @@ body:
     attributes:
       label: Version
       description: Shown in the app's About window. For a source build, give the commit.
-      placeholder: "0.4.0"
+      placeholder: "0.5.0"
     validations:
       required: true
   - type: dropdown
