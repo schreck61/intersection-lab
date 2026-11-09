@@ -54,7 +54,9 @@ gh attestation verify <downloaded-file> --repo schreck61/intersection-lab
 ```
 
 Each release also includes the signed attestation as `IntersectionLab-<version>.sigstore.json`;
-pass it with `--bundle` to verify without fetching it from GitHub.
+pass it with `--bundle` to verify without fetching it from GitHub. The release's
+`IntersectionLab-<version>.intoto.jsonl` is an identical copy, named the way supply-chain
+scanners such as the OpenSSF Scorecard expect provenance to be.
 
 The macOS app is also signed with a Developer ID and notarized, and the Windows
 executable and installer are signed with Azure Artifact Signing. See

@@ -245,11 +245,16 @@ jobs:
         with:
           subject-path: dist/*
       # Publish the signed Sigstore bundle with the release too, so downloads can be
-      # verified offline and tools that look for release signatures find one.
+      # verified offline and tools that look for release signatures find one. The same
+      # one-line bundle goes out again as .intoto.jsonl, the only name the OpenSSF
+      # Scorecard recognizes as provenance; `gh attestation verify --bundle` takes either.
       - name: Attach the attestation bundle
         env:
           BUNDLE: ${{ steps.attest.outputs.bundle-path }}
-        run: cp "$BUNDLE" "dist/IntersectionLab-${GITHUB_REF_NAME#v}.sigstore.json"
+        run: |
+          name="dist/IntersectionLab-${GITHUB_REF_NAME#v}"
+          cp "$BUNDLE" "$name.sigstore.json"
+          cp "$BUNDLE" "$name.intoto.jsonl"
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
