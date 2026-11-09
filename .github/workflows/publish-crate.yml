@@ -1,0 +1,49 @@
+# Copyright (c) 2026 Jim Schreckengast
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# Publish the crate to crates.io when a GitHub Release is published, so Rust users can
+# `cargo install intersection-lab`. It signs in with crates.io Trusted Publishing:
+# GitHub vouches for this workflow and crates.io returns a token that expires within
+# 30 minutes, so no crates.io token is stored in the repository. To retry, re-run the
+# failed run, or run this workflow manually from the version's tag. The one-time setup
+# on crates.io is in packaging/README.md.
+name: Publish crate
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-22.04
+    # The crate's Trusted Publishing settings on crates.io name this environment.
+    environment: crates-io
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Tag matches Cargo.toml version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::$GITHUB_REF_NAME does not match Cargo.toml version $version; run this from the version's tag"
+            exit 1
+          fi
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+        id: auth
+      - name: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish --locked

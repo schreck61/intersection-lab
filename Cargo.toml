@@ -7,10 +7,27 @@ description = "Microscopic traffic-intersection simulator for comparing signal c
 authors = ["Jim Schreckengast"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/schreck61/intersection-lab"
-homepage = "https://github.com/schreck61/intersection-lab"
+homepage = "https://schreck61.github.io/intersection-lab/"
 readme = "README.md"
-keywords = ["traffic", "simulation", "traffic-signal", "reinforcement-learning", "egui"]
+keywords = ["traffic", "simulation", "traffic-signal", "machine-learning", "egui"]
 categories = ["simulation", "science"]
+# What `cargo publish` uploads to crates.io: the app's sources and the files they embed
+# (trained weights, icon, third-party licenses), with the README and license texts.
+# Everything else stays out: the developer tools in src/bin (so `cargo install`
+# installs only the app), examples, tests, docs, packaging files, and hidden files such
+# as .DS_Store, which git's ignore rules don't keep out of an include list.
+include = [
+    "/src",
+    "!/src/bin",
+    "/weights/*.json",
+    "/assets/icon_128.rgba",
+    "/THIRD_PARTY_LICENSES.md",
+    "/README.md",
+    "/LICENSE-MIT",
+    "/LICENSE-APACHE",
+    "/COPYRIGHT",
+    "!.*",
+]
 
 [dependencies]
 eframe = "0.37.0"

@@ -1,8 +1,9 @@
 # Copyright (c) 2026 Jim Schreckengast
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
-# Build and test on every platform, build the browser version, lint with clippy, and
-# check licenses, advisories and attributions.
+# Build and test on every platform, build the browser version, lint with clippy, build
+# the crate from the files crates.io would get, and check licenses, advisories and
+# attributions.
 name: CI
 
 on:
@@ -60,6 +61,19 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo clippy --locked --release --all-targets -- -D warnings
       - run: cargo clippy --locked --release --target wasm32-unknown-unknown --bin intersection-lab -- -D warnings
+
+  package:
+    name: Crate package
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # Builds the app from only the files in Cargo.toml's include list, so a file the
+      # build needs but the list leaves out fails here rather than when publishing.
+      - run: cargo package --locked
 
   licenses:
     name: Licenses and advisories

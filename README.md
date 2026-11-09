@@ -23,6 +23,16 @@ for macOS, an MSI (or portable zip) for Windows on x64 and ARM64, and `.deb`, `.
 `.tar.gz` for Linux on x86_64 and aarch64. All are built and signed by GitHub Actions; see
 [packaging/README.md](packaging/README.md) for how releases are made and verified.
 
+If you have a current Rust toolchain, you can instead build and install it from
+[crates.io](https://crates.io/crates/intersection-lab):
+
+```bash
+cargo install --locked intersection-lab
+```
+
+Run the same command again to update it, and `cargo uninstall intersection-lab` to
+remove it.
+
 ## Build from source
 
 ```bash

@@ -2,6 +2,8 @@
 
 Intersection Lab ships as signed, installable packages for every major desktop platform.
 GitHub Actions builds them all from a version tag ([`.github/workflows/release.yml`](../.github/workflows/release.yml)).
+It's also published to crates.io, so Rust users can `cargo install --locked intersection-lab`
+(see [crates.io](#cratesio)).
 
 | Platform | Architectures | Packages | Signing |
 |---|---|---|---|
@@ -32,6 +34,8 @@ it from GitHub's attestation store: add `--bundle IntersectionLab-0.5.0.sigstore
 3. The workflow checks that the tag matches `Cargo.toml`, verifies licenses and
    attributions, builds and signs every package, and creates a **draft** release with
    all files, checksums and attestations. Review it on GitHub and publish.
+4. Publishing the release starts the *Publish crate* workflow, which publishes the same
+   version to crates.io (see [crates.io](#cratesio)).
 
 To test the pipeline without releasing, run the *Release* workflow manually
 (Actions → Release → Run workflow): it builds everything and attaches the packages to
@@ -41,6 +45,41 @@ Signing is optional per platform: without its secrets or variables a platform's 
 are built unsigned (macOS ad-hoc), so the pipeline works before certificates are set up
 and on forks. Signing happens only on tag builds, which are the only runs allowed into
 the `release` environment that holds the signing settings.
+
+## crates.io
+
+The crate holds only what the app needs to build, as listed under `include` in
+`Cargo.toml`: its sources, the trained weights, the icon and the third-party licenses,
+with the README and license texts. The developer tools in `src/bin`, the examples, tests
+and docs stay out, so `cargo install` installs just the app. CI's *Crate package* job
+builds the crate from those files alone, so a file missing from the list fails CI rather
+than the publish.
+
+The *Publish crate* workflow ([`.github/workflows/publish-crate.yml`](../.github/workflows/publish-crate.yml))
+signs in with crates.io [Trusted Publishing](https://crates.io/docs/trusted-publishing):
+GitHub vouches for the workflow and crates.io returns a token that expires within 30
+minutes, so no crates.io token is stored in the repository. It needs this setup once:
+
+1. Publish the first version yourself, since crates.io adds a trusted publisher only to a
+   crate that already exists. Your crates.io account needs a verified email address.
+   Create an API token at <https://crates.io/settings/tokens> with the *publish-new*
+   scope, limited to `intersection-lab` and with a short expiry. Then, from a clean
+   checkout of `main`:
+   ```bash
+   cargo login            # paste the token
+   cargo publish --locked
+   cargo logout
+   ```
+   Delete the token on crates.io afterwards.
+2. On the crate's page on crates.io, open **Settings → Trusted Publishing**, choose
+   **Add** and **GitHub**, and enter owner `schreck61`, repository `intersection-lab`,
+   workflow `publish-crate.yml` and environment `crates-io`.
+3. On GitHub, create the `crates-io` environment (*Settings → Environments*) and limit
+   it to the tag pattern `v*`, like `release`.
+
+From then on, publishing a GitHub release publishes the same version to crates.io. If
+that fails, re-run the failed run from the Actions tab, or run *Publish crate* manually
+from the version's tag.
 
 ## Signing setup
 
