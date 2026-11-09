@@ -454,7 +454,8 @@ weights/        trained DQN and hybrid weights per layout
 tests/          safety + throughput regression tests
 examples/       corridor, lpi, fya, satflow, preempt, sweep (multi-seed safety sweep), cooperative
 docs/           insights.md (every finding), cooperative-intersections.md (design notes for the
-                signal-free crossing, with the scripts behind its estimates and figures), screenshots
+                signal-free crossing, with the scripts behind its estimates and figures),
+                assurance-case.md (why SECURITY.md's expectations hold), screenshots
 ```
 
 ## Notes and limitations

@@ -6,6 +6,38 @@ Security fixes go into the latest release and the browser version, which is rebu
 `main`. Older releases don't receive fixes; please update to the
 [latest release](https://github.com/schreck61/intersection-lab/releases/latest).
 
+## What to expect
+
+Intersection Lab is a simulator that runs on your own computer. What you can expect from
+it, and what it doesn't protect against:
+
+* **No network access.** The desktop app makes no network connections. The browser
+  version is served over HTTPS from GitHub Pages and makes no requests of its own once
+  it has loaded.
+* **No extra privileges.** Once installed, the app runs with your ordinary user rights
+  and never asks for more.
+* **Only its own files.** The app reads trained-weights files: from a `weights` folder in
+  the folder it's started from, then from its folder in your user data directory, and
+  otherwise from the copies built into it. It writes them only when you save weights.
+  The `train` tool writes the weights it trains to a `weights` folder in the folder it's
+  run from, `bench` writes no files, and the app's screenshot mode (`TS_SHOT`) writes
+  only the image you name.
+* **Files are checked before use.** A weights file is parsed into typed data and checked
+  against what its controller accepts (layer sizes, connections between layers, finite
+  values). A file that fails is rejected rather than run, and CI fuzzes this loader on
+  every pull request. A file that passes can still make its controller manage traffic
+  badly, so use weights only from sources you trust.
+* **No code from data.** The app has no plugins, scripting or other way to run code
+  from the files it reads, and its own code is safe Rust with no `unsafe` blocks.
+* **Verifiable releases.** Every release file is signed and comes with a
+  build-provenance attestation (see [Verifying downloads](#verifying-downloads)).
+  Packages from anywhere else aren't covered.
+
+It doesn't protect against someone who can already change files in your user account,
+who could replace the app or its weights, and a very large weights file is read whole
+into memory before it's checked, so it can make the app slow or run out of memory.
+[docs/assurance-case.md](docs/assurance-case.md) explains why these expectations hold.
+
 ## Reporting a vulnerability
 
 Please don't report security vulnerabilities in public issues or pull requests.
