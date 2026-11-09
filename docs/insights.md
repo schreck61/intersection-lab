@@ -123,7 +123,39 @@ the end.
   pull away. Even at 0.6× traffic on the town layout it averaged 15.0 s against 10.5 s for
   actuated signals, which reverses an earlier finding.
 
-## 8. Lessons about the model itself
+## 8. A signal-free crossing for automated vehicles
+
+The cooperative crossing assumes every vehicle is automated and connected. An
+intersection manager grants each vehicle an exact trajectory, and pedestrians use
+underpasses. Figures are average delay over 3 seeds of 20 minutes, with fail-safe gaps
+(a follower can stop if the vehicle ahead stalls in the box) and the default vehicle mix.
+The design notes in [cooperative-intersections.md](cooperative-intersections.md) explain
+the design and compare these results with their estimates.
+
+- **It carries the design demand:** two left-turn lanes, three through lanes and a slip
+  right turn on each approach carry 18,000 veh/h at 29 s average delay and saturate near
+  19,000 veh/h, or about 21,700 if every vehicle were a car.
+- **Batches, not a zipper:** the capacity comes from serving each movement in short
+  batches, in two rings with a barrier like an actuated signal, but with no yellow or
+  all-red. Weaving vehicles through one at a time, first come, first served, is better
+  only below about 6,000 veh/h and saturates near 10,100 veh/h. Each switch between
+  conflicting paths costs about 2.2 s, against 1.0 s for one more following vehicle; each
+  path crosses ten other lanes, whose free windows must all line up; and a vehicle
+  waiting for its windows holds up its whole lane.
+- **The safety rule matters most to the zipper:** gaps that cover message latency only
+  add 25% to first come, first served (12,600 veh/h) but only 3.5% to batches (19,700),
+  which switch a few times a minute instead of at almost every vehicle.
+- **Left-turn lanes:** with one per approach the crossing saturates near 13,500 veh/h;
+  the second is worth about 5,500 veh/h.
+- **Uneven arrivals:** at the design demand (8 seeds), platoons from an upstream signal
+  average 34 s against 31 s for random arrivals. Random 2-minute surges of up to 1.7× on
+  an approach average 48 s and leave about 160 vehicles waiting.
+- **Emergency vehicles:** scheduled first, they waited 7.5–10.4 s at 14,000 veh/h, against
+  39 s for other left turns.
+- **Safety:** no run had a zone overlap, a zone entered while occupied, a box entry
+  without a reservation or a step off a granted trajectory.
+
+## 9. Lessons about the model itself
 
 - **Realism changes conclusions:** adding driver reaction time, realistic yellow behavior
   and real turn bays changed several results. All-way stops lost their low-traffic
@@ -146,6 +178,8 @@ the end.
   near-misses and overlaps, not crashes.
 - **Corridors:** they run east–west only.
 - **Training data:** the RL agents were trained on simulated traffic only.
+- **Cooperative crossing:** every vehicle is automated and connected, and human drivers,
+  lost messages, a failed manager and vehicles stalling in the box are not modeled.
 
 ## Reproducing the results
 
@@ -160,6 +194,10 @@ cargo run --release --example corridor arterial4 3 20 8 1.3   # section 4 (1.3×
 cargo run --release --example lpi 12                   # section 5
 cargo run --release --example fya 6                    # section 6
 cargo run --release --bin bench town4 20 6 0.6         # section 7 (low-traffic town)
+cargo run --release --example cooperative p2 2 mix 1200 3 14000,16000,17000,18000,19000,20000,22000   # section 8
+cargo run --release --example cooperative p2 2 mix 1200 3 2000,4000,6000,8000,10000,12000,14000 random fcfs   # section 8 (first come, first served)
+cargo run --release --example cooperative p2 1 mix 1200 3 16000                     # section 8 (one left-turn lane)
+cargo run --release --example cooperative p2 2 mix 1200 8 18000 platoons            # section 8 (platoons)
 cargo run --release --example satflow                  # calibration
 cargo run --release --example sweep 4 1.35             # safety sweep
 ```

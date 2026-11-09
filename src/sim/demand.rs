@@ -67,6 +67,8 @@ impl DemandConfig {
             Town4 => (300.0, 260.0),
             Tee => (650.0, 260.0),
             Roundabout => (420.0, 350.0),
+            // The design capacity of the crossing: 18,000 veh/h in all.
+            Cooperative => (4500.0, 4500.0),
         };
         for leg in &net.legs {
             let ci = compass_index(leg.compass);
@@ -80,6 +82,12 @@ impl DemandConfig {
         }
         if net.kind == Roundabout {
             d.ped_rate = 0.0;
+        }
+        if net.kind == Cooperative {
+            // Pedestrians use underground passages; a fifth of the traffic turns left
+            // and the right turns bypass the box on slip lanes.
+            d.ped_rate = 0.0;
+            d.turn = [[0.20, 0.65, 0.15]; 4];
         }
         d
     }

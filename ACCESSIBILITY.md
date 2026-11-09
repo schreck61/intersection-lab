@@ -17,6 +17,7 @@ cargo run --release --bin bench all 20 6        # every controller on every layo
 cargo run --release --bin bench sensors all 20 4 # sensor study
 cargo run --release --example corridor           # corridor study
 cargo run --release --example lpi                # pedestrian safety treatments
+cargo run --release --example cooperative        # signal-free cooperative crossing
 ```
 
 The [README](README.md#results) and [docs/insights.md](docs/insights.md) report the
@@ -46,7 +47,8 @@ findings as text and tables, and every image in them has a text description.
 ## Known limitations
 
 * **The map and charts are images only.** A screen reader can't describe the vehicles,
-  signals, queues, signal timing diagram or line charts. The numbers in the results panel
+  signals, queues, signal timing diagram, line charts, or the cooperative crossing's
+  timeline of crossings and histogram of crossing gaps. The numbers in the results panel
   are readable.
 * **No screen-reader support in the browser version.** It draws everything on a single
   canvas, so assistive technology finds nothing to read. Use the desktop app or the

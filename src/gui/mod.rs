@@ -9,6 +9,7 @@ pub mod render;
 pub mod shot;
 
 use crate::control::CtrlKind;
+use crate::sim::coop::{CoopManager, GapPolicy, Scheduling};
 use crate::sim::demand::{DemandConfig, Pattern, compass_index};
 use crate::sim::geom::v2;
 use crate::sim::network::{LayoutKind, Network, Turn};
@@ -44,6 +45,14 @@ pub struct App {
     twin_mode: ControlMode,
     twin_ctrl: CtrlKind,
     twin_summary: Summary,
+    /// Intersection-manager settings of the cooperative layout; the comparison twin has
+    /// its own gap policy.
+    coop_policy: GapPolicy,
+    twin_policy: GapPolicy,
+    coop_sched: Scheduling,
+    twin_sched: Scheduling,
+    coop_max_cycle: f64,
+    coop_slack: f64,
     /// Intersections along the main road (1 = a single intersection).
     corridor_n: usize,
     /// Fixed-time intersections of a corridor run a coordinated green wave.
@@ -75,6 +84,8 @@ pub struct App {
     anim_t: f64,
     message: Option<(String, Instant)>,
     shot: Option<(String, f64)>,
+    /// Scripted runs: hold the right panel at this scroll offset.
+    scroll_right: Option<f32>,
 }
 
 impl App {
@@ -100,6 +111,13 @@ impl App {
             twin_mode: ControlMode::Signal,
             twin_ctrl: CtrlKind::Fixed,
             twin_summary: Summary::default(),
+            coop_policy: GapPolicy::FailSafe,
+            // Side by side, B weaves vehicles through one at a time under the same gaps.
+            twin_policy: GapPolicy::FailSafe,
+            coop_sched: Scheduling::Batches,
+            twin_sched: Scheduling::FirstCome,
+            coop_max_cycle: 100.0,
+            coop_slack: 1.5,
             corridor_n: 1,
             green_wave: false,
             corridor: CorridorSummary::default(),
@@ -128,13 +146,17 @@ impl App {
             anim_t: 0.0,
             message: None,
             shot: None,
+            scroll_right: None,
         }
         .with_env()
     }
 
     /// Optional overrides for scripted runs: TS_LAYOUT, TS_MODE, TS_CTRL, TS_TWIN (B side:
-    /// a controller or allway/twoway), TS_CORRIDOR (signals), TS_WAVE, TS_SPEED, TS_ZOOM, TS_COLOR, TS_NIGHT, TS_COND,
-    /// TS_LOOP_FAULT, TS_ABOUT, TS_SHOT (png path) + TS_SHOT_AFTER (sim seconds).
+    /// a controller, allway/twoway, a gap policy p2/ph/p1 with batches, or fcfs for first
+    /// come, first served), TS_POLICY (gap policy p2/ph/p1), TS_SCHED (fcfs),
+    /// TS_CORRIDOR (signals), TS_WAVE, TS_SPEED, TS_ZOOM, TS_COLOR, TS_NIGHT, TS_COND,
+    /// TS_LOOP_FAULT, TS_ABOUT, TS_SCROLL (right panel offset), TS_SHOT (png path) +
+    /// TS_SHOT_AFTER (sim seconds).
     fn with_env(mut self) -> Self {
         let var = |k: &str| std::env::var(k).ok();
         if let Some(l) = var("TS_LAYOUT").and_then(|v| LayoutKind::ALL.into_iter().find(|k| k.key() == v)) {
@@ -145,8 +167,16 @@ impl App {
                 "allway" => ControlMode::AllWayStop,
                 "twoway" => ControlMode::TwoWayStop,
                 "roundabout" => ControlMode::Roundabout,
+                "cooperative" => ControlMode::Cooperative,
                 _ => ControlMode::Signal,
             };
+        }
+        let policy = |v: &str| GapPolicy::ALL.into_iter().find(|p| p.short().eq_ignore_ascii_case(v));
+        if let Some(p) = var("TS_POLICY").as_deref().and_then(policy) {
+            self.coop_policy = p;
+        }
+        if var("TS_SCHED").as_deref() == Some("fcfs") {
+            self.coop_sched = Scheduling::FirstCome;
         }
         if let Some(c) = var("TS_CTRL").and_then(|v| CtrlKind::ALL.into_iter().find(|k| k.short() == v)) {
             self.ctrl = c;
@@ -157,9 +187,14 @@ impl App {
         self.green_wave = var("TS_WAVE").is_some();
         if let Some(b) = var("TS_TWIN") {
             self.twin = Some(World::single(Sim::new(self.layout, ControlMode::Signal, CtrlKind::Fixed, 0)));
-            match CtrlKind::ALL.into_iter().find(|k| k.short() == b) {
-                Some(c) => self.twin_ctrl = c,
-                None => self.twin_mode = if b == "allway" { ControlMode::AllWayStop } else { ControlMode::TwoWayStop },
+            match (CtrlKind::ALL.into_iter().find(|k| k.short() == b), policy(&b)) {
+                (Some(c), _) => self.twin_ctrl = c,
+                (None, Some(p)) => {
+                    self.twin_policy = p;
+                    self.twin_sched = Scheduling::Batches;
+                }
+                (None, None) if b == "fcfs" => self.twin_sched = Scheduling::FirstCome,
+                (None, None) => self.twin_mode = if b == "allway" { ControlMode::AllWayStop } else { ControlMode::TwoWayStop },
             }
         }
         self.rebuild(false);
@@ -182,6 +217,7 @@ impl App {
         if let Some(f) = var("TS_LOOP_FAULT").and_then(|v| v.parse().ok()) {
             self.world.sims[self.focus].sensors.loop_fault = f;
         }
+        self.scroll_right = var("TS_SCROLL").and_then(|v| v.parse().ok());
         if let Some(p) = var("TS_SHOT") {
             let after = var("TS_SHOT_AFTER").and_then(|v| v.parse().ok()).unwrap_or(120.0);
             self.shot = Some((p, after));
@@ -197,7 +233,7 @@ impl App {
         let net = Network::build(self.layout);
         let demand = if keep_demand && old.net.kind == self.layout { old.demand.clone() } else { DemandConfig::default_for(&net) };
         let template = Self::settings_of(old);
-        self.world = self.make_world(self.mode, self.ctrl, demand, &template);
+        self.world = self.make_world(self.mode, self.ctrl, (self.coop_policy, self.coop_sched), demand, &template);
         // The view is centered on the middle of the corridor: start the panels there.
         self.focus = self.world.sims.len() / 2;
         self.rebuild_twin();
@@ -222,7 +258,7 @@ impl App {
         let src = &self.world.sims[0];
         let template = Self::settings_of(src);
         let demand = src.demand.clone();
-        self.twin = Some(self.make_world(self.twin_mode, self.twin_ctrl, demand, &template));
+        self.twin = Some(self.make_world(self.twin_mode, self.twin_ctrl, (self.twin_policy, self.twin_sched), demand, &template));
         self.twin_summary = Summary::default();
     }
 
@@ -239,10 +275,19 @@ impl App {
         t
     }
 
-    /// One intersection, or a corridor of `corridor_n` along the main road.
-    fn make_world(&self, mode: ControlMode, ctrl: CtrlKind, demand: DemandConfig, settings: &Sim) -> World {
-        let mut w = World::corridor(self.corridor_n, self.layout, mode, ctrl, &demand, self.seed);
+    /// One intersection, or a corridor of `corridor_n` along the main road. The
+    /// cooperative crossing always stands alone: its manager schedules every vehicle from
+    /// the edge of its own map.
+    fn make_world(&self, mode: ControlMode, ctrl: CtrlKind, (policy, sched): (GapPolicy, Scheduling), demand: DemandConfig, settings: &Sim) -> World {
+        let n = if self.is_coop() { 1 } else { self.corridor_n };
+        let mut w = World::corridor(n, self.layout, mode, ctrl, &demand, self.seed);
         for sim in &mut w.sims {
+            sim.set_gap_policy(policy);
+            sim.set_scheduling(sched);
+            if let Some(c) = sim.coop.as_mut() {
+                c.max_cycle = self.coop_max_cycle;
+                c.slack = self.coop_slack;
+            }
             sim.sensors = settings.sensors.clone();
             sim.rtor = settings.rtor;
             sim.preemption = settings.preemption;
@@ -256,6 +301,21 @@ impl App {
             w.set_coordination(true);
         }
         w
+    }
+
+    fn is_coop(&self) -> bool {
+        self.layout == LayoutKind::Cooperative
+    }
+
+    /// Apply the shared intersection-manager settings to both worlds.
+    fn apply_coop_settings(&mut self) {
+        let (cycle, slack) = (self.coop_max_cycle, self.coop_slack);
+        for w in std::iter::once(&mut self.world).chain(self.twin.as_mut()) {
+            for c in w.sims.iter_mut().filter_map(|s| s.coop.as_mut()) {
+                c.max_cycle = cycle;
+                c.slack = slack;
+            }
+        }
     }
 
     /// Propagate settings edited on the focused intersection to the rest of the world
@@ -355,7 +415,13 @@ impl App {
                     self.spawn_kind = k;
                 }
             }
-            if ui.selectable_label(self.tool == Tool::Pedestrian, "🚶 Pedestrian").on_hover_text("Click near a crosswalk corner").clicked() {
+            let walk = !self.world.sims[self.focus].net.crosswalks.is_empty();
+            let ped = ui
+                .add_enabled_ui(walk, |ui| ui.selectable_label(self.tool == Tool::Pedestrian, "🚶 Pedestrian"))
+                .inner
+                .on_hover_text("Click near a crosswalk corner")
+                .on_disabled_hover_text("No crosswalks here: pedestrians use underground passages");
+            if ped.clicked() {
                 self.tool = if self.tool == Tool::Pedestrian { Tool::Select } else { Tool::Pedestrian };
             }
             ui.separator();
@@ -408,14 +474,17 @@ impl App {
                 self.layout = layout;
                 self.rebuild(false);
             }
+            let coop = self.is_coop();
             let mut n = self.corridor_n;
-            ui.add(egui::Slider::new(&mut n, 1..=5).text("signals along main road"))
-                .on_hover_text("A corridor: intersections one block (420 m) apart on the east-west road. Traffic flows between them and queues spill back.");
+            if !coop {
+                ui.add(egui::Slider::new(&mut n, 1..=5).text("signals along main road"))
+                    .on_hover_text("A corridor: intersections one block (420 m) apart on the east-west road. Traffic flows between them and queues spill back.");
+            }
             if n != self.corridor_n {
                 self.corridor_n = n;
                 self.rebuild(true);
             }
-            if self.corridor_n > 1 {
+            if self.corridor_n > 1 && !coop {
                 let mut gw = self.green_wave;
                 if ui
                     .checkbox(&mut gw, "Fixed-time green wave")
@@ -482,7 +551,50 @@ impl App {
                 self.twin = if compare { Some(World::single(Sim::new(self.layout, ControlMode::Signal, CtrlKind::Fixed, 0))) } else { None };
                 self.rebuild(true);
             }
-            if self.twin.is_some() {
+            if self.twin.is_some() && coop {
+                let (mut p, mut sch) = (self.twin_policy, self.twin_sched);
+                ui.horizontal(|ui| {
+                    ui.label("B:");
+                    ui.vertical(|ui| {
+                        egui::ComboBox::from_id_salt("twin_sched")
+                            .selected_text(sch.label())
+                            .width(240.0)
+                            .show_ui(ui, |ui| {
+                                for x in Scheduling::ALL {
+                                    ui.selectable_value(&mut sch, x, x.name());
+                                }
+                            })
+                            .response
+                            .accessible_name("B scheduling");
+                        egui::ComboBox::from_id_salt("twin_policy")
+                            .selected_text(format!("{} gaps", p.label()))
+                            .width(240.0)
+                            .show_ui(ui, |ui| {
+                                for x in GapPolicy::ALL {
+                                    ui.selectable_value(&mut p, x, x.name());
+                                }
+                            })
+                            .response
+                            .accessible_name("B gap policy");
+                    });
+                });
+                if p != self.twin_policy {
+                    self.twin_policy = p;
+                    if let Some(t) = self.twin.as_mut() {
+                        for s in &mut t.sims {
+                            s.set_gap_policy(p);
+                        }
+                    }
+                }
+                if sch != self.twin_sched {
+                    self.twin_sched = sch;
+                    if let Some(t) = self.twin.as_mut() {
+                        for s in &mut t.sims {
+                            s.set_scheduling(sch);
+                        }
+                    }
+                }
+            } else if self.twin.is_some() {
                 let (mut m, mut c) = (self.twin_mode, self.twin_ctrl);
                 ui.horizontal(|ui| {
                     ui.label("B:");
@@ -542,6 +654,9 @@ impl App {
                 d.pattern = pat;
                 changed = true;
             }
+            let total: f64 = d.rate.iter().sum::<f64>() * d.scale;
+            ui.label(RichText::new(format!("{total:.0} veh/h arriving in all")).small().color(Color32::from_gray(160)));
+            let max_rate = if coop { 6000.0 } else { 1600.0 };
             for li in 0..self.world.sims[self.focus].net.legs.len() {
                 let sim = &mut self.world.sims[self.focus];
                 let leg = &sim.net.legs[li];
@@ -551,7 +666,7 @@ impl App {
                 egui::CollapsingHeader::new(format!("{} — {:.0} veh/h", leg.compass.bound(), d.rate[ci] * d.scale))
                     .id_salt(("leg", li))
                     .show(ui, |ui| {
-                        changed |= ui.add(egui::Slider::new(&mut d.rate[ci], 0.0..=1600.0).text("veh/h").step_by(10.0)).changed();
+                        changed |= ui.add(egui::Slider::new(&mut d.rate[ci], 0.0..=max_rate).text("veh/h").step_by(10.0)).changed();
                         for t in Turn::ALL {
                             if turns.contains(&t) {
                                 changed |= ui.add(egui::Slider::new(&mut d.turn[ci][t.index()], 0.0..=1.0).text(format!("{} share", t.name()))).changed();
@@ -579,66 +694,70 @@ impl App {
                 }
             }
 
-            ui.separator();
-            ui.heading("Sensors");
-            let s = &mut self.world.sims[self.focus].sensors;
-            ui.checkbox(&mut s.loops, "Inductive loops (stop-bar + advance)");
-            ui.add_enabled(s.loops, egui::Slider::new(&mut s.adv_dist, 20.0..=120.0).text("advance loop m"));
-            ui.checkbox(&mut s.camera, "Intersection cameras (video analytics)");
-            ui.add_enabled(s.camera, egui::Slider::new(&mut s.cam_range, 20.0..=150.0).text("camera range m"));
-            ui.checkbox(&mut s.radar, "Advance radar (long range)");
-            ui.add_enabled(s.radar, egui::Slider::new(&mut s.radar_range, 80.0..=260.0).text("radar range m"));
-            ui.checkbox(&mut s.cv, "Connected vehicles (V2I)");
-            ui.add_enabled(s.cv, egui::Slider::new(&mut s.cv_rate, 0.0..=1.0).text("CV penetration"));
-            if self.corridor_n > 1 {
-                ui.checkbox(&mut s.upstream_link, "Upstream signal shares its outflow")
-                    .on_hover_text("Corridor: each signal is told which vehicles its upstream neighbor has just released toward it");
-            }
-            ui.checkbox(&mut s.realistic, "Field-realistic sensor errors")
-                .on_hover_text("Cameras miss vehicles (weather, night, range, behind trucks) and only read intent from turn signals; loops fail and miss motorcycles; radar and connected-vehicle data are noisy");
-            ui.add_enabled_ui(s.realistic, |ui| {
-                egui::ComboBox::from_label("conditions")
-                    .selected_text(s.conditions.name())
-                    .show_ui(ui, |ui| {
-                        for c in Conditions::ALL {
-                            ui.selectable_value(&mut s.conditions, c, c.name());
-                        }
-                    });
-                ui.add(egui::Slider::new(&mut s.loop_fault, 0.0..=0.5).text("faulty loop stations"))
-                    .on_hover_text("Share of loop stations stuck on or off. Detector diagnostics flag them after a while and put their lanes on recall (red cross).");
-                ui.add(egui::Slider::new(&mut s.signal_use, 0.0..=1.0).text("turn-signal use"))
-                    .on_hover_text("Drivers who don't signal look like through traffic to the camera");
-            });
-            ui.label(RichText::new("Controllers only see these sensors — never ground truth. Try turning cameras/radar off and watch the adaptive controllers degrade.").small().color(Color32::from_gray(160)));
-
-            ui.separator();
-            ui.heading("Operations");
-            ui.checkbox(&mut self.world.sims[self.focus].preemption, "Emergency-vehicle preemption");
-            ui.checkbox(&mut self.world.sims[self.focus].rtor, "Right turn on red");
-            ui.add_enabled(self.world.sims[self.focus].rtor, egui::Checkbox::new(&mut self.world.sims[self.focus].ntor_peds, "…except while pedestrians are present"))
-                .on_hover_text("Blank-out NO TURN ON RED sign lit while someone waits at or crosses a crosswalk the turn passes");
-            ui.add(egui::Slider::new(&mut self.world.sims[self.focus].signal.lpi, 0.0..=7.0).step_by(0.5).text("leading ped interval s"))
-                .on_hover_text("WALK starts this long before turning traffic that crosses it gets green (0 = off)");
-            if self.world.sims[self.focus].signalized() {
-                egui::ComboBox::from_label("left turns")
-                    .selected_text(self.world.sims[self.focus].left_mode.name())
-                    .show_ui(ui, |ui| {
-                        for m in LeftMode::ALL {
-                            ui.selectable_value(&mut self.world.sims[self.focus].left_mode, m, m.name());
-                        }
-                    })
-                    .response
-                    .on_hover_text("Lefts with their own lane: green arrow plus flashing yellow arrow (yield to oncoming), green arrow only, or switch automatically when left x opposing volume is high");
-                let prot: Vec<&str> = (0..self.world.sims[self.focus].net.movements.len())
-                    .filter(|&m| self.world.sims[self.focus].left_protected[m])
-                    .map(|m| self.world.sims[self.focus].net.movements[m].name.as_str())
-                    .collect();
-                if self.world.sims[self.focus].left_mode != LeftMode::Fya {
-                    ui.label(RichText::new(format!("protected-only now: {}", if prot.is_empty() { "none".into() } else { prot.join(", ") })).small().color(Color32::from_gray(160)));
+            if coop {
+                self.manager_settings(ui);
+            } else {
+                ui.separator();
+                ui.heading("Sensors");
+                let s = &mut self.world.sims[self.focus].sensors;
+                ui.checkbox(&mut s.loops, "Inductive loops (stop-bar + advance)");
+                ui.add_enabled(s.loops, egui::Slider::new(&mut s.adv_dist, 20.0..=120.0).text("advance loop m"));
+                ui.checkbox(&mut s.camera, "Intersection cameras (video analytics)");
+                ui.add_enabled(s.camera, egui::Slider::new(&mut s.cam_range, 20.0..=150.0).text("camera range m"));
+                ui.checkbox(&mut s.radar, "Advance radar (long range)");
+                ui.add_enabled(s.radar, egui::Slider::new(&mut s.radar_range, 80.0..=260.0).text("radar range m"));
+                ui.checkbox(&mut s.cv, "Connected vehicles (V2I)");
+                ui.add_enabled(s.cv, egui::Slider::new(&mut s.cv_rate, 0.0..=1.0).text("CV penetration"));
+                if self.corridor_n > 1 {
+                    ui.checkbox(&mut s.upstream_link, "Upstream signal shares its outflow")
+                        .on_hover_text("Corridor: each signal is told which vehicles its upstream neighbor has just released toward it");
                 }
+                ui.checkbox(&mut s.realistic, "Field-realistic sensor errors")
+                    .on_hover_text("Cameras miss vehicles (weather, night, range, behind trucks) and only read intent from turn signals; loops fail and miss motorcycles; radar and connected-vehicle data are noisy");
+                ui.add_enabled_ui(s.realistic, |ui| {
+                    egui::ComboBox::from_label("conditions")
+                        .selected_text(s.conditions.name())
+                        .show_ui(ui, |ui| {
+                            for c in Conditions::ALL {
+                                ui.selectable_value(&mut s.conditions, c, c.name());
+                            }
+                        });
+                    ui.add(egui::Slider::new(&mut s.loop_fault, 0.0..=0.5).text("faulty loop stations"))
+                        .on_hover_text("Share of loop stations stuck on or off. Detector diagnostics flag them after a while and put their lanes on recall (red cross).");
+                    ui.add(egui::Slider::new(&mut s.signal_use, 0.0..=1.0).text("turn-signal use"))
+                        .on_hover_text("Drivers who don't signal look like through traffic to the camera");
+                });
+                ui.label(RichText::new("Controllers only see these sensors — never ground truth. Try turning cameras/radar off and watch the adaptive controllers degrade.").small().color(Color32::from_gray(160)));
+
+                ui.separator();
+                ui.heading("Operations");
+                ui.checkbox(&mut self.world.sims[self.focus].preemption, "Emergency-vehicle preemption");
+                ui.checkbox(&mut self.world.sims[self.focus].rtor, "Right turn on red");
+                ui.add_enabled(self.world.sims[self.focus].rtor, egui::Checkbox::new(&mut self.world.sims[self.focus].ntor_peds, "…except while pedestrians are present"))
+                    .on_hover_text("Blank-out NO TURN ON RED sign lit while someone waits at or crosses a crosswalk the turn passes");
+                ui.add(egui::Slider::new(&mut self.world.sims[self.focus].signal.lpi, 0.0..=7.0).step_by(0.5).text("leading ped interval s"))
+                    .on_hover_text("WALK starts this long before turning traffic that crosses it gets green (0 = off)");
+                if self.world.sims[self.focus].signalized() {
+                    egui::ComboBox::from_label("left turns")
+                        .selected_text(self.world.sims[self.focus].left_mode.name())
+                        .show_ui(ui, |ui| {
+                            for m in LeftMode::ALL {
+                                ui.selectable_value(&mut self.world.sims[self.focus].left_mode, m, m.name());
+                            }
+                        })
+                        .response
+                        .on_hover_text("Lefts with their own lane: green arrow plus flashing yellow arrow (yield to oncoming), green arrow only, or switch automatically when left x opposing volume is high");
+                    let prot: Vec<&str> = (0..self.world.sims[self.focus].net.movements.len())
+                        .filter(|&m| self.world.sims[self.focus].left_protected[m])
+                        .map(|m| self.world.sims[self.focus].net.movements[m].name.as_str())
+                        .collect();
+                    if self.world.sims[self.focus].left_mode != LeftMode::Fya {
+                        ui.label(RichText::new(format!("protected-only now: {}", if prot.is_empty() { "none".into() } else { prot.join(", ") })).small().color(Color32::from_gray(160)));
+                    }
+                }
+                ui.add(egui::Slider::new(&mut self.world.sims[self.focus].max_wait_guard, 0.0..=300.0).text("max-wait guard s"))
+                    .on_hover_text("Adaptive controllers are forced to serve any movement waiting longer than this (0 = off)");
             }
-            ui.add(egui::Slider::new(&mut self.world.sims[self.focus].max_wait_guard, 0.0..=300.0).text("max-wait guard s"))
-                .on_hover_text("Adaptive controllers are forced to serve any movement waiting longer than this (0 = off)");
 
             if self.ctrl == CtrlKind::DeepRl && self.mode == ControlMode::Signal {
                 ui.separator();
@@ -705,9 +824,14 @@ impl App {
             ui.separator();
             ui.heading("View");
             ui.horizontal_wrapped(|ui| {
-                ui.checkbox(&mut self.ov.sensors, "sensors");
-                ui.checkbox(&mut self.ov.detections, "detections");
-                ui.checkbox(&mut self.ov.conflicts, "conflict points");
+                if coop {
+                    ui.checkbox(&mut self.ov.conflicts, "reservation zones")
+                        .on_hover_text("Where crossing paths meet: red while a vehicle is in the zone, amber when one is due within 3 s");
+                } else {
+                    ui.checkbox(&mut self.ov.sensors, "sensors");
+                    ui.checkbox(&mut self.ov.detections, "detections");
+                    ui.checkbox(&mut self.ov.conflicts, "conflict points");
+                }
                 ui.checkbox(&mut self.ov.paths, "paths");
                 ui.checkbox(&mut self.ov.labels, "delay labels");
                 ui.checkbox(&mut self.ov.night, "night");
@@ -725,8 +849,93 @@ impl App {
         });
     }
 
-    fn strategy_name(&self, mode: ControlMode, ctrl: CtrlKind) -> String {
-        if mode == ControlMode::Signal && self.layout.signalized() { ctrl.short().to_string() } else { mode.name().to_string() }
+    fn strategy_name(&self, mode: ControlMode, ctrl: CtrlKind, (policy, sched): (GapPolicy, Scheduling)) -> String {
+        match (mode, sched) {
+            (ControlMode::Signal, _) if self.layout.signalized() => ctrl.short().to_string(),
+            (ControlMode::Cooperative, Scheduling::Batches) => format!("Intersection manager · {} gaps", policy.label()),
+            (ControlMode::Cooperative, Scheduling::FirstCome) => format!("First come, first served · {} gaps", policy.label()),
+            _ => mode.name().to_string(),
+        }
+    }
+
+    /// Settings of the cooperative crossing's intersection manager.
+    fn manager_settings(&mut self, ui: &mut Ui) {
+        ui.separator();
+        ui.heading("Intersection manager");
+        ui.label(
+            RichText::new(
+                "No signals and no roadside sensors. Every vehicle is automated and connected: it asks the manager for a slot as it enters the map and drives exactly the trajectory it is granted. Pedestrians use underground passages.",
+            )
+            .small()
+            .color(Color32::from_gray(170)),
+        );
+        let mut sch = self.coop_sched;
+        let label = ui.label("Scheduling");
+        egui::ComboBox::from_id_salt("scheduling")
+            .selected_text(sch.name())
+            .width(270.0)
+            .show_ui(ui, |ui| {
+                for x in Scheduling::ALL {
+                    ui.selectable_value(&mut sch, x, x.name());
+                }
+            })
+            .response
+            .labelled_by(label.id)
+            .on_hover_text("Batches serve each movement in turn, like a signal without yellow or all-red. First come, first served gives each vehicle the earliest gap that fits as soon as it asks, so the streams weave through one another one vehicle at a time.");
+        if sch != self.coop_sched {
+            // Live: vehicles keep the trajectories they already have.
+            self.coop_sched = sch;
+            for s in &mut self.world.sims {
+                s.set_scheduling(sch);
+            }
+            self.notify(format!("Scheduling switched live to {}", sch.label()));
+        }
+        let mut p = self.coop_policy;
+        let label = ui.label("Safety gap");
+        egui::ComboBox::from_id_salt("gap_policy")
+            .selected_text(p.name())
+            .width(270.0)
+            .show_ui(ui, |ui| {
+                for x in GapPolicy::ALL {
+                    ui.selectable_value(&mut p, x, x.name());
+                }
+            })
+            .response
+            .labelled_by(label.id)
+            .on_hover_text("How long after a crossing vehicle leaves a conflict zone the next one may enter it");
+        if p != self.coop_policy {
+            // Live: trajectories already granted keep their gaps.
+            self.coop_policy = p;
+            for s in &mut self.world.sims {
+                s.set_gap_policy(p);
+            }
+            self.notify(format!("Gap policy switched live to {}", p.label()));
+        }
+        let v = 40.0 / 3.6;
+        ui.label(
+            RichText::new(format!(
+                "Gap at 40 km/h: {:.2} s for a car, {:.2} s for a truck or bus",
+                p.gap(v, crate::sim::coop::brake_decel(VKind::Car)),
+                p.gap(v, crate::sim::coop::brake_decel(VKind::Truck))
+            ))
+            .small()
+            .color(Color32::from_gray(160)),
+        );
+        let mut changed = false;
+        // Batch settings; first come, first served has no batches.
+        ui.add_enabled_ui(sch == Scheduling::Batches, |ui| {
+            changed |= ui
+                .add(egui::Slider::new(&mut self.coop_max_cycle, 40.0..=200.0).step_by(5.0).text("max cycle s"))
+                .on_hover_text("The longest cycle when every movement is saturated. Each phase may run its share, in proportion to its measured flow. Longer cycles lose less time to switching but keep vehicles waiting longer.")
+                .changed();
+            changed |= ui
+                .add(egui::Slider::new(&mut self.coop_slack, 0.0..=5.0).step_by(0.1).text("batch join window s"))
+                .on_hover_text("How far behind the batch's latest vehicle a vehicle may cross and still join the batch. A phase ends when no vehicle of its movement can.")
+                .changed();
+        });
+        if changed {
+            self.apply_coop_settings();
+        }
     }
 
     fn kpi(ui: &mut Ui, label: &str, value: String, color: Color32) {
@@ -741,7 +950,11 @@ impl App {
         self.refresh_summary();
         let summary = self.summary.clone();
         let s = &summary;
-        egui::ScrollArea::vertical().show(ui, |ui| {
+        let mut area = egui::ScrollArea::vertical();
+        if let Some(y) = self.scroll_right {
+            area = area.vertical_scroll_offset(y);
+        }
+        area.show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("Vehicle experience");
                 if ui.small_button("reset stats").on_hover_text("Measure from now on").clicked() {
@@ -809,8 +1022,8 @@ impl App {
                 ui.separator();
                 ui.label(RichText::new("Side by side (same arrivals)").strong());
                 let b = self.twin_summary.clone();
-                let a_name = self.strategy_name(self.mode, self.ctrl);
-                let b_name = self.strategy_name(self.twin_mode, self.twin_ctrl);
+                let a_name = self.strategy_name(self.mode, self.ctrl, (self.coop_policy, self.coop_sched));
+                let b_name = self.strategy_name(self.twin_mode, self.twin_ctrl, (self.twin_policy, self.twin_sched));
                 egui::Grid::new("ab").striped(true).num_columns(3).show(ui, |ui| {
                     ui.label("");
                     ui.label(RichText::new(format!("A: {a_name}")).strong());
@@ -912,6 +1125,11 @@ impl App {
                 }
             });
 
+            if self.world.sims[self.focus].coop.is_some() {
+                ui.separator();
+                self.manager_panel(ui);
+            }
+
             if self.world.sims[self.focus].signalized() {
                 ui.separator();
                 let b = self.world.sims[self.focus].controller.brain();
@@ -928,13 +1146,16 @@ impl App {
 
             ui.separator();
             ui.heading("Benchmark");
-            ui.label(RichText::new("Runs every control strategy (or sensor package) headless on identical random arrivals with the current demand, 3 seeds × 20 min.").small().color(Color32::from_gray(160)));
+            let coop = self.is_coop();
+            let what = if coop { "the three gap policies, and first come, first served," } else { "every control strategy (or sensor package)" };
+            ui.label(RichText::new(format!("Runs {what} headless on identical random arrivals with the current demand, 3 seeds × 20 min.")).small().color(Color32::from_gray(160)));
             ui.horizontal(|ui| {
                 let running = self.bench.as_ref().is_some_and(|b| b.rows.iter().any(|r| r.is_none()));
-                if ui.add_enabled(!running, egui::Button::new("▶ Compare controllers")).clicked() {
+                if ui.add_enabled(!running, egui::Button::new(if coop { "▶ Compare schedules" } else { "▶ Compare controllers" })).clicked() {
                     self.start_bench(false);
                 }
-                if ui.add_enabled(!running && self.world.sims[self.focus].net.kind.signalized(), egui::Button::new("▶ Sensor study")).clicked() {
+                // The cooperative crossing has no sensors to study.
+                if !coop && ui.add_enabled(!running && self.world.sims[self.focus].net.kind.signalized(), egui::Button::new("▶ Sensor study")).clicked() {
                     self.start_bench(true);
                 }
             });
@@ -942,6 +1163,104 @@ impl App {
                 self.show_bench = !self.show_bench;
             }
         });
+    }
+
+    /// What the cooperative crossing's intersection manager is doing, and what the
+    /// safety monitors have measured.
+    fn manager_panel(&self, ui: &mut Ui) {
+        let sim = &self.world.sims[self.focus];
+        let Some(c) = sim.coop.as_ref() else { return };
+        let gray = Color32::from_gray(150);
+        let cyan = Color32::from_rgb(90, 220, 240);
+        ui.heading("Intersection manager");
+        if c.scheduling == Scheduling::FirstCome {
+            ui.label(RichText::new("First come, first served: each vehicle gets the earliest gap that fits as it arrives").strong().color(cyan));
+            egui::Grid::new("coop_kpis").num_columns(3).spacing(vec2(16.0, 6.0)).show(ui, |ui| {
+                Self::kpi(ui, "vehicles scheduled", c.plans.len().to_string(), Color32::WHITE);
+                Self::kpi(ui, "zone reservations", c.reservations().to_string(), Color32::WHITE);
+                Self::kpi(ui, "emergency priority", c.stats.preempted.to_string(), Color32::WHITE);
+                ui.end_row();
+            });
+            ui.label(
+                RichText::new("The streams weave through one another one vehicle at a time. Every switch between crossing streams costs a full safety gap, which a batch pays only once.")
+                    .small()
+                    .color(gray),
+            );
+        } else {
+            self.phase_table(ui, c, sim);
+        }
+        ui.label(RichText::new("Right turns use the slip lanes and never enter the box.").small().color(gray));
+        ui.add_space(4.0);
+        self.safety_monitors(ui, c);
+    }
+
+    /// The batch phases: what is being served, cycle figures, and each movement's demand
+    /// and longest phase.
+    fn phase_table(&self, ui: &mut Ui, c: &CoopManager, sim: &Sim) {
+        let net = &sim.net;
+        let name = |m: usize| {
+            let mv = &net.movements[m];
+            format!("{} {}", net.legs[mv.leg].compass.bound(), mv.turn.name().to_lowercase())
+        };
+        let gray = Color32::from_gray(150);
+        let cyan = Color32::from_rgb(90, 220, 240);
+        let group = if c.group() == 0 { "north–south" } else { "east–west" };
+        let serving: Vec<String> = c.ring_phases().into_iter().flatten().map(name).collect();
+        let serving = if serving.is_empty() { "switching".to_string() } else { serving.join(" + ") };
+        ui.label(RichText::new(format!("Serving {group}: {serving}")).strong().color(cyan));
+        let cycles = c.stats.barriers as f64 / 2.0;
+        egui::Grid::new("coop_kpis").num_columns(3).spacing(vec2(16.0, 6.0)).show(ui, |ui| {
+            Self::kpi(ui, "vehicles scheduled", c.plans.len().to_string(), Color32::WHITE);
+            Self::kpi(ui, "zone reservations", c.reservations().to_string(), Color32::WHITE);
+            Self::kpi(ui, "average cycle", if cycles >= 1.0 { format!("{:.0} s", sim.t / cycles) } else { "–".into() }, Color32::WHITE);
+            ui.end_row();
+            Self::kpi(ui, "switching lost / cycle", format!("{:.1} s", c.lost_time()), Color32::WHITE);
+            Self::kpi(ui, "phases served", c.stats.batches.to_string(), Color32::WHITE);
+            Self::kpi(ui, "emergency priority", c.stats.preempted.to_string(), Color32::WHITE);
+            ui.end_row();
+        });
+        ui.label(RichText::new("Phases in service order (two rings, barrier between north–south and east–west)").small().color(gray));
+        egui::Grid::new("coop_moves").striped(true).num_columns(4).show(ui, |ui| {
+            for h in ["movement", "demand veh/h", "max phase", ""] {
+                ui.label(RichText::new(h).small().color(gray));
+            }
+            ui.end_row();
+            let open = c.open_movements();
+            for (r, ring) in c.ring_order().iter().enumerate() {
+                for &m in ring {
+                    ui.label(format!("{} · {}", r + 1, name(m)));
+                    ui.label(format!("{:.0}", c.arrival_rate(m)));
+                    ui.label(format!("{:.0} s", c.max_green(m)));
+                    ui.label(if open.contains(&m) { RichText::new("serving").color(cyan) } else { RichText::new("") });
+                    ui.end_row();
+                }
+            }
+        });
+    }
+
+    /// What the vehicles actually did, measured independently of the plans.
+    fn safety_monitors(&self, ui: &mut Ui, c: &CoopManager) {
+        let gray = Color32::from_gray(150);
+        ui.label(RichText::new("Safety monitors (what vehicles actually did)").strong().size(12.5));
+        let st = &c.stats;
+        let ok = Color32::from_rgb(110, 220, 130);
+        let flag = |n: u64| if n == 0 { ok } else { Color32::from_rgb(240, 90, 90) };
+        egui::Grid::new("coop_safety").num_columns(3).spacing(vec2(16.0, 6.0)).show(ui, |ui| {
+            Self::kpi(ui, "closest crossing (PET)", if st.pet_min.is_finite() { format!("{:.2} s", st.pet_min) } else { "–".into() }, Color32::WHITE);
+            Self::kpi(ui, "margin over gap", if st.margin_min.is_finite() { format!("{:+.2} s", st.margin_min.max(0.0)) } else { "–".into() }, if st.margin_min > -1e-6 { ok } else { Color32::from_rgb(240, 90, 90) });
+            Self::kpi(ui, "zone overlaps", st.zone_violations.to_string(), flag(st.zone_violations));
+            ui.end_row();
+            Self::kpi(ui, "entries without slot", st.unauthorized.to_string(), flag(st.unauthorized));
+            Self::kpi(ui, "off trajectory", st.deviations.to_string(), flag(st.deviations));
+            Self::kpi(ui, "worst timing error", format!("{:.0e} s", st.timing_err_max), Color32::WHITE);
+            ui.end_row();
+        });
+        ui.label(
+            RichText::new("Post-encroachment time (PET): from one vehicle leaving a conflict zone until a crossing vehicle enters it. Distribution of the crossings within 10 s:")
+                .small()
+                .color(gray),
+        );
+        charts::pet_histogram(ui, &st.pet_hist, crate::sim::coop::PET_BIN, 70.0);
     }
 
     fn selected_panel(&mut self, ui: &mut Ui) {
@@ -954,7 +1273,8 @@ impl App {
             ui.label("(left the network)");
             return;
         };
-        let net = &self.world.sims[self.focus].net;
+        let sim = &self.world.sims[self.focus];
+        let net = &sim.net;
         let mv = &net.movements[v.movement];
         let src = self.world.sims[self.focus].view.detections.iter().find(|d| d.0 == id).map(|d| match d.1 {
             Source::Camera => "camera",
@@ -977,7 +1297,18 @@ impl App {
             row("stopped time", format!("{:.1} s", v.stopped_time));
             row("fuel", format!("{:.0} mL", v.fuel_ml));
             row("occupants", format!("{:.1}", v.persons()));
-            row("seen by", src.unwrap_or("not detected").to_string());
+            match &sim.coop {
+                Some(c) => {
+                    let slot = match c.plans.get(&v.id) {
+                        Some(p) if p.t_line > sim.t => format!("crosses the line in {:.1} s at {:.0} km/h", p.t_line - sim.t, p.v_line * 3.6),
+                        Some(p) => format!("crossed the line at {:.0} km/h", p.v_line * 3.6),
+                        None if c.managed(v.movement) => "none yet: waiting for one".to_string(),
+                        None => "not needed (right turns bypass the box)".to_string(),
+                    };
+                    row("reservation", slot);
+                }
+                None => row("seen by", src.unwrap_or("not detected").to_string()),
+            }
             if let Some(y) = v.yield_to {
                 row("yielding to", format!("#{y}"));
             }
@@ -1015,21 +1346,38 @@ impl App {
             ];
             for c in [CtrlKind::Actuated, CtrlKind::MaxPressure, CtrlKind::Predictive, CtrlKind::DeepRl, CtrlKind::Hybrid] {
                 for (name, s) in &packages {
-                    jobs.push(Job { label: format!("{} · {}", c.short(), name), mode: ControlMode::Signal, ctrl: c, sensors: s.clone() });
+                    jobs.push(Job { label: format!("{} · {}", c.short(), name), mode: ControlMode::Signal, ctrl: c, sensors: s.clone(), coop: None });
                 }
+            }
+        } else if kind == LayoutKind::Cooperative {
+            // Batches under the three safety margins, and the vehicles weaving through one
+            // at a time under the fail-safe one.
+            let mut runs: Vec<(GapPolicy, Scheduling)> = GapPolicy::ALL.into_iter().map(|p| (p, Scheduling::Batches)).collect();
+            runs.push((GapPolicy::FailSafe, Scheduling::FirstCome));
+            for (p, sch) in runs {
+                let label = match sch {
+                    Scheduling::Batches => format!("Batches · {} gaps", p.label()),
+                    Scheduling::FirstCome => format!("First come, first served · {} gaps", p.label()),
+                };
+                let coop = Some((p, sch, self.coop_max_cycle, self.coop_slack));
+                jobs.push(Job { label, mode: ControlMode::Cooperative, ctrl: CtrlKind::Fixed, sensors: base.clone(), coop });
             }
         } else {
             for m in ControlMode::options(kind) {
                 if m == ControlMode::Signal {
                     for c in CtrlKind::ALL {
-                        jobs.push(Job { label: c.name().to_string(), mode: m, ctrl: c, sensors: base.clone() });
+                        jobs.push(Job { label: c.name().to_string(), mode: m, ctrl: c, sensors: base.clone(), coop: None });
                     }
                 } else {
-                    jobs.push(Job { label: m.name().to_string(), mode: m, ctrl: CtrlKind::Fixed, sensors: base.clone() });
+                    jobs.push(Job { label: m.name().to_string(), mode: m, ctrl: CtrlKind::Fixed, sensors: base.clone(), coop: None });
                 }
             }
         }
-        let title = if sensor_study { format!("Sensor study — {}", kind.name()) } else { format!("Controller comparison — {}", kind.name()) };
+        let title = match (sensor_study, kind) {
+            (true, _) => format!("Sensor study — {}", kind.name()),
+            (false, LayoutKind::Cooperative) => format!("Scheduling and gap policy comparison — {}", kind.name()),
+            _ => format!("Controller comparison — {}", kind.name()),
+        };
         self.bench = Some(Bench::start(title, kind, &demand, jobs));
         self.show_bench = true;
     }
@@ -1111,14 +1459,20 @@ impl App {
     }
 
     fn bottom_panel(&mut self, ui: &mut Ui) {
+        let coop = self.world.sims[self.focus].coop.is_some();
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Signal timing (last 3 min)").strong().size(12.0));
+            let title = if coop { "Stop-line crossings by movement (last 2.5 min and the next 30 s already scheduled)" } else { "Signal timing (last 3 min)" };
+            ui.label(RichText::new(title).strong().size(12.0));
             if let Some((m, t)) = &self.message && t.elapsed().as_secs() < 5 {
                 ui.separator();
                 ui.label(RichText::new(m).color(Color32::from_rgb(255, 210, 120)));
             }
         });
-        charts::timeline(ui, &self.world.sims[self.focus], 180.0);
+        if coop {
+            charts::crossing_timeline(ui, &self.world.sims[self.focus], 150.0, 30.0);
+        } else {
+            charts::timeline(ui, &self.world.sims[self.focus], 180.0);
+        }
     }
 
     // ------------------------------------------------------------- canvas
@@ -1128,7 +1482,10 @@ impl App {
         let rect = resp.rect;
         if !self.fitted {
             let net = &self.world.sims[self.focus].net;
-            let extent = net.legs.iter().map(|l| l.stop_dist).fold(0.0, f64::max) + 55.0;
+            // The cooperative crossing is big and its vehicles adjust their speed well
+            // upstream: show more of the approaches.
+            let margin = if net.coop.is_some() { 80.0 } else { 55.0 };
+            let extent = net.legs.iter().map(|l| l.stop_dist).fold(0.0, f64::max) + margin;
             let half_w = if self.twin.is_some() { rect.width() * 0.5 } else { rect.width() };
             let span = (self.world.sims.len() - 1) as f64 * SPACING;
             self.scale = (half_w / (2.0 * extent + span) as f32).min(rect.height() / (2.0 * extent as f32)).max(0.6);
@@ -1165,15 +1522,15 @@ impl App {
         painter.rect_filled(rect, 0.0, Color32::from_rgb(20, 22, 26));
         let alpha = if self.paused { 1.0 } else { self.acc / self.world.dt() };
         for (k, half) in halves.iter().enumerate() {
-            let (world, mode, ctrl) = if k == 0 {
-                (&self.world, self.mode, self.ctrl)
+            let (world, mode, ctrl, policy) = if k == 0 {
+                (&self.world, self.mode, self.ctrl, (self.coop_policy, self.coop_sched))
             } else {
-                (self.twin.as_ref().unwrap(), self.twin_mode, self.twin_ctrl)
+                (self.twin.as_ref().unwrap(), self.twin_mode, self.twin_ctrl, (self.twin_policy, self.twin_sched))
             };
             let label = match (self.twin.is_some(), k) {
-                (false, _) => self.strategy_name(mode, ctrl),
-                (true, 0) => format!("A · {}", self.strategy_name(mode, ctrl)),
-                _ => format!("B · {}", self.strategy_name(mode, ctrl)),
+                (false, _) => self.strategy_name(mode, ctrl, policy),
+                (true, 0) => format!("A · {}", self.strategy_name(mode, ctrl, policy)),
+                _ => format!("B · {}", self.strategy_name(mode, ctrl, policy)),
             };
             self.paint_world(&painter.with_clip_rect(*half), world, *half, &label, alpha, k == 0);
         }
@@ -1280,7 +1637,7 @@ impl App {
             let selected = if main && i == self.focus { self.selected } else { None };
             let dc = DrawCtx { sim, cam: cam_for(i), ov: &self.ov, selected, time: self.anim_t, alpha };
             render::paint_dynamic(painter, &dc);
-            if self.ov.detections {
+            if self.ov.detections && sim.coop.is_none() {
                 render::paint_detections(painter, &dc);
             }
         }
@@ -1290,10 +1647,15 @@ impl App {
 
     fn legend(&self, painter: &egui::Painter, rect: egui::Rect) {
         let mut items: Vec<(Color32, &str)> = vec![];
-        if self.ov.sensors && self.world.sims[self.focus].sensors.loops {
+        if self.world.sims[self.focus].coop.is_some() {
+            items.push((render::SCHEDULED, "has its trajectory (reservation)"));
+            items.push((render::WAITING, "waiting for a reservation"));
+            items.push((render::ADMITTING, "movement being admitted"));
+            items.push((render::PASSAGE, "pedestrian underpass"));
+        } else if self.ov.sensors && self.world.sims[self.focus].sensors.loops {
             items.push((Color32::from_rgb(255, 200, 60), "loop detector"));
         }
-        if self.ov.detections {
+        if self.ov.detections && self.world.sims[self.focus].coop.is_none() {
             if self.world.sims[self.focus].sensors.camera {
                 items.push((Color32::from_rgb(90, 220, 255), "camera track"));
             }

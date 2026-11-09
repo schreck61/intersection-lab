@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 250" font-family="Helvetica, Arial, sans-serif">
+<rect x="0" y="0" width="1100" height="250" fill="#ffffff"/>
+<rect x="40.0" y="58" width="305.4" height="74" fill="#e3edf7" stroke="#888" stroke-width="1"/>
+<text x="192.7" y="76" font-size="14" font-weight="bold" text-anchor="middle" dominant-baseline="middle" fill="#222">A  Announce</text>
+<text x="192.7" y="96" font-size="11.5" text-anchor="middle" dominant-baseline="middle" fill="#333">register, receive map,</text>
+<text x="192.7" y="111" font-size="11.5" text-anchor="middle" dominant-baseline="middle" fill="#333">get a lane assignment</text>
+<rect x="345.4" y="58" width="305.4" height="74" fill="#cfe0f1" stroke="#888" stroke-width="1"/>
+<text x="498.1" y="76" font-size="14" font-weight="bold" text-anchor="middle" dominant-baseline="middle" fill="#222">B  Sort and coordinate</text>
+<text x="498.1" y="96" font-size="11.5" text-anchor="middle" dominant-baseline="middle" fill="#333">lane changes, platoons,</text>
+<text x="498.1" y="111" font-size="11.5" text-anchor="middle" dominant-baseline="middle" fill="#333">provisional slot, speed trim</text>
+<rect x="650.8" y="58" width="152.7" height="74" fill="#f6dfc7" stroke="#888" stroke-width="1"/>
+<text x="727.1" y="76" font-size="14" font-weight="bold" text-anchor="middle" dominant-baseline="middle" fill="#222">C  Commit</text>
+<text x="727.1" y="96" font-size="11.5" text-anchor="middle" dominant-baseline="middle" fill="#333">plan frozen,</text>
+<text x="727.1" y="111" font-size="11.5" text-anchor="middle" dominant-baseline="middle" fill="#333">no lane changes</text>
+<rect x="803.5" y="58" width="27.5" height="74" fill="#f1c6c6" stroke="#888" stroke-width="1"/>
+<text x="817.2" y="95" font-size="13" font-weight="bold" text-anchor="middle" dominant-baseline="middle">D</text>
+<rect x="831.0" y="58" width="229.0" height="74" fill="#dcefd9" stroke="#888" stroke-width="1"/>
+<text x="945.5" y="76" font-size="14" font-weight="bold" text-anchor="middle" dominant-baseline="middle" fill="#222">E  Egress</text>
+<text x="945.5" y="96" font-size="11.5" text-anchor="middle" dominant-baseline="middle" fill="#333">own exit lane, merges,</text>
+<text x="945.5" y="111" font-size="11.5" text-anchor="middle" dominant-baseline="middle" fill="#333">handoff downstream</text>
+<line x1="40" y1="38" x2="1050" y2="38" stroke="#555" stroke-width="2"/>
+<polygon points="1060,38 1048,32 1048,44" fill="#555"/>
+<text x="40" y="22" font-size="13" fill="#333">direction of travel (approach at 50 km/h)</text>
+<line x1="40.0" y1="132" x2="40.0" y2="139" stroke="#666" stroke-width="1"/>
+<text x="40.0" y="150" font-size="10.5" text-anchor="middle" fill="#666">1,000 m</text>
+<line x1="192.7" y1="132" x2="192.7" y2="139" stroke="#666" stroke-width="1"/>
+<text x="192.7" y="150" font-size="10.5" text-anchor="middle" fill="#666">800 m</text>
+<line x1="345.4" y1="132" x2="345.4" y2="139" stroke="#666" stroke-width="1"/>
+<text x="345.4" y="150" font-size="10.5" text-anchor="middle" fill="#666">600 m</text>
+<line x1="498.1" y1="132" x2="498.1" y2="139" stroke="#666" stroke-width="1"/>
+<text x="498.1" y="150" font-size="10.5" text-anchor="middle" fill="#666">400 m</text>
+<line x1="650.8" y1="132" x2="650.8" y2="139" stroke="#666" stroke-width="1"/>
+<text x="650.8" y="150" font-size="10.5" text-anchor="middle" fill="#666">200 m</text>
+<line x1="803.5" y1="132" x2="803.5" y2="139" stroke="#666" stroke-width="1"/>
+<text x="803.5" y="150" font-size="10.5" text-anchor="middle" fill="#666">0 m</text>
+<line x1="879.8" y1="132" x2="879.8" y2="139" stroke="#666" stroke-width="1"/>
+<text x="879.8" y="150" font-size="10.5" text-anchor="middle" fill="#666">100 m</text>
+<line x1="956.2" y1="132" x2="956.2" y2="139" stroke="#666" stroke-width="1"/>
+<text x="956.2" y="150" font-size="10.5" text-anchor="middle" fill="#666">200 m</text>
+<line x1="1032.5" y1="132" x2="1032.5" y2="139" stroke="#666" stroke-width="1"/>
+<text x="1032.5" y="150" font-size="10.5" text-anchor="middle" fill="#666">300 m</text>
+<line x1="40.0" y1="154" x2="40.0" y2="165" stroke="#222" stroke-width="1" stroke-dasharray="2 2"/>
+<text x="40.0" y="172" font-size="12" text-anchor="start" fill="#222">first contact</text>
+<line x1="650.8" y1="154" x2="650.8" y2="165" stroke="#222" stroke-width="1" stroke-dasharray="2 2"/>
+<text x="650.8" y="172" font-size="12" text-anchor="middle" fill="#222">commitment line</text>
+<line x1="727.1" y1="154" x2="727.1" y2="181" stroke="#222" stroke-width="1" stroke-dasharray="2 2"/>
+<text x="727.1" y="188" font-size="12" text-anchor="middle" fill="#222">authority point</text>
+<line x1="768.4" y1="154" x2="768.4" y2="197" stroke="#222" stroke-width="1" stroke-dasharray="2 2"/>
+<text x="768.4" y="204" font-size="12" text-anchor="middle" fill="#222">point of no return</text>
+<line x1="803.5" y1="154" x2="803.5" y2="213" stroke="#222" stroke-width="1" stroke-dasharray="2 2"/>
+<text x="803.5" y="220" font-size="12" text-anchor="middle" fill="#222">stop line</text>
+<text x="40" y="240" font-size="12" fill="#444">Distances are for a 50 km/h approach. They scale with speed and with how much delay zone B must absorb.</text>
+</svg>

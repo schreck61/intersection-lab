@@ -12,7 +12,10 @@
 //!   the right of way, which keeps the box collision-free without a global planner.
 //! * Control: traffic signals (driven by a pluggable controller), all-way stop,
 //!   two-way stop, or roundabout yield.
+//! * Cooperative layout: automated, connected vehicles drive trajectories granted by
+//!   an intersection manager instead (see [`coop`]).
 
+pub mod coop;
 pub mod demand;
 pub mod geom;
 pub mod network;
@@ -41,6 +44,8 @@ pub enum ControlMode {
     AllWayStop,
     TwoWayStop,
     Roundabout,
+    /// Signal-free: an intersection manager schedules automated vehicles.
+    Cooperative,
 }
 
 impl ControlMode {
@@ -50,6 +55,7 @@ impl ControlMode {
             ControlMode::AllWayStop => "All-way stop",
             ControlMode::TwoWayStop => "Two-way stop (minor street)",
             ControlMode::Roundabout => "Yield (roundabout)",
+            ControlMode::Cooperative => "Intersection manager (no signal)",
         }
     }
     pub fn options(kind: LayoutKind) -> Vec<ControlMode> {
@@ -60,6 +66,7 @@ impl ControlMode {
                 vec![ControlMode::Signal, ControlMode::TwoWayStop, ControlMode::AllWayStop]
             }
             LayoutKind::Arterial4 => vec![ControlMode::Signal, ControlMode::AllWayStop],
+            LayoutKind::Cooperative => vec![ControlMode::Cooperative],
         }
     }
 }
@@ -145,6 +152,12 @@ pub enum Reason {
     Pedestrian,
     Curve,
     LaneChange,
+    /// Automated: slowing to meet a reserved slot in the intersection.
+    Scheduled,
+    /// Automated: holding short of the intersection until it gets a reservation.
+    Awaiting,
+    /// Automated: slowing to the crossing speed.
+    BoxSpeed,
 }
 
 impl Reason {
@@ -158,6 +171,9 @@ impl Reason {
             Reason::Pedestrian => "yielding to pedestrian",
             Reason::Curve => "slowing for turn",
             Reason::LaneChange => "waiting to change lanes",
+            Reason::Scheduled => "slowing to meet its reserved slot",
+            Reason::Awaiting => "waiting for a reservation",
+            Reason::BoxSpeed => "slowing to the crossing speed",
         }
     }
 }
@@ -293,6 +309,10 @@ pub struct Sim {
     pub collision_log: Vec<String>,
     pub seed: u64,
     pub last_reward: f64,
+    /// Intersection manager of the cooperative layout.
+    pub coop: Option<coop::CoopManager>,
+    /// Steps taken so far (the cooperative manager's clock).
+    pub steps: u64,
     misc: Rng,
     next_id: u64,
     ff_cache: HashMap<(usize, LinkId, usize, i64), f64>,
@@ -317,6 +337,7 @@ impl Sim {
         let view = SensorView::new(&net);
         let base_stages = net.stages.clone();
         let n_moves = net.movements.len();
+        let coop = (mode == ControlMode::Cooperative).then(|| coop::CoopManager::new(&net));
         Sim {
             demand_gen: DemandGen::new(seed, n_legs),
             queues: vec![VecDeque::new(); n_legs],
@@ -355,6 +376,8 @@ impl Sim {
             collision_log: Vec::new(),
             seed,
             last_reward: 0.0,
+            coop,
+            steps: 0,
             misc: Rng::new(seed ^ 0xA5A5_5A5A),
             next_id: 1,
             ff_cache: HashMap::new(),
@@ -388,6 +411,9 @@ impl Sim {
             manual: true,
             trip: Trip { start: self.t, ..Default::default() },
         };
+        if let Some(c) = self.coop.as_mut() {
+            c.note_arrival(m);
+        }
         self.queues[leg].push_front(p);
         true
     }
@@ -424,6 +450,9 @@ impl Sim {
         self.demand_gen.generate(&self.demand, &self.net, self.t, dt, &mut arr);
         for (leg, p) in arr.drain(..) {
             self.stats.generated += 1;
+            if let Some(c) = self.coop.as_mut() {
+                c.note_arrival(p.movement);
+            }
             self.queues[leg].push_back(p);
         }
         self.arrivals_buf = arr;
@@ -434,8 +463,10 @@ impl Sim {
         // 2. Spawn at the boundary.
         self.spawn_from_queues();
         self.rebuild_occ();
-        // 3. Sense.
-        self.sense();
+        // 3. Sense. The cooperative layout has no detectors: vehicles report themselves.
+        if self.coop.is_none() {
+            self.sense();
+        }
         // 4. Control.
         if self.signalized() {
             self.signal.no_late_walk = self.coordination.is_some() && self.ctrl_kind == CtrlKind::Fixed;
@@ -443,13 +474,21 @@ impl Sim {
             self.control_signal();
             self.signal.step(&self.net, dt, self.t + dt);
         }
+        if self.coop.is_some() {
+            self.coop_control();
+        }
         // 5. Vehicle behavior.
-        self.compute_vstat();
+        if self.coop.is_none() {
+            self.compute_vstat();
+        }
         self.drive(dt);
-        self.lane_changes(dt);
+        if self.coop.is_none() {
+            self.lane_changes(dt);
+        }
         // 6. Pedestrians.
         self.step_peds(dt);
         self.t += dt;
+        self.steps += 1;
         self.stats.sample(self.t, &self.vehicles, &self.net, &self.queues);
     }
 
@@ -615,70 +654,118 @@ impl Sim {
 
     fn spawn_from_queues(&mut self) {
         for leg in 0..self.queues.len() {
-            let Some(p) = self.queues[leg].front() else { continue };
-            let spec = p.kind.spec();
-            // Enter on the admissible lane with the most room; turns whose lanes are
-            // bays enter next to the bay and change into it later.
-            let mut best: Option<(LinkId, f64, f64)> = None;
-            for lane in self.entry_lanes(p.movement) {
-                let (room, lead_v) = self.entry_room(lane);
-                if room > spec.min_gap + 1.0 && best.is_none_or(|b| room > b.1) {
-                    best = Some((lane, room, lead_v));
+            if self.coop.is_some() {
+                // Every movement of the cooperative layout has its own lanes, which in
+                // reality extend upstream: vehicles waiting for a full lane do not hold up
+                // the others, so each movement's first vehicle may enter.
+                let mut seen: Vec<usize> = Vec::new();
+                let mut i = 0;
+                while i < self.queues[leg].len().min(24) {
+                    let m = self.queues[leg][i].movement;
+                    if seen.contains(&m) {
+                        i += 1;
+                        continue;
+                    }
+                    seen.push(m);
+                    match self.entry_lane(m, self.queues[leg][i].kind) {
+                        Some((lane, room, lead_v)) => {
+                            let p = self.queues[leg].remove(i).unwrap();
+                            self.spawn_vehicle(leg, p, lane, room, lead_v);
+                        }
+                        None => i += 1,
+                    }
                 }
+                continue;
             }
-            let Some((lane, room, lead_v)) = best else { continue };
+            let Some(p) = self.queues[leg].front() else { continue };
+            let Some((lane, room, lead_v)) = self.entry_lane(p.movement, p.kind) else { continue };
             let p = self.queues[leg].pop_front().unwrap();
-            let route = self.route_from(p.movement, lane);
-            let speed = self.net.legs[leg].speed;
-            let v0 = speed * spec.speed_factor * p.speed_factor;
-            let v_safe = if room < 60.0 { lead_v.min(v0).max(((room - spec.min_gap) * 2.0 * spec.decel).sqrt().min(lead_v + 2.0)) } else { v0 };
-            let v = v_safe.min(v0).max(0.0);
-            let ff = self.free_flow_time(p.movement, &route, p.kind, v0);
-            let id = self.next_id;
-            self.next_id += 1;
-            let wait_virtual = self.t - p.arrival_t;
-            self.vehicles.push(Vehicle {
-                id,
-                kind: p.kind,
-                movement: p.movement,
-                turn: self.net.movements[p.movement].turn,
-                leg,
-                route,
-                ri: 0,
-                s: 0.0,
-                prev_s: 0.0,
-                v,
-                a: 0.0,
-                v0,
-                arrival_t: p.arrival_t,
-                spawn_t: self.t,
-                ff_time: ff,
-                delay: wait_virtual,
-                stopped_time: wait_virtual,
-                stops: 0,
-                moving: true,
-                fuel_ml: 0.0,
-                commits: vec![],
-                yellow_dec: None,
-                stop_done: false,
-                stop_t: 0.0,
-                queue_since: None,
-                connected: p.cv_u < self.sensors.cv_rate,
-                cam_ok: p.cam_ok,
-                manual: p.manual,
-                color: (self.misc.next_u64() & 0xFFFF_FFFF) as u32,
-                reason: Reason::Free,
-                blocked: false,
-                yield_to: None,
-                reaction: if p.kind == VKind::Emergency { 0.3 } else { 0.6 + 0.6 * self.misc.f64() },
-                go_t: 0.0,
-                lc_off: V2::default(),
-                lc_t: 1e9,
-                lc_from: None,
-                trip: p.trip,
-            });
-            let idx = self.vehicles.len() - 1;
-            self.occ[self.vehicles[idx].route[0]].push(idx);
+            self.spawn_vehicle(leg, p, lane, room, lead_v);
+        }
+    }
+
+    /// Enter on the admissible lane with the most room; turns whose lanes are bays enter
+    /// next to the bay and change into it later. (lane, room, speed of the last vehicle).
+    fn entry_lane(&self, m: usize, kind: VKind) -> Option<(LinkId, f64, f64)> {
+        let spec = kind.spec();
+        let mut best: Option<(LinkId, f64, f64)> = None;
+        for lane in self.entry_lanes(m) {
+            let (room, lead_v) = self.entry_room(lane);
+            if room > spec.min_gap + 1.0 && best.is_none_or(|b| room > b.1) {
+                best = Some((lane, room, lead_v));
+            }
+        }
+        best
+    }
+
+    fn spawn_vehicle(&mut self, leg: usize, p: Pending, lane: LinkId, room: f64, lead_v: f64) {
+        let spec = p.kind.spec();
+        let route = self.route_from(p.movement, lane);
+        let speed = self.net.legs[leg].speed;
+        let automated = self.coop.is_some();
+        // Automated vehicles keep to the limit (slower classes below it); only
+        // emergency vehicles exceed it.
+        let v0 = match (automated, p.kind) {
+            (true, VKind::Emergency) => speed * spec.speed_factor,
+            (true, _) => speed * spec.speed_factor.min(1.0),
+            (false, _) => speed * spec.speed_factor * p.speed_factor,
+        };
+        let v_safe = if room < 60.0 { lead_v.min(v0).max(((room - spec.min_gap) * 2.0 * spec.decel).sqrt().min(lead_v + 2.0)) } else { v0 };
+        let v = v_safe.min(v0).max(0.0);
+        let ff = self.free_flow_time(p.movement, &route, p.kind, v0);
+        let id = self.next_id;
+        self.next_id += 1;
+        let wait_virtual = self.t - p.arrival_t;
+        self.vehicles.push(Vehicle {
+            id,
+            kind: p.kind,
+            movement: p.movement,
+            turn: self.net.movements[p.movement].turn,
+            leg,
+            route,
+            ri: 0,
+            s: 0.0,
+            prev_s: 0.0,
+            v,
+            a: 0.0,
+            v0,
+            arrival_t: p.arrival_t,
+            spawn_t: self.t,
+            ff_time: ff,
+            delay: wait_virtual,
+            stopped_time: wait_virtual,
+            stops: 0,
+            moving: true,
+            fuel_ml: 0.0,
+            commits: vec![],
+            yellow_dec: None,
+            stop_done: false,
+            stop_t: 0.0,
+            queue_since: None,
+            connected: p.cv_u < self.sensors.cv_rate,
+            cam_ok: p.cam_ok,
+            manual: p.manual,
+            color: (self.misc.next_u64() & 0xFFFF_FFFF) as u32,
+            reason: Reason::Free,
+            blocked: false,
+            yield_to: None,
+            reaction: if automated {
+                0.0
+            } else if p.kind == VKind::Emergency {
+                0.3
+            } else {
+                0.6 + 0.6 * self.misc.f64()
+            },
+            go_t: 0.0,
+            lc_off: V2::default(),
+            lc_t: 1e9,
+            lc_from: None,
+            trip: p.trip,
+        });
+        let idx = self.vehicles.len() - 1;
+        self.occ[self.vehicles[idx].route[0]].push(idx);
+        if let Some(c) = self.coop.as_mut() {
+            c.vehicle_spawned(id, lane);
         }
     }
 
@@ -880,6 +967,8 @@ impl Sim {
             ControlMode::Roundabout => {
                 st.rank = if matches!(link.kind, LinkKind::Inbound | LinkKind::Entry) { 1.0 } else { 2.0 };
             }
+            // Automated vehicles follow granted trajectories instead (see `coop`).
+            ControlMode::Cooperative => {}
         }
         st
     }
@@ -1251,6 +1340,87 @@ impl Sim {
     }
 
     fn drive(&mut self, dt: f64) {
+        let accs = if self.coop.is_some() { self.coop_accels() } else { self.decide_all() };
+        // Speeds at the start of the step, for the cooperative monitors.
+        let v_start: Vec<f64> = if self.coop.is_some() { self.vehicles.iter().map(|v| v.v).collect() } else { Vec::new() };
+        // Integrate.
+        let mut done_idx = Vec::new();
+        let mut person_delay = 0.0;
+        for (i, (veh, mut acc)) in self.vehicles.iter_mut().zip(accs.iter().copied()).enumerate() {
+            let spec = veh.kind.spec();
+            // Drivers take a moment to react before pulling away (start-up lost time).
+            // While waiting the vehicle keeps re-deciding, so any gap it accepts is judged
+            // at the moment it actually moves.
+            if veh.v < 0.1 {
+                if acc > 0.0 {
+                    if veh.go_t < veh.reaction {
+                        veh.go_t += dt;
+                        acc = 0.0;
+                    }
+                } else {
+                    veh.go_t = 0.0;
+                }
+            }
+            let (ds, v_new) = integrate(veh.v, acc, dt);
+            veh.prev_s = veh.s;
+            veh.s += ds;
+            veh.v = v_new;
+            veh.a = acc;
+            // Running delay (lost time relative to free-flow speed at this location).
+            let link = &self.net.links[veh.route[veh.ri]];
+            let vref = if link.kind.in_box() { veh.v0.min(link.curve_speed) } else { veh.v0 };
+            let lost = dt * (1.0 - v_new / vref.max(0.1)).max(0.0);
+            veh.delay += lost;
+            person_delay += lost * spec.occupancy;
+            if v_new < 0.5 {
+                veh.stopped_time += dt;
+                if veh.moving {
+                    veh.stops += 1;
+                    veh.moving = false;
+                }
+            } else if v_new > 3.0 {
+                veh.moving = true;
+            }
+            veh.fuel_ml += fuel_ml(spec, v_new, acc, dt);
+            if link.kind == LinkKind::Inbound && v_new < 2.0 && veh.queue_since.is_none() {
+                veh.queue_since = Some(self.t);
+            }
+            while veh.s >= self.net.links[veh.route[veh.ri]].length() {
+                let l = self.net.links[veh.route[veh.ri]].length();
+                if veh.ri + 1 >= veh.route.len() {
+                    done_idx.push(i);
+                    break;
+                }
+                veh.s -= l;
+                veh.prev_s -= l;
+                veh.ri += 1;
+                if self.net.links[veh.route[veh.ri]].kind.in_box() && veh.ri == 1 {
+                    veh.queue_since = None;
+                }
+            }
+            // Release conflicts the vehicle has fully cleared.
+            if !veh.commits.is_empty() {
+                let veh_ref = &*veh;
+                let mut keep = Vec::with_capacity(veh_ref.commits.len());
+                for &cid in &veh_ref.commits {
+                    let c = &self.net.conflicts[cid];
+                    let k = Self::route_index(veh_ref, c.a).or_else(|| Self::route_index(veh_ref, c.b));
+                    if let Some(k) = k {
+                        let s_c = if veh_ref.route[k] == c.a { c.sa } else { c.sb };
+                        let d = route_dist_static(&self.net, veh_ref, k, s_c);
+                        if d + c.zones(veh_ref.route[k]).0.1 + veh_ref.len() + 0.5 > 0.0 {
+                            keep.push(cid);
+                        }
+                    }
+                }
+                veh.commits = keep;
+            }
+        }
+        self.after_integrate(dt, done_idx, person_delay, &v_start);
+    }
+
+    /// Accelerations of human-driven vehicles: right of way, signals and following.
+    fn decide_all(&mut self) -> Vec<f64> {
         // Decide in order of proximity to the conflict area so commitments made by
         // vehicles closer to a conflict are visible to those behind them.
         let mut order: Vec<(f64, usize)> = self
@@ -1311,86 +1481,11 @@ impl Sim {
                 }
             }
         }
-        // Integrate.
-        let mut done_idx = Vec::new();
-        let mut person_delay = 0.0;
-        for (i, (veh, mut acc)) in self.vehicles.iter_mut().zip(accs.iter().copied()).enumerate() {
-            let spec = veh.kind.spec();
-            // Drivers take a moment to react before pulling away (start-up lost time).
-            // While waiting the vehicle keeps re-deciding, so any gap it accepts is judged
-            // at the moment it actually moves.
-            if veh.v < 0.1 {
-                if acc > 0.0 {
-                    if veh.go_t < veh.reaction {
-                        veh.go_t += dt;
-                        acc = 0.0;
-                    }
-                } else {
-                    veh.go_t = 0.0;
-                }
-            }
-            let v_old = veh.v;
-            let mut v_new = v_old + acc * dt;
-            let ds = if v_new < 0.0 {
-                v_new = 0.0;
-                if acc < 0.0 { (v_old * v_old / (-2.0 * acc)).min(v_old * dt) } else { 0.0 }
-            } else {
-                0.5 * (v_old + v_new) * dt
-            };
-            veh.prev_s = veh.s;
-            veh.s += ds;
-            veh.v = v_new;
-            veh.a = acc;
-            // Running delay (lost time relative to free-flow speed at this location).
-            let link = &self.net.links[veh.route[veh.ri]];
-            let vref = if link.kind.in_box() { veh.v0.min(link.curve_speed) } else { veh.v0 };
-            let lost = dt * (1.0 - v_new / vref.max(0.1)).max(0.0);
-            veh.delay += lost;
-            person_delay += lost * spec.occupancy;
-            if v_new < 0.5 {
-                veh.stopped_time += dt;
-                if veh.moving {
-                    veh.stops += 1;
-                    veh.moving = false;
-                }
-            } else if v_new > 3.0 {
-                veh.moving = true;
-            }
-            veh.fuel_ml += fuel_ml(spec, v_new, acc, dt);
-            if link.kind == LinkKind::Inbound && v_new < 2.0 && veh.queue_since.is_none() {
-                veh.queue_since = Some(self.t);
-            }
-            while veh.s >= self.net.links[veh.route[veh.ri]].length() {
-                let l = self.net.links[veh.route[veh.ri]].length();
-                if veh.ri + 1 >= veh.route.len() {
-                    done_idx.push(i);
-                    break;
-                }
-                veh.s -= l;
-                veh.prev_s -= l;
-                veh.ri += 1;
-                if self.net.links[veh.route[veh.ri]].kind.in_box() && veh.ri == 1 {
-                    veh.queue_since = None;
-                }
-            }
-            // Release conflicts the vehicle has fully cleared.
-            if !veh.commits.is_empty() {
-                let veh_ref = &*veh;
-                let mut keep = Vec::with_capacity(veh_ref.commits.len());
-                for &cid in &veh_ref.commits {
-                    let c = &self.net.conflicts[cid];
-                    let k = Self::route_index(veh_ref, c.a).or_else(|| Self::route_index(veh_ref, c.b));
-                    if let Some(k) = k {
-                        let s_c = if veh_ref.route[k] == c.a { c.sa } else { c.sb };
-                        let d = route_dist_static(&self.net, veh_ref, k, s_c);
-                        if d + c.zones(veh_ref.route[k]).0.1 + veh_ref.len() + 0.5 > 0.0 {
-                            keep.push(cid);
-                        }
-                    }
-                }
-                veh.commits = keep;
-            }
-        }
+        accs
+    }
+
+    /// Bookkeeping after the vehicles moved: reward, near misses, monitors, removal.
+    fn after_integrate(&mut self, dt: f64, mut done_idx: Vec<usize>, person_delay: f64, v_start: &[f64]) {
         // Vehicles held at the edge of the map and pedestrians waiting to cross are
         // delayed people too; leaving them out would let a controller starve an approach
         // or a crosswalk at no cost.
@@ -1414,10 +1509,17 @@ impl Sim {
                 }
             }
         }
+        if let Some(mut c) = self.coop.take() {
+            c.observe(&self.net, &self.vehicles, v_start, self.t, self.steps, dt);
+            self.coop = Some(c);
+        }
         // Remove finished vehicles.
         done_idx.sort_unstable();
         for &i in done_idx.iter().rev() {
             let v = self.vehicles.swap_remove(i);
+            if let Some(c) = self.coop.as_mut() {
+                c.vehicle_done(v.id, v.route[0]);
+            }
             let travel = self.t + dt - v.arrival_t;
             let mv = &self.net.movements[v.movement];
             if self.collect_exits {
@@ -2211,6 +2313,19 @@ fn route_dist_static(net: &Network, v: &Vehicle, k: usize, s_on: f64) -> f64 {
             d += len(j);
         }
         -(d + len(k) - s_on)
+    }
+}
+
+/// Advance a speed by one step of constant acceleration: (distance, new speed). A
+/// vehicle braking to a stop within the step stops there. Every vehicle moves with
+/// this, and the cooperative manager plans with it, so plans replay exactly.
+pub(crate) fn integrate(v: f64, acc: f64, dt: f64) -> (f64, f64) {
+    let v_new = v + acc * dt;
+    if v_new < 0.0 {
+        let ds = if acc < 0.0 { (v * v / (-2.0 * acc)).min(v * dt) } else { 0.0 };
+        (ds, 0.0)
+    } else {
+        (0.5 * (v + v_new) * dt, v_new)
     }
 }
 

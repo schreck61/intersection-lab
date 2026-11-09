@@ -7,7 +7,8 @@
 //! run one after another, a slice of each frame at a time.
 
 use crate::control::CtrlKind;
-use crate::sim::ControlMode;
+use crate::sim::coop::{GapPolicy, Scheduling};
+use crate::sim::{ControlMode, Sim};
 use crate::sim::demand::DemandConfig;
 use crate::sim::network::LayoutKind;
 use crate::sim::sensors::SensorConfig;
@@ -24,6 +25,24 @@ pub struct Job {
     pub mode: ControlMode,
     pub ctrl: CtrlKind,
     pub sensors: SensorConfig,
+    /// Cooperative crossing: gap policy, scheduling, maximum cycle and batch join window.
+    pub coop: Option<(GapPolicy, Scheduling, f64, f64)>,
+}
+
+impl Job {
+    /// A fresh simulation of this strategy on arrival stream `seed`.
+    fn sim(&self, kind: LayoutKind, demand: &DemandConfig, seed: u64) -> Sim {
+        let mut sim = crate::scenario(kind, self.mode, self.ctrl, demand, &self.sensors, 500 + seed);
+        if let Some((policy, sched, cycle, slack)) = self.coop {
+            sim.set_gap_policy(policy);
+            sim.set_scheduling(sched);
+            if let Some(c) = sim.coop.as_mut() {
+                c.max_cycle = cycle;
+                c.slack = slack;
+            }
+        }
+        sim
+    }
 }
 
 pub struct BenchRow {
@@ -76,7 +95,7 @@ impl Bench {
             let demand = demand.clone();
             std::thread::spawn(move || {
                 let runs = (0..SEEDS)
-                    .map(|seed| crate::run_scenario(crate::scenario(kind, job.mode, job.ctrl, &demand, &job.sensors, 500 + seed), WARMUP, DURATION).0)
+                    .map(|seed| crate::run_scenario(job.sim(kind, &demand, seed), WARMUP, DURATION).0)
                     .collect();
                 tx.send((i, BenchRow { label: job.label, summary: average(runs) })).ok();
             });
@@ -95,7 +114,6 @@ impl Bench {
 #[cfg(target_arch = "wasm32")]
 mod web {
     use super::*;
-    use crate::sim::Sim;
 
     pub struct Queue {
         pub kind: LayoutKind,
@@ -117,7 +135,7 @@ mod web {
 
     impl Run {
         pub fn new(q: &Queue, index: usize, job: Job, seed: u64, done: Vec<Summary>) -> Self {
-            let sim = crate::scenario(q.kind, job.mode, job.ctrl, &q.demand, &job.sensors, 500 + seed);
+            let sim = job.sim(q.kind, &q.demand, seed);
             // The same number of steps as `Sim::run_for`, so results match the desktop app.
             let steps_left = ((WARMUP + DURATION) / sim.dt).round() as usize;
             Run { index, job, seed, sim, steps_left, done }

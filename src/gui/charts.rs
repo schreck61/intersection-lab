@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Jim Schreckengast
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Small hand-painted charts (line, bars, histogram, signal timeline) in egui.
+//! Small hand-painted charts (line, bars, histograms, signal and crossing timelines) in
+//! egui.
 
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
 
@@ -160,6 +161,105 @@ pub fn histogram(ui: &mut Ui, bins: &[u32], bin_w: f64, height: f32) {
         let pct = if total > 0 { 100.0 * bins[i] as f32 / total as f32 } else { 0.0 };
         p.text(pos2(plot.right(), plot.top()), Align2::RIGHT_TOP, format!("{:.0}–{:.0}s: {} veh ({:.0}%)", i as f64 * bin_w, (i + 1) as f64 * bin_w, bins[i], pct), FontId::proportional(TXT), Color32::WHITE);
     }
+}
+
+/// Histogram of post-encroachment times, the closest calls (shortest times) in red.
+pub fn pet_histogram(ui: &mut Ui, bins: &[u32], bin_w: f64, height: f32) {
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+    let p = ui.painter_at(rect);
+    p.rect_filled(rect, 4.0, Color32::from_rgb(24, 26, 31));
+    let total: u32 = bins.iter().sum();
+    if total == 0 {
+        p.text(rect.center(), Align2::CENTER_CENTER, "no crossings yet", FontId::proportional(TXT), AXIS_TXT);
+        return;
+    }
+    // The last bin collects everything longer; it is clipped so the short times, the
+    // ones that matter, keep the scale.
+    let last = bins.len() - 1;
+    let max = bins[..last].iter().copied().max().unwrap_or(1).max(1) as f32;
+    let plot = Rect::from_min_max(rect.min + vec2(6.0, 6.0), rect.max - vec2(6.0, 17.0));
+    let bw = plot.width() / bins.len() as f32;
+    for (i, &b) in bins.iter().enumerate() {
+        let h = (plot.height() * b as f32 / max).min(plot.height());
+        let x = plot.left() + i as f32 * bw;
+        if i == last && b as f32 > max {
+            p.text(pos2(x + bw / 2.0, plot.top() + 2.0), Align2::CENTER_TOP, "▲", FontId::proportional(TXT), AXIS_TXT);
+        }
+        let mid = (i as f64 + 0.5) * bin_w;
+        let col = super::render::delay_color(90.0 * (1.0 - (mid / 2.0).min(1.0)));
+        p.rect_filled(Rect::from_min_max(pos2(x + 1.0, plot.bottom() - h), pos2(x + bw - 1.0, plot.bottom())), 2.0, col);
+        let at = i as f64 * bin_w;
+        if (at - at.round()).abs() < 1e-9 {
+            p.text(pos2(x, plot.bottom() + 2.0), Align2::CENTER_TOP, format!("{at:.0} s"), FontId::proportional(TXT), AXIS_TXT);
+        }
+    }
+    if let Some(h) = resp.hover_pos() && plot.contains(h) {
+        let i = (((h.x - plot.left()) / bw) as usize).min(bins.len() - 1);
+        let pct = 100.0 * bins[i] as f32 / total as f32;
+        let range = if i + 1 == bins.len() { format!("{:.2} s or more", i as f64 * bin_w) } else { format!("{:.2}–{:.2} s", i as f64 * bin_w, (i + 1) as f64 * bin_w) };
+        p.text(pos2(plot.right(), plot.top()), Align2::RIGHT_TOP, format!("{range}: {} ({pct:.1}%)", bins[i]), FontId::proportional(TXT), Color32::WHITE);
+    }
+}
+
+/// Stop-line crossings at the cooperative crossing: one row per movement through the
+/// box, in the managers' service order, with a tick for each vehicle and a bar for each
+/// phase from its first crossing to its last, over the last `past` seconds and the
+/// `ahead` seconds already scheduled.
+pub fn crossing_timeline(ui: &mut Ui, sim: &crate::sim::Sim, past: f64, ahead: f64) {
+    let Some(c) = sim.coop.as_ref() else { return };
+    let net = &sim.net;
+    let rows: Vec<usize> = c.ring_order().concat();
+    let row_h = 14.0;
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), rows.len().max(1) as f32 * row_h + 21.0), Sense::hover());
+    let p = ui.painter_at(rect);
+    p.rect_filled(rect, 4.0, Color32::from_rgb(22, 24, 28));
+    let label_w = 150.0;
+    let plot = Rect::from_min_max(rect.min + vec2(label_w, 4.0), rect.max - vec2(8.0, 17.0));
+    let now = sim.t;
+    let (t0, t1) = (now - past, now + ahead);
+    let tx = |t: f64| plot.left() + ((t - t0) / (t1 - t0)) as f32 * plot.width();
+    let row_of = |m: usize| rows.iter().position(|&x| x == m);
+    let color = |m: usize| if net.movements[m].turn == crate::sim::network::Turn::L { SERIES[1] } else { SERIES[0] };
+    let open = c.open_movements();
+    for (i, &m) in rows.iter().enumerate() {
+        let y = plot.top() + i as f32 * row_h;
+        let mv = &net.movements[m];
+        let name = format!("{} {}", net.legs[mv.leg].compass.bound(), mv.turn.name().to_lowercase());
+        let col = if open.contains(&m) { Color32::WHITE } else { AXIS_TXT };
+        p.text(pos2(rect.left() + 6.0, y + row_h / 2.0), Align2::LEFT_CENTER, name, FontId::proportional(TXT), col);
+        p.line_segment([pos2(plot.left(), y + row_h - 0.5), pos2(plot.right(), y + row_h - 0.5)], Stroke::new(1.0, Color32::from_rgb(34, 37, 43)));
+    }
+    let mut t = (t1 / 30.0).floor() * 30.0;
+    while t >= t0 {
+        if t >= 0.0 {
+            p.line_segment([pos2(tx(t), plot.top()), pos2(tx(t), plot.bottom())], Stroke::new(1.0, Color32::from_rgb(40, 44, 50)));
+            p.text(pos2(tx(t), plot.bottom() + 1.0), Align2::CENTER_TOP, format!("{:.0}:{:02.0}", (t / 60.0).floor(), t % 60.0), FontId::proportional(TXT), AXIS_TXT);
+        }
+        t -= 30.0;
+    }
+    let open_batches = c.open_batches();
+    for b in c.history.iter().chain(&open_batches) {
+        if b.end < t0 || b.start > t1 {
+            continue;
+        }
+        let Some(i) = row_of(b.movement) else { continue };
+        let y = plot.top() + i as f32 * row_h;
+        let (a, e) = (tx(b.start.max(t0)), tx(b.end.min(t1)));
+        p.rect_filled(Rect::from_min_max(pos2(a - 1.0, y + 1.5), pos2(e.max(a) + 1.0, y + row_h - 2.5)), 2.0, color(b.movement).gamma_multiply(0.45));
+    }
+    for &(t, m) in &c.crossings {
+        if t < t0 || t > t1 {
+            continue;
+        }
+        let Some(i) = row_of(m) else { continue };
+        let y = plot.top() + i as f32 * row_h;
+        // Crossings still ahead are reservations: dimmer.
+        let col = if t > now { Color32::from_white_alpha(90) } else { Color32::from_rgb(235, 238, 245) };
+        p.line_segment([pos2(tx(t), y + 2.0), pos2(tx(t), y + row_h - 3.0)], Stroke::new(1.0, col));
+    }
+    let x = tx(now);
+    p.line_segment([pos2(x, plot.top()), pos2(x, plot.bottom())], Stroke::new(1.5, super::render::SCHEDULED));
+    p.text(pos2(x + 3.0, plot.top()), Align2::LEFT_TOP, "now", FontId::proportional(TXT), super::render::SCHEDULED);
 }
 
 /// Signal timing diagram: one row per stage over the last `window` seconds.

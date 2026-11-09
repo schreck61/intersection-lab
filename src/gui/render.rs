@@ -3,8 +3,9 @@
 
 //! Top-down rendering of the intersection: a cached world-space mesh for the static
 //! scene (terrain, roads, markings, buildings, trees) and per-frame shapes for
-//! signals, sensors, vehicles and pedestrians.
+//! signals, sensors, the intersection manager's state, vehicles and pedestrians.
 
+use crate::sim::coop::Scheduling;
 use crate::sim::geom::{V2, v2};
 use crate::sim::network::{LayoutKind, LinkKind, Network, Turn};
 use crate::sim::sensors::Source;
@@ -76,6 +77,15 @@ const CURB: Color32 = Color32::from_rgb(205, 203, 196);
 const WHITE: Color32 = Color32::from_rgb(235, 235, 230);
 const YELLOW: Color32 = Color32::from_rgb(236, 190, 50);
 const MEDIAN: Color32 = Color32::from_rgb(60, 63, 68);
+const ISLAND: Color32 = Color32::from_rgb(98, 146, 76);
+const CONCRETE: Color32 = Color32::from_rgb(150, 148, 140);
+
+/// Cooperative crossing: a vehicle with a granted trajectory, one still waiting for a
+/// reservation, a movement being admitted to the box, and the pedestrian underpasses.
+pub const SCHEDULED: Color32 = Color32::from_rgb(90, 220, 240);
+pub const WAITING: Color32 = Color32::from_rgb(250, 180, 60);
+pub const ADMITTING: Color32 = Color32::from_rgb(120, 235, 160);
+pub const PASSAGE: Color32 = Color32::from_rgb(214, 196, 150);
 
 fn shade(c: Color32, k: f32) -> Color32 {
     let f = |x: u8| ((x as f32 * k).clamp(0.0, 255.0)) as u8;
@@ -194,10 +204,10 @@ impl Scene {
             let c = v2(rng.range(-ext, ext), rng.range(-ext, ext));
             sc.circle(c, rng.range(2.0, 9.0), if rng.chance(0.5) { GRASS2 } else { shade(GRASS, 1.06) });
         }
-        if net.kind == LayoutKind::Roundabout {
-            sc.build_roundabout(net, &mut rng);
-        } else {
-            sc.build_signal_roads(net);
+        match net.kind {
+            LayoutKind::Roundabout => sc.build_roundabout(net, &mut rng),
+            LayoutKind::Cooperative => sc.build_coop_roads(net),
+            _ => sc.build_signal_roads(net),
         }
         sc.scatter_buildings(net, &mut rng);
         sc
@@ -385,10 +395,186 @@ impl Scene {
         }
     }
 
+    /// The cooperative crossing: a wide box with no signals, crosswalks or stop bars, a
+    /// raised median, guide lines for the dual left turns, and right turns on
+    /// channelized slip lanes around corner islands. Pedestrians cross in underpasses
+    /// whose stairs are on the islands and the corner plazas.
+    fn build_coop_roads(&mut self, net: &Network) {
+        let Some(g) = net.coop else { return };
+        let far = net.in_len + 30.0;
+        let sw = 3.5;
+        let lw = g.lane_w;
+        let (r0, rs) = (g.stop, g.slip_start);
+        // Edges of the lanes that enter the box and of the slip lane beyond them; the
+        // islands' curbs stand a little off the lanes.
+        let (inner, outer) = (g.half, g.half + lw);
+        let (slip_in, slip_out) = (g.slip_r - lw / 2.0, g.slip_r + lw / 2.0);
+        let gutter = 0.6;
+        let quarter = std::f64::consts::FRAC_PI_2;
+        // The slip lane of each leg turns about the corner on its inbound side. In that
+        // corner's frame, x runs back toward the leg's center line and y toward the box.
+        let corner = |d: V2, ins: V2| ((d + ins) * rs, -ins, -d);
+        let at = |(c, ex, ey): (V2, V2, V2), x: f64, y: f64| c + ex * x + ey * y;
+        let arc = |k: (V2, V2, V2), r: f64, a0: f64, a1: f64, n: usize| -> Vec<V2> {
+            (0..=n).map(|i| a0 + (a1 - a0) * i as f64 / n as f64).map(|a| at(k, r * a.cos(), r * a.sin())).collect()
+        };
+        let band = |sc: &mut Scene, outer_pts: &[V2], inner_pts: &[V2], col: Color32| {
+            for i in 0..outer_pts.len() - 1 {
+                sc.poly(&[outer_pts[i], outer_pts[i + 1], inner_pts[i + 1], inner_pts[i]], col);
+            }
+        };
+        // Sidewalks along the legs beyond the slip lanes and around the corners.
+        for leg in &net.legs {
+            let (d, ins) = (leg.d, leg.in_side());
+            let p = |r: f64, lat: f64| d * r + ins * lat;
+            for s in [1.0, -1.0] {
+                self.poly(&[p(rs, s * outer), p(far, s * outer), p(far, s * (outer + sw)), p(rs, s * (outer + sw))], SIDEWALK);
+            }
+            let k = corner(d, ins);
+            band(self, &arc(k, slip_in, 0.0, quarter, 24), &arc(k, slip_in - sw, 0.0, quarter, 24), SIDEWALK);
+        }
+        // Asphalt: the box, the approaches and exits, the slip lanes.
+        self.poly(&[v2(-r0, -r0), v2(r0, -r0), v2(r0, r0), v2(-r0, r0)], ASPHALT);
+        for leg in &net.legs {
+            let (d, ins) = (leg.d, leg.in_side());
+            let p = |r: f64, lat: f64| d * r + ins * lat;
+            let w = inner + gutter;
+            self.poly(&[p(r0 - 0.01, -w), p(far, -w), p(far, w), p(r0 - 0.01, w)], ASPHALT);
+            for s in [1.0, -1.0] {
+                self.poly(&[p(rs, s * inner), p(far, s * inner), p(far, s * outer), p(rs, s * outer)], ASPHALT);
+                self.quad_line(p(rs, s * (outer + 0.15)), p(far, s * (outer + 0.15)), 0.3, CURB);
+            }
+            let k = corner(d, ins);
+            band(self, &arc(k, slip_out + gutter, 0.0, quarter, 24), &arc(k, slip_in, 0.0, quarter, 24), ASPHALT);
+            self.polyline(&arc(k, slip_in - 0.15, 0.0, quarter, 24), 0.3, CURB);
+        }
+        // Corner islands between the box lanes and the slip lanes.
+        for leg in &net.legs {
+            let k = corner(leg.d, leg.in_side());
+            let (e, r) = (rs - inner - gutter, slip_out + gutter);
+            if r >= e * std::f64::consts::SQRT_2 {
+                continue;
+            }
+            let a0 = (e / r).acos().min(quarter / 2.0);
+            let a1 = quarter - a0;
+            let mut pts = vec![at(k, e, e)];
+            pts.extend(arc(k, r, a0, a1, 20));
+            self.poly(&pts, CURB);
+            let mut core = vec![at(k, e - 0.45, e - 0.45)];
+            core.extend(arc(k, r + 0.45, a0 + 0.02, a1 - 0.02, 20));
+            self.poly(&core, ISLAND);
+        }
+        // Raised median with a rounded nose, yellow edge lines.
+        for leg in &net.legs {
+            let (d, ins) = (leg.d, leg.in_side());
+            let p = |r: f64, lat: f64| d * r + ins * lat;
+            let m = g.median;
+            for s in [1.0, -1.0] {
+                self.quad_line(p(r0, s * (m - 0.15)), p(far, s * (m - 0.15)), 0.12, YELLOW);
+            }
+            let hw = m - 0.45;
+            let nose = r0 + 1.2 + hw;
+            let mut pts: Vec<V2> = (0..=12).map(|i| std::f64::consts::PI * i as f64 / 12.0).map(|a| p(nose - hw * a.sin(), hw * a.cos())).collect();
+            pts.extend([p(far, -hw), p(far, hw)]);
+            self.poly(&pts, CONCRETE);
+            self.quad_line(p(nose + 1.0, 0.0), p(far, 0.0), hw * 1.2, shade(ISLAND, 0.9));
+        }
+        // Lane lines: solid near the box (the vehicles never change lanes there), dashed
+        // farther out; the slip lane's line starts where it leaves.
+        for leg in &net.legs {
+            let (d, ins) = (leg.d, leg.in_side());
+            let p = |r: f64, lat: f64| d * r + ins * lat;
+            for k in 1..=g.right_lane() {
+                let lat = g.median + k as f64 * lw;
+                let (start, solid): (f64, f64) = if k == g.right_lane() { (rs, 30.0) } else { (r0, 80.0) };
+                for s in [1.0, -1.0] {
+                    let solid = if s > 0.0 { solid } else { solid.min(20.0) };
+                    self.quad_line(p(start, s * lat), p(start + solid, s * lat), 0.14, WHITE);
+                    self.dashed(p(start + solid, s * lat), p(far, s * lat), 0.14, 3.0, 9.0, WHITE);
+                }
+            }
+            // Box entry: a dashed line, not a stop bar.
+            self.dashed(p(r0 + 0.25, g.median + 0.1), p(r0 + 0.25, inner - 0.1), 0.45, 0.8, 0.6, WHITE);
+            for (k, moves) in leg.lane_moves.iter().enumerate() {
+                let base = if k == g.right_lane() { rs } else { r0 };
+                for r in [base + 7.0, base + 34.0] {
+                    for &t in moves {
+                        self.arrow(p(r + 3.6, g.lane_offset(k)), -d, t, shade(WHITE, 0.92));
+                    }
+                }
+            }
+            // Dotted guide lines for the left turns across the box: arcs about the far
+            // corner of the box on the leg's left.
+            let c = (d - ins) * r0;
+            let a0 = ins.angle();
+            for j in 0..=g.n_left {
+                let r = r0 + g.median + j as f64 * lw;
+                let n = (r * quarter / 1.6) as usize;
+                for i in 0..n {
+                    let (u0, u1) = (i as f64 / n as f64, (i as f64 + 0.5) / n as f64);
+                    let q0 = c + V2::from_angle(a0 - quarter * u0) * r;
+                    let q1 = c + V2::from_angle(a0 - quarter * u1) * r;
+                    self.quad_line(q0, q1, 0.12, shade(WHITE, 0.8));
+                }
+            }
+        }
+        // Pedestrian underpasses: stairs on each island and corner plaza, tunnels under
+        // the approaches between the islands and under the slip lanes to the plazas.
+        let mut island_stairs = Vec::new();
+        for leg in &net.legs {
+            let k = corner(leg.d, leg.in_side());
+            let diag = (k.1 + k.2).norm();
+            let mid = (slip_out + gutter) * std::f64::consts::FRAC_1_SQRT_2 * 0.5 + (rs - inner - gutter) * 0.5;
+            let (a, b) = (at(k, mid, mid), at(k, 12.0, 12.0));
+            self.tunnel(a, b);
+            self.stairs(a, -diag);
+            self.stairs(b, diag);
+            island_stairs.push(a);
+        }
+        for (i, &a) in island_stairs.iter().enumerate() {
+            for &b in &island_stairs[i + 1..] {
+                if a.dist(b) < 2.0 * rs {
+                    self.tunnel(a, b);
+                }
+            }
+        }
+    }
+
+    /// Stairs down to an underpass at `c`, descending along `dir`.
+    fn stairs(&mut self, c: V2, dir: V2) {
+        let n = dir.right();
+        let (hl, hw) = (2.4, 1.2);
+        self.poly(&rect_pts(c, dir, hl + 0.35, hw + 0.35), PASSAGE);
+        self.poly(&rect_pts(c, dir, hl, hw), Color32::from_rgb(64, 60, 56));
+        let mut k = -hl + 0.3;
+        let mut i = 0;
+        while k < hl - 0.1 {
+            let tread = shade(Color32::from_rgb(170, 160, 140), 1.0 - 0.06 * i as f32);
+            self.quad_line(c + dir * k + n * (hw - 0.1), c + dir * k - n * (hw - 0.1), 0.16, tread);
+            k += 0.42;
+            i += 1;
+        }
+    }
+
+    /// Trace of an underpass between two stairs: faint dashed walls.
+    fn tunnel(&mut self, a: V2, b: V2) {
+        let n = (b - a).norm().right() * 1.3;
+        let col = Color32::from_rgba_unmultiplied(214, 196, 150, 70);
+        for s in [1.0, -1.0] {
+            self.dashed(a + n * s, b + n * s, 0.18, 1.2, 1.0, col);
+        }
+    }
+
     fn scatter_buildings(&mut self, net: &Network, rng: &mut crate::sim::rng::Rng) {
         // Keep clear of roads (and their sidewalks).
         let road_clear = |p: V2, margin: f64| -> bool {
             if net.kind == LayoutKind::Roundabout && p.len() < net.ring_r + net.ring_w + 12.0 + margin {
+                return false;
+            }
+            // The cooperative crossing's corners are plazas around its slip lanes.
+            if let Some(g) = &net.coop
+                && p.x.abs().max(p.y.abs()) < g.slip_start + 6.0 + margin
+            {
                 return false;
             }
             for leg in &net.legs {
@@ -424,8 +610,9 @@ impl Scene {
             }
         }
         // Street trees along sidewalks and random trees in yards.
+        let first = net.coop.as_ref().map(|g| g.slip_start + 10.0);
         for leg in &net.legs {
-            let mut r = leg.stop_dist + 14.0;
+            let mut r = first.unwrap_or(leg.stop_dist + 14.0);
             while r < net.in_len {
                 for side in [-1.0, 1.0] {
                     let lat = if side > 0.0 { leg.in_width + 6.5 } else { -leg.out_width - 6.5 };
@@ -436,6 +623,17 @@ impl Scene {
                     }
                 }
                 r += rng.range(11.0, 17.0);
+            }
+        }
+        // Trees on the cooperative crossing's corner plazas, clear of the stairs.
+        if let Some(g) = &net.coop {
+            for leg in &net.legs {
+                let c = (leg.d + leg.in_side()) * g.slip_start;
+                let (ex, ey) = (-leg.in_side(), -leg.d);
+                for (x, y) in [(4.0, 9.5), (9.5, 4.0), (3.5, 15.5), (15.5, 3.5), (6.0, 6.0)] {
+                    let g = rng.range(0.85, 1.15) as f32;
+                    self.trees.push((c + ex * x + ey * y, rng.range(2.4, 3.4) as f32, shade(Color32::from_rgb(52, 110, 50), g)));
+                }
             }
         }
         for _ in 0..240 {
@@ -535,7 +733,8 @@ impl DrawCtx<'_> {
 pub fn paint_dynamic(painter: &egui::Painter, dc: &DrawCtx) {
     let sim = dc.sim;
     let cam = dc.cam;
-    if dc.ov.sensors {
+    // The cooperative crossing has no roadside sensors.
+    if dc.ov.sensors && sim.coop.is_none() {
         paint_sensors(painter, dc);
     }
     if dc.ov.paths {
@@ -557,15 +756,54 @@ pub fn paint_dynamic(painter: &egui::Painter, dc: &DrawCtx) {
     for v in &sim.vehicles {
         paint_vehicle(painter, dc, v);
     }
+    if let Some(c) = &sim.coop
+        && cam.scale >= 2.2
+    {
+        // Has a trajectory, or is still waiting for one (right turns need none).
+        for v in &sim.vehicles {
+            let col = if c.plans.contains_key(&v.id) {
+                SCHEDULED
+            } else if c.managed(v.movement) {
+                WAITING
+            } else {
+                continue;
+            };
+            let p = cam.to_screen(dc.center(v));
+            painter.circle_filled(p, (0.42 * cam.scale).max(2.0), Color32::from_black_alpha(120));
+            painter.circle_filled(p, (0.3 * cam.scale).max(1.4), col);
+        }
+    }
     for p in &sim.peds {
         paint_ped(painter, dc, p);
     }
     if dc.ov.conflicts {
+        // Cooperative crossing: 2 while a scheduled vehicle is in the zone, 1 when one is
+        // due within 3 s.
+        let reserved = sim.coop.as_ref().map(|c| {
+            let mut st = vec![0u8; sim.net.conflicts.len()];
+            for z in c.plans.values().flat_map(|p| &p.zones) {
+                let s = if z.t_in <= sim.t && sim.t < z.t_out { 2 } else { u8::from(z.t_in > sim.t && z.t_in - sim.t < 3.0) };
+                st[z.cid] = st[z.cid].max(s);
+            }
+            st
+        });
         for c in &sim.net.conflicts {
-            let p = sim.net.links[c.a].path.point(c.sa);
-            let held = sim.vehicles.iter().any(|v| v.commits.contains(&c.id));
-            let col = if held { Color32::from_rgb(255, 90, 60) } else if c.merge { Color32::from_rgb(120, 180, 255) } else { Color32::from_rgb(255, 230, 120) };
-            painter.circle_stroke(cam.to_screen(p), (1.0 * cam.scale).max(3.0), Stroke::new(1.5, col));
+            let p = cam.to_screen(sim.net.links[c.a].path.point(c.sa));
+            let r = (1.0 * cam.scale).max(3.0);
+            match &reserved {
+                Some(st) => {
+                    match st[c.id] {
+                        2 => painter.circle_filled(p, r, Color32::from_rgba_unmultiplied(255, 80, 60, 200)),
+                        1 => painter.circle_stroke(p, r, Stroke::new(1.8, Color32::from_rgb(255, 190, 60))),
+                        _ => painter.circle_stroke(p, r * 0.6, Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 230, 120, 70))),
+                    };
+                }
+                None => {
+                    let held = sim.vehicles.iter().any(|v| v.commits.contains(&c.id));
+                    let col = if held { Color32::from_rgb(255, 90, 60) } else if c.merge { Color32::from_rgb(120, 180, 255) } else { Color32::from_rgb(255, 230, 120) };
+                    painter.circle_stroke(p, r, Stroke::new(1.5, col));
+                }
+            }
         }
     }
     if let Some(id) = dc.selected && let Some(v) = sim.vehicles.iter().find(|v| v.id == id) {
@@ -769,7 +1007,30 @@ fn paint_signals(painter: &egui::Painter, dc: &DrawCtx) {
                 }
             }
         }
+        ControlMode::Cooperative => paint_admission(painter, dc),
         ControlMode::Roundabout => {}
+    }
+}
+
+/// Cooperative crossing: the box-entry lines of the movements the manager is admitting.
+/// There are no signal heads; this only shows the manager's state.
+fn paint_admission(painter: &egui::Painter, dc: &DrawCtx) {
+    let (sim, cam) = (dc.sim, dc.cam);
+    let Some(c) = &sim.coop else { return };
+    let open = c.open_movements();
+    for leg in &sim.net.legs {
+        for &lane in &leg.in_lanes {
+            let l = &sim.net.links[lane];
+            if !l.lane_moves.first().is_some_and(|m| open.contains(m)) {
+                continue;
+            }
+            let end = l.path.point(l.length());
+            let ax = l.path.tangent(l.length());
+            let n = ax.right() * (leg.lane_w * 0.45);
+            let glow = Color32::from_rgba_unmultiplied(ADMITTING.r(), ADMITTING.g(), ADMITTING.b(), 28);
+            poly(painter, &cam, &[end + n, end - n, end - n - ax * 8.0, end + n - ax * 8.0], glow);
+            painter.line_segment([cam.to_screen(end + n), cam.to_screen(end - n)], Stroke::new((0.3 * cam.scale).max(1.5), ADMITTING));
+        }
     }
 }
 
@@ -1010,6 +1271,22 @@ pub fn hud(painter: &egui::Painter, rect: Rect, sim: &Sim, ctrl_name: &str, spee
     let pos = rect.left_top() + egui::vec2(12.0, 10.0);
     let r = painter.text(pos + egui::vec2(1.0, 1.0), Align2::LEFT_TOP, &txt, FontId::monospace(14.0), Color32::from_black_alpha(160));
     painter.text(pos, Align2::LEFT_TOP, &txt, FontId::monospace(14.0), Color32::WHITE);
+    if let Some(c) = &sim.coop {
+        let mut line = if c.scheduling == Scheduling::FirstCome {
+            format!("First come, first served  ·  {} vehicles scheduled", c.plans.len())
+        } else {
+            let names: Vec<&str> = c.ring_phases().into_iter().flatten().map(|m| sim.net.movements[m].name.as_str()).collect();
+            let group = if c.group() == 0 { "N–S" } else { "E–W" };
+            let serving = if names.is_empty() { "switching".to_string() } else { names.join(" + ") };
+            format!("Serving {group}: {serving}  ·  {} vehicles scheduled", c.plans.len())
+        };
+        if sim.vehicles.iter().any(|v| v.kind == VKind::Emergency && c.managed(v.movement) && !c.plans.contains_key(&v.id)) {
+            line.push_str("  ·  🚨 EMERGENCY VEHICLE FIRST");
+        }
+        let p2 = pos + egui::vec2(0.0, r.height() + 4.0);
+        painter.text(p2 + egui::vec2(1.0, 1.0), Align2::LEFT_TOP, &line, FontId::proportional(13.0), Color32::from_black_alpha(160));
+        painter.text(p2, Align2::LEFT_TOP, &line, FontId::proportional(13.0), Color32::from_rgb(200, 245, 255));
+    }
     if sim.signalized() {
         let st = &sim.net.stages[sim.signal.stage];
         let phase = match sim.signal.phase {

@@ -276,11 +276,20 @@ pub enum LayoutKind {
     Town4,
     Tee,
     Roundabout,
+    /// Signal-free crossing for automated, connected vehicles, run by an
+    /// intersection manager (see `sim::coop`).
+    Cooperative,
 }
 
 impl LayoutKind {
-    pub const ALL: [LayoutKind; 5] =
-        [LayoutKind::Arterial4, LayoutKind::MajorMinor4, LayoutKind::Town4, LayoutKind::Tee, LayoutKind::Roundabout];
+    pub const ALL: [LayoutKind; 6] = [
+        LayoutKind::Arterial4,
+        LayoutKind::MajorMinor4,
+        LayoutKind::Town4,
+        LayoutKind::Tee,
+        LayoutKind::Roundabout,
+        LayoutKind::Cooperative,
+    ];
     pub fn name(self) -> &'static str {
         match self {
             LayoutKind::Arterial4 => "4-Way Arterial (left-turn bays)",
@@ -288,6 +297,7 @@ impl LayoutKind {
             LayoutKind::Town4 => "4-Way Single-Lane (town)",
             LayoutKind::Tee => "T-Junction",
             LayoutKind::Roundabout => "Roundabout (single-lane)",
+            LayoutKind::Cooperative => "Cooperative (signal-free, automated)",
         }
     }
     pub fn key(self) -> &'static str {
@@ -297,10 +307,43 @@ impl LayoutKind {
             LayoutKind::Town4 => "town4",
             LayoutKind::Tee => "tee",
             LayoutKind::Roundabout => "roundabout",
+            LayoutKind::Cooperative => "cooperative",
         }
     }
     pub fn signalized(self) -> bool {
-        self != LayoutKind::Roundabout
+        !matches!(self, LayoutKind::Roundabout | LayoutKind::Cooperative)
+    }
+}
+
+/// Dimensions of the cooperative crossing (all distances from the center, m).
+#[derive(Clone, Copy, Debug)]
+pub struct CoopGeom {
+    /// Left-turn lanes per approach.
+    pub n_left: usize,
+    /// Through lanes per approach.
+    pub n_through: usize,
+    pub lane_w: f64,
+    /// Half-width of the raised median.
+    pub median: f64,
+    /// Half-width of the box (median plus the lanes that cross it).
+    pub half: f64,
+    /// Stop line, where vehicles enter the box.
+    pub stop: f64,
+    /// Where the right-turn slip lane leaves the approach and rejoins the exit.
+    pub slip_start: f64,
+    pub slip_r: f64,
+    /// Through speed in the box (m/s).
+    pub box_speed: f64,
+}
+
+impl CoopGeom {
+    /// Lateral offset of approach lane `k`, counted from the median out.
+    pub fn lane_offset(&self, k: usize) -> f64 {
+        self.median + (k as f64 + 0.5) * self.lane_w
+    }
+    /// Index of the right-turn (slip) lane.
+    pub fn right_lane(&self) -> usize {
+        self.n_left + self.n_through
     }
 }
 
@@ -322,6 +365,8 @@ pub struct Network {
     /// Roundabout ring center radius (0 if none).
     pub ring_r: f64,
     pub ring_w: f64,
+    /// Cooperative crossing dimensions (None for other layouts).
+    pub coop: Option<CoopGeom>,
 }
 
 pub const IN_LEN: f64 = 260.0;
@@ -417,6 +462,7 @@ impl Network {
                 n
             }
             LayoutKind::Roundabout => build_roundabout(),
+            LayoutKind::Cooperative => build_cooperative(2),
         }
     }
 
@@ -637,6 +683,7 @@ fn build_signal(kind: LayoutKind, defs: Vec<LegDef>, lane_w: f64, speed: f64, ye
         out_len: OUT_LEN,
         ring_r: 0.0,
         ring_w: 0.0,
+        coop: None,
     };
     net.compute_conflicts();
     net
@@ -758,9 +805,202 @@ fn build_roundabout() -> Network {
         out_len: OUT_LEN,
         ring_r,
         ring_w,
+        coop: None,
     };
     net.compute_conflicts();
     net
+}
+
+/// The cooperative crossing: a large four-leg intersection for automated, connected
+/// vehicles with no signal. Each approach has, from the median out, `n_left` left-turn
+/// lanes, three through lanes and a right-turn lane that leaves on a channelized slip
+/// lane before the box. Every entry lane has exactly one path through the box and its
+/// own receiving lane, so there are no merges or diverges in the box, only crossings,
+/// and right turns never enter it. Left turns are circular arcs from stop line to stop
+/// line; opposite lefts pass clear of each other. Walking and cycling use underground
+/// passages, so the box has no crosswalks.
+pub fn build_cooperative(n_left: usize) -> Network {
+    let n_left = n_left.clamp(1, 2);
+    let n_through = 3;
+    let lane_w = 3.5;
+    let median = 2.0;
+    let speed = 13.9;
+    let half = median + (n_left + n_through) as f64 * lane_w;
+    let slip_r = 25.0;
+    let mut g = CoopGeom {
+        n_left,
+        n_through,
+        lane_w,
+        median,
+        half,
+        stop: half + 2.0,
+        slip_start: 0.0,
+        slip_r,
+        box_speed: 40.0 / 3.6,
+    };
+    g.slip_start = g.lane_offset(g.right_lane()) + slip_r;
+    let n_in = n_left + n_through + 1;
+    let mut lane_moves = vec![vec![Turn::L]; n_left];
+    lane_moves.extend(vec![vec![Turn::T]; n_through]);
+    lane_moves.push(vec![Turn::R]);
+    let width = median + n_in as f64 * lane_w;
+    let mut legs: Vec<Leg> = Compass::ALL
+        .iter()
+        .map(|&c| Leg {
+            compass: c,
+            d: c.dir(),
+            lane_moves: lane_moves.clone(),
+            n_out: n_in,
+            lane_w,
+            med_out: median,
+            in_width: width,
+            out_width: width,
+            stop_dist: g.stop,
+            speed,
+            in_lanes: vec![],
+            out_lanes: vec![],
+            crosswalk: None,
+            minor: false,
+        })
+        .collect();
+    let mut links: Vec<Link> = Vec::new();
+    for (li, leg) in legs.iter_mut().enumerate() {
+        let (d, ins, outs) = (leg.d, leg.in_side(), leg.out_side());
+        for k in 0..n_in {
+            let lat = ins * g.lane_offset(k);
+            let end = if k == g.right_lane() { g.slip_start } else { g.stop };
+            let id = new_link(&mut links, LinkKind::Inbound, &[d * IN_LEN + lat, d * end + lat], speed, li, k);
+            leg.in_lanes.push(id);
+        }
+        for k in 0..n_in {
+            let lat = outs * g.lane_offset(k);
+            let start = if k == g.right_lane() { g.slip_start } else { g.stop };
+            let id = new_link(&mut links, LinkKind::Outbound, &[d * start + lat, d * OUT_LEN + lat], speed, li, k);
+            leg.out_lanes.push(id);
+        }
+    }
+    let find = |legs: &Vec<Leg>, d: V2| legs.iter().position(|l| l.d.dist(d) < 1e-6);
+    let mut movements: Vec<Movement> = Vec::new();
+    for li in 0..legs.len() {
+        let d = legs[li].d;
+        let h = -d;
+        for turn in Turn::ALL {
+            let to = find(&legs, turn.exit_dir(d)).expect("four legs");
+            let id = movements.len();
+            let lanes: Vec<usize> = (0..n_in).filter(|&k| legs[li].lane_moves[k] == [turn]).collect();
+            let mut routes = Vec::new();
+            for k in lanes {
+                let in_id = legs[li].in_lanes[k];
+                let out_id = legs[to].out_lanes[k];
+                let p0 = links[in_id].path.end();
+                let pts = match turn {
+                    Turn::T => vec![p0, links[out_id].path.start()],
+                    Turn::L => {
+                        // Arc from stop line to stop line, tangent to both lanes.
+                        let r = g.stop + g.lane_offset(k);
+                        let c = p0 + v2(h.y, -h.x) * r;
+                        let a0 = (p0 - c).angle();
+                        arc(c, r, a0, a0 - std::f64::consts::FRAC_PI_2)
+                    }
+                    Turn::R => {
+                        let c = p0 + v2(-h.y, h.x) * slip_r;
+                        let a0 = (p0 - c).angle();
+                        arc(c, slip_r, a0, a0 + std::f64::consts::FRAC_PI_2)
+                    }
+                };
+                let box_speed = if turn == Turn::T { g.box_speed } else { speed };
+                let c = new_link(&mut links, LinkKind::Connector, &pts, box_speed, li, k);
+                connect(&mut links, in_id, c);
+                connect(&mut links, c, out_id);
+                links[c].movement = Some(id);
+                links[in_id].lane_moves.push(id);
+                routes.push((in_id, vec![c, out_id]));
+            }
+            movements.push(Movement {
+                id,
+                name: format!("{}_{}", legs[li].compass.letter(), turn.letter()),
+                leg: li,
+                turn,
+                to_leg: to,
+                routes,
+                crosswalks: vec![],
+            });
+        }
+    }
+    let mut net = Network {
+        kind: LayoutKind::Cooperative,
+        legs,
+        links,
+        movements,
+        conflicts: vec![],
+        ped_conflicts: vec![],
+        crosswalks: vec![],
+        stages: vec![],
+        fixed_sequence: vec![],
+        yellow: 0.0,
+        all_red: 0.0,
+        in_len: IN_LEN,
+        out_len: OUT_LEN,
+        ring_r: 0.0,
+        ring_w: 0.0,
+        coop: Some(g),
+    };
+    net.compute_conflicts();
+    net.reservation_zones();
+    net
+}
+
+/// Widest vehicle the reservation zones must cover (m).
+pub const COOP_MAX_WIDTH: f64 = 2.55;
+/// Lateral margin around the bodies in the reservation zones (m).
+pub const COOP_ZONE_MARGIN: f64 = 0.3;
+
+impl Network {
+    /// Replace the conflict zones with the tighter reservation zones the cooperative
+    /// manager schedules: the stretch of each path where a vehicle of the widest class
+    /// could touch one on the other path. Two bodies whose center lines cross at angle
+    /// theta can touch only while the center lines are closer than
+    /// w/2 (1 + |cos theta|), so each zone is the part of the path within that distance
+    /// (plus a margin) of the other path. At a right angle this is about 3.2 m, against
+    /// the 6.2 m the right-of-way logic of human drivers uses.
+    fn reservation_zones(&mut self) {
+        let mut conflicts = std::mem::take(&mut self.conflicts);
+        for c in conflicts.iter_mut() {
+            let (pa, pb) = (&self.links[c.a].path, &self.links[c.b].path);
+            let cos = pa.tangent(c.sa).dot(pb.tangent(c.sb)).abs();
+            let lim = COOP_MAX_WIDTH / 2.0 * (1.0 + cos) + COOP_ZONE_MARGIN;
+            c.za = zone_within(pa, c.sa, pb, c.sb, lim);
+            c.zb = zone_within(pb, c.sb, pa, c.sa, lim);
+        }
+        self.conflicts = conflicts;
+    }
+}
+
+/// Interval of `pa` around `s0` (before, after) whose center line lies within `lim` of
+/// `pb` near `sb0`, found in 5 cm steps.
+fn zone_within(pa: &Path, s0: f64, pb: &Path, sb0: f64, lim: f64) -> (f64, f64) {
+    let near = |s: f64| {
+        let p = pa.point(s);
+        let mut sb = (sb0 - 20.0).max(0.0);
+        let end = (sb0 + 20.0).min(pb.length);
+        while sb <= end {
+            if p.dist(pb.point(sb)) < lim {
+                return true;
+            }
+            sb += 0.05;
+        }
+        false
+    };
+    let step = 0.05;
+    let mut lo = 0.0;
+    while lo < 25.0 && s0 - lo - step >= 0.0 && near(s0 - lo - step) {
+        lo += step;
+    }
+    let mut hi = 0.0;
+    while hi < 25.0 && s0 + hi + step <= pa.length && near(s0 + hi + step) {
+        hi += step;
+    }
+    (lo + step, hi + step)
 }
 
 impl Network {
