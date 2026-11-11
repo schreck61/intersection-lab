@@ -1,0 +1,6 @@
+# Formatting for `cargo fmt`, using only settings stable rustfmt supports. Lines may
+# run to 110 characters, and "Max" keeps a short expression on one line whenever it
+# fits, which stays close to the compact layout the code had before rustfmt.
+edition = "2024"
+max_width = 110
+use_small_heuristics = "Max"
