@@ -11,6 +11,7 @@ train command and its TEST lines. Otherwise, delete this section. -->
 ## Checklist
 
 - [ ] `cargo test --locked --release` passes (zero vehicle overlaps)
+- [ ] The code is formatted with `cargo fmt --all`
 - [ ] `cargo clippy --locked --release --all-targets -- -D warnings` is clean (and for `wasm32-unknown-unknown` if the app changed)
 - [ ] New functionality has tests, and a bug fix has a test that fails without it (see [CONTRIBUTING.md](https://github.com/schreck61/intersection-lab/blob/main/CONTRIBUTING.md#guidelines))
 - [ ] Runs stay deterministic for a given seed

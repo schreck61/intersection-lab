@@ -1,9 +1,9 @@
 # Copyright (c) 2026 Jim Schreckengast
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
-# Build and test on every platform, build the browser version, lint with clippy, build
-# the crate from the files crates.io would get, check licenses, advisories and
-# attributions, and fuzz the loading of weights files.
+# Build and test on every platform, build the browser version, check formatting and lint
+# with clippy, build the crate from the files crates.io would get, check licenses,
+# advisories and attributions, and fuzz the loading of weights files.
 name: CI
 
 on:
@@ -56,8 +56,12 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          components: clippy
+          components: clippy, rustfmt
           targets: wasm32-unknown-unknown
+      # Formatting (see rustfmt.toml): the crate, then the fuzz target, which is a
+      # workspace of its own.
+      - run: cargo fmt --all --check
+      - run: cargo fmt --manifest-path fuzz/Cargo.toml --check
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo clippy --locked --release --all-targets -- -D warnings
       - run: cargo clippy --locked --release --target wasm32-unknown-unknown --bin intersection-lab -- -D warnings
