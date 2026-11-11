@@ -56,7 +56,10 @@ pub const HIDDEN: &[usize] = &[128];
 #[derive(Serialize, Deserialize)]
 pub struct SavedHybrid {
     pub base_action: usize,
-    pub base_score: f64,
+    /// Validation person delay (s) of what the file holds, when training measured one.
+    /// Version 0.5.1 wrote `null` for a score it couldn't store; that loads as `None`.
+    #[serde(default)]
+    pub base_score: Option<f64>,
     pub model: Option<SavedModel>,
 }
 
@@ -121,9 +124,7 @@ impl Hybrid {
     /// keeps the planner's default tuning (it behaves exactly like the predictive
     /// controller).
     pub fn load_or_new(net: &Network) -> Self {
-        if let Some((txt, source)) = super::weights::load(&weights_file(net.kind.key()))
-            && let Some(mut h) = Self::from_saved(net, &txt)
-        {
+        if let Some((mut h, source)) = super::weights::load(&weights_file(net.kind.key()), |txt| Self::from_saved(net, txt)) {
             h.loaded_from = Some(source);
             return h;
         }
@@ -148,7 +149,9 @@ impl Hybrid {
         Some(h)
     }
 
-    pub fn save(&self, path: &std::path::Path, base_score: f64, with_model: bool) -> std::io::Result<()> {
+    /// Save the base tuning, its score if known, and the network if `with_model`. A
+    /// score that isn't finite is saved as unknown, since JSON has no number for it.
+    pub fn save(&self, path: &std::path::Path, base_score: Option<f64>, with_model: bool) -> std::io::Result<()> {
         let model = with_model.then(|| SavedModel {
             layout: self.layout.clone(),
             n_in: self.agent.online.n_in(),
@@ -156,7 +159,7 @@ impl Hybrid {
             episodes: self.episodes,
             net: self.agent.online.clone(),
         });
-        let sv = SavedHybrid { base_action: self.base_action, base_score, model };
+        let sv = SavedHybrid { base_action: self.base_action, base_score: base_score.filter(|s| s.is_finite()), model };
         std::fs::write(path, serde_json::to_string(&sv).unwrap())
     }
 

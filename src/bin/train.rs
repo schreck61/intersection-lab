@@ -145,7 +145,7 @@ impl Agent {
         std::fs::create_dir_all("weights").ok();
         match self {
             Agent::Dqn(a) => a.save(&rl::weights_path(layout.key())).ok(),
-            Agent::Hybrid(a) => a.save(&hybrid::weights_path(layout.key()), score, true).ok(),
+            Agent::Hybrid(a) => a.save(&hybrid::weights_path(layout.key()), Some(score), true).ok(),
         };
     }
     fn loss(&self) -> f32 {
@@ -272,10 +272,11 @@ fn train(kind: LayoutKind, episodes: u64, secs: f64, which: &str) {
     if let Agent::Hybrid(h) = &mut agent {
         // The base tuning is the exploration expert and the score to beat, also when
         // resuming; save it now so the hybrid falls back to it if no network does better.
+        // When no tuning met the pedestrian limit, its score is infinite and isn't saved.
         h.base_action = base.1;
         best = base.0;
         std::fs::create_dir_all("weights").ok();
-        h.save(&hybrid::weights_path(kind.key()), base.0, false).ok();
+        h.save(&hybrid::weights_path(kind.key()), Some(base.0), false).ok();
         saved_any = true;
     }
     agent.set(true, 0.0, 0.0);

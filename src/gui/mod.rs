@@ -842,7 +842,9 @@ impl App {
                     if !WEB && ui.button("💾 Save weights").clicked() {
                         let p = crate::control::hybrid::weights_path(layout.key());
                         std::fs::create_dir_all(p.parent().unwrap()).ok();
-                        saved = Some(h.save(&p, f64::NAN, true).map(|_| p.display().to_string()));
+                        // The app measures no validation score. The network is saved only
+                        // if it is choosing the tunings (trained or learning).
+                        saved = Some(h.save(&p, None, h.has_model || h.learning).map(|_| p.display().to_string()));
                     }
                 }
                 if let Some(r) = saved {

@@ -3,16 +3,27 @@
 
 //! Weights files are read from disk, where they can be damaged or edited by hand. The
 //! loaders must reject a network that doesn't fit its controller, and nothing an
-//! accepted network computes may crash the app.
+//! accepted network computes may crash the app. What the app and the trainer save must
+//! load again, and a copy that doesn't load mustn't hide one that does.
 
 use intersection_lab::control::hybrid::{Hybrid, N_ACTIONS};
 use intersection_lab::control::rl::{RlController, n_inputs};
-use intersection_lab::control::{Controller, CtrlKind};
+use intersection_lab::control::{Controller, CtrlKind, weights};
 use intersection_lab::sim::network::{LayoutKind, Network};
 use intersection_lab::sim::{ControlMode, Sim};
 use serde_json::{Value, json};
+use std::path::PathBuf;
 
 const DQN_TEE: &str = include_str!("../weights/dqn_tee.json");
+const HYBRID_TEE: &str = include_str!("../weights/hybrid_tee.json");
+
+/// An empty directory for this test's files.
+fn scratch(name: &str) -> PathBuf {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
 
 /// The shipped tee-intersection network with `edit` applied to its layers.
 fn edited(edit: impl FnOnce(&mut Vec<Value>)) -> String {
@@ -91,6 +102,46 @@ fn hybrid_without_a_fitting_network_keeps_its_base_tuning() {
     let h = Hybrid::from_saved(&net, &hybrid_file(&net, json!([]))).unwrap();
     assert!(!h.has_model);
     assert_eq!(h.base_action, 10);
+}
+
+#[test]
+fn hybrid_files_with_a_non_finite_score_load() {
+    let net = Network::build(LayoutKind::Tee);
+    let dir = scratch("non_finite_score");
+    let mut h = Hybrid::new(&net, 1);
+    h.base_action = 7;
+    // The app knows no score; training has none when no tuning meets its pedestrian limit.
+    for (i, score) in [None, Some(f64::NAN), Some(f64::INFINITY), Some(f64::NEG_INFINITY)].into_iter().enumerate() {
+        for with_model in [false, true] {
+            let path = dir.join(format!("hybrid_{i}_{with_model}.json"));
+            h.save(&path, score, with_model).unwrap();
+            let saved = std::fs::read_to_string(&path).unwrap();
+            let back = Hybrid::from_saved(&net, &saved).unwrap_or_else(|| panic!("saved with score {score:?}, doesn't load: {saved:.80}"));
+            assert_eq!((back.base_action, back.has_model), (7, with_model));
+        }
+    }
+    // What version 0.5.1 wrote for such a score.
+    let old = json!({ "base_action": 7, "base_score": null, "model": null }).to_string();
+    assert_eq!(Hybrid::from_saved(&net, &old).unwrap().base_action, 7);
+}
+
+#[test]
+fn a_weights_file_that_does_not_load_is_skipped() {
+    let net = Network::build(LayoutKind::Tee);
+    let load = |dirs: &[PathBuf]| weights::load_from(dirs, "hybrid_tee.json", |txt| Hybrid::from_saved(&net, txt)).unwrap();
+    let (bad, good) = (scratch("skip_bad"), scratch("skip_good"));
+    std::fs::write(bad.join("hybrid_tee.json"), r#"{"base_action": 3, "base_sc"#).unwrap();
+    let mut h = Hybrid::new(&net, 1);
+    h.base_action = 5;
+    h.save(&good.join("hybrid_tee.json"), None, false).unwrap();
+
+    let (h, source) = load(&[bad.clone(), good.clone()]);
+    assert_eq!(h.base_action, 5);
+    assert_eq!(source, good.join("hybrid_tee.json").display().to_string());
+    // With no copy on disk that loads, the built-in one is used.
+    let (h, source) = load(&[bad]);
+    assert_eq!(source, "built-in hybrid_tee.json");
+    assert_eq!(h.base_action, Hybrid::from_saved(&net, HYBRID_TEE).unwrap().base_action);
 }
 
 #[test]

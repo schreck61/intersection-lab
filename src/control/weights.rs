@@ -5,11 +5,12 @@
 //!
 //! Loading looks in `weights/` under the working directory (development and training),
 //! then in the per-user data directory (weights saved from the app), then falls back to
-//! the copies built into the binary, so an installed app works anywhere. Saving goes to
-//! `weights/` when that directory exists in the working directory, otherwise to the
-//! per-user data directory.
+//! the copies built into the binary, so an installed app works anywhere. A copy that
+//! can't be read or doesn't load is skipped, so a damaged file doesn't hide a good copy
+//! further down the list. Saving goes to `weights/` when that directory exists in the
+//! working directory, otherwise to the per-user data directory.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Weights shipped with the application.
 const EMBEDDED: &[(&str, &str)] = &[
@@ -38,16 +39,24 @@ pub fn user_dir() -> Option<PathBuf> {
     }
 }
 
-/// Contents of weights file `file` and where they came from.
-pub fn load(file: &str) -> Option<(String, String)> {
-    let local = PathBuf::from("weights").join(file);
-    let user = user_dir().map(|d| d.join("weights").join(file));
-    for p in std::iter::once(local).chain(user) {
-        if let Ok(txt) = std::fs::read_to_string(&p) {
-            return Some((txt, p.display().to_string()));
+/// Weights file `file` as `parse` loads it from the first copy it accepts, and where
+/// that copy came from.
+pub fn load<T>(file: &str, parse: impl FnMut(&str) -> Option<T>) -> Option<(T, String)> {
+    let dirs: Vec<PathBuf> = std::iter::once(PathBuf::from("weights")).chain(user_dir().map(|d| d.join("weights"))).collect();
+    load_from(&dirs, file, parse)
+}
+
+/// Like [`load`], but looking in `dirs`, in order, before the built-in copy.
+pub fn load_from<T>(dirs: &[impl AsRef<Path>], file: &str, mut parse: impl FnMut(&str) -> Option<T>) -> Option<(T, String)> {
+    for p in dirs.iter().map(|d| d.as_ref().join(file)) {
+        if let Ok(txt) = std::fs::read_to_string(&p)
+            && let Some(v) = parse(&txt)
+        {
+            return Some((v, p.display().to_string()));
         }
     }
-    EMBEDDED.iter().find(|e| e.0 == file).map(|e| (e.1.to_string(), format!("built-in {file}")))
+    let txt = EMBEDDED.iter().find(|e| e.0 == file)?.1;
+    parse(txt).map(|v| (v, format!("built-in {file}")))
 }
 
 /// Where to save weights file `file` (the directory may still need creating).

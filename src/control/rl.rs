@@ -105,9 +105,7 @@ impl RlController {
     }
 
     pub fn load_or_new(net: &Network) -> Self {
-        if let Some((txt, source)) = super::weights::load(&weights_file(net.kind.key()))
-            && let Some(mut c) = Self::from_saved(net, &txt)
-        {
+        if let Some((mut c, source)) = super::weights::load(&weights_file(net.kind.key()), |txt| Self::from_saved(net, txt)) {
             c.loaded_from = Some(source);
             return c;
         }
