@@ -3306,6 +3306,15 @@ Every capture used `TS_SPEED=20` and `TS_SHOT_AFTER=120` unless listed otherwise
 | `coop-bench-window` | `TS_LAYOUT=cooperative TS_BENCH=controllers TS_SPEED=1 TS_SHOT_AFTER=150` |
 | `layouts` | `TS_LAYOUT` set to each layout's key |
 
+The README's screenshots are made the same way:
+
+| Image | Settings |
+|---|---|
+| `docs/arterial.png` | `TS_SPEED=30 TS_SHOT_AFTER=420` |
+| `docs/compare.png` | `TS_TWIN=Fixed TS_SPEED=100 TS_SHOT_AFTER=600` |
+| `docs/corridor.png` | `TS_CORRIDOR=3 TS_SPEED=100 TS_SHOT_AFTER=600` |
+| `docs/cooperative.png` | `TS_LAYOUT=cooperative TS_TWIN=fcfs TS_SPEED=10 TS_SHOT_AFTER=600` |
+
 A few things to know when making new ones:
 
 * **Resolution:** on a Retina display a 1600 × 1000 window is captured at 3200 × 2000
