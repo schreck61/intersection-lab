@@ -257,10 +257,13 @@ impl App {
         let net = Network::build(self.layout);
         let demand = if keep_demand && old.net.kind == self.layout { old.demand.clone() } else { DemandConfig::default_for(&net) };
         let template = Self::settings_of(old);
-        self.world = self.make_world(self.mode, self.ctrl, (self.coop_policy, self.coop_sched), demand, &template);
+        // Under the green wave, the controller to give back when it ends.
+        let ctrl = self.world.controller_before_wave(self.focus).unwrap_or(self.ctrl);
+        self.world = self.make_world(self.mode, ctrl, (self.coop_policy, self.coop_sched), demand, &template);
         // The view is centered on the middle of the corridor: start the panels there.
         self.focus = self.world.sims.len() / 2;
         self.rebuild_twin();
+        self.sync_ctrl();
         if self.scene.kind != self.layout {
             self.scene = Scene::build(&self.world.sims[0].net);
         }
@@ -282,8 +285,21 @@ impl App {
         let src = &self.world.sims[0];
         let template = Self::settings_of(src);
         let demand = src.demand.clone();
-        self.twin = Some(self.make_world(self.twin_mode, self.twin_ctrl, (self.twin_policy, self.twin_sched), demand, &template));
+        // B runs one controller everywhere; under the green wave, the one it ran before.
+        let ctrl = self.twin.as_ref().and_then(|t| t.controller_before_wave(0)).unwrap_or(self.twin_ctrl);
+        self.twin = Some(self.make_world(self.twin_mode, ctrl, (self.twin_policy, self.twin_sched), demand, &template));
         self.twin_summary = Summary::default();
+    }
+
+    /// Show the controllers the focused intersection runs, on both sides: the focus may
+    /// have moved, and the green wave changes controllers. Whether anything changed.
+    fn sync_ctrl(&mut self) -> bool {
+        let before = (self.ctrl, self.twin_ctrl);
+        self.ctrl = self.world.sims[self.focus].ctrl_kind;
+        if let Some(t) = &self.twin {
+            self.twin_ctrl = t.sims[self.focus.min(t.sims.len() - 1)].ctrl_kind;
+        }
+        (self.ctrl, self.twin_ctrl) != before
     }
 
     fn settings_of(s: &Sim) -> Sim {
@@ -446,12 +462,18 @@ impl App {
                     self.spawn_kind = k;
                 }
             }
-            let walk = !self.world.sims[self.focus].net.crosswalks.is_empty();
+            let net = &self.world.sims[self.focus].net;
+            let walk = !net.crosswalks.is_empty();
+            let no_walk = match net.kind {
+                LayoutKind::Cooperative => "No crosswalks here: pedestrians use underground passages",
+                LayoutKind::Roundabout => "No crosswalks here: the roundabout is simulated without pedestrians",
+                _ => "No crosswalks here",
+            };
             let ped = ui
                 .add_enabled_ui(walk, |ui| ui.selectable_label(self.tool == Tool::Pedestrian, "🚶 Pedestrian"))
                 .inner
                 .on_hover_text("Click near a crosswalk corner")
-                .on_disabled_hover_text("No crosswalks here: pedestrians use underground passages");
+                .on_disabled_hover_text(no_walk);
             if ped.clicked() {
                 self.tool = if self.tool == Tool::Pedestrian { Tool::Select } else { Tool::Pedestrian };
             }
@@ -523,7 +545,7 @@ impl App {
                 let mut gw = self.green_wave;
                 if ui
                     .checkbox(&mut gw, "Fixed-time green wave")
-                    .on_hover_text("Common cycle and offsets that maximize the two-way green band (applies to fixed-time signals)")
+                    .on_hover_text("Every signal runs fixed-time, with a common cycle and offsets that maximize the two-way green band. Turning it off gives each signal back the controller it ran before.")
                     .changed()
                 {
                     self.green_wave = gw;
@@ -531,6 +553,7 @@ impl App {
                     if let Some(t) = self.twin.as_mut() {
                         t.set_coordination(gw);
                     }
+                    self.notify(if gw { "Green wave on: every signal runs fixed-time" } else { "Green wave off: the signals run their previous controllers again" });
                 }
             }
             let mut mode = self.mode;
@@ -565,7 +588,7 @@ impl App {
                 if c != self.ctrl {
                     // Hot-swap: traffic keeps flowing, only the brain changes.
                     self.ctrl = c;
-                    self.world.sims[self.focus].set_controller(c);
+                    self.world.set_controller(self.focus, c);
                     self.notify(format!("Controller switched live to {}", c.name()));
                 }
                 ui.label(RichText::new(self.ctrl.description()).small().color(Color32::from_gray(170)));
@@ -662,8 +685,8 @@ impl App {
                 } else if c != self.twin_ctrl {
                     self.twin_ctrl = c;
                     if let Some(t) = self.twin.as_mut() {
-                        for s in &mut t.sims {
-                            s.set_controller(c);
+                        for i in 0..t.sims.len() {
+                            t.set_controller(i, c);
                         }
                     }
                 }
@@ -842,7 +865,9 @@ impl App {
                     if !WEB && ui.button("💾 Save weights").clicked() {
                         let p = crate::control::hybrid::weights_path(layout.key());
                         std::fs::create_dir_all(p.parent().unwrap()).ok();
-                        saved = Some(h.save(&p, f64::NAN, true).map(|_| p.display().to_string()));
+                        // The app measures no validation score. The network is saved only
+                        // if it is choosing the tunings (trained or learning).
+                        saved = Some(h.save(&p, None, h.has_model || h.learning).map(|_| p.display().to_string()));
                     }
                 }
                 if let Some(r) = saved {
@@ -1280,9 +1305,10 @@ impl App {
         let st = &c.stats;
         let ok = Color32::from_rgb(110, 220, 130);
         let flag = |n: u64| if n == 0 { ok } else { Color32::from_rgb(240, 90, 90) };
+        let (margin, margin_ok) = margin_kpi(st.margin_min);
         egui::Grid::new("coop_safety").num_columns(3).spacing(vec2(16.0, 6.0)).show(ui, |ui| {
             Self::kpi(ui, "closest crossing (PET)", if st.pet_min.is_finite() { format!("{:.2} s", st.pet_min) } else { "–".into() }, Color32::WHITE);
-            Self::kpi(ui, "margin over gap", if st.margin_min.is_finite() { format!("{:+.2} s", st.margin_min.max(0.0)) } else { "–".into() }, if st.margin_min > -1e-6 { ok } else { Color32::from_rgb(240, 90, 90) });
+            Self::kpi(ui, "margin over gap", margin, if margin_ok { ok } else { Color32::from_rgb(240, 90, 90) });
             Self::kpi(ui, "zone overlaps", st.zone_violations.to_string(), flag(st.zone_violations));
             ui.end_row();
             Self::kpi(ui, "entries without slot", st.unauthorized.to_string(), flag(st.unauthorized));
@@ -1711,6 +1737,16 @@ impl App {
     }
 }
 
+/// The safety monitors' smallest margin over the required gap, with its sign, and
+/// whether every crossing kept its gap. Rounding error just below zero counts as zero.
+fn margin_kpi(margin: f64) -> (String, bool) {
+    if !margin.is_finite() {
+        return ("–".into(), true);
+    }
+    let ok = margin > -1e-6;
+    (format!("{:+.2} s", if ok { margin.max(0.0) } else { margin }), ok)
+}
+
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
@@ -1734,6 +1770,11 @@ impl eframe::App for App {
         egui::Panel::right("right").default_size(380.0).resizable(true).show(ui, |ui| self.right_panel(ui));
         egui::Panel::bottom("bottom").show(ui, |ui| self.bottom_panel(ui));
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| self.canvas(ui));
+        // Panels drawn before a change of focus or controller this frame showed the old
+        // controller: draw again.
+        if self.sync_ctrl() {
+            ctx.request_repaint();
+        }
         self.bench_window(&ctx);
         self.about_window(&ctx);
         if let Some((path, after)) = self.shot.clone() && self.world.sims[self.focus].t >= after {
@@ -1744,5 +1785,18 @@ impl eframe::App for App {
                 shot::request(&ctx, path);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::margin_kpi;
+
+    #[test]
+    fn margin_over_gap_keeps_its_sign() {
+        assert_eq!(margin_kpi(0.437), ("+0.44 s".to_string(), true));
+        assert_eq!(margin_kpi(-1e-9), ("+0.00 s".to_string(), true));
+        assert_eq!(margin_kpi(-0.25), ("-0.25 s".to_string(), false));
+        assert_eq!(margin_kpi(f64::INFINITY), ("–".to_string(), true));
     }
 }

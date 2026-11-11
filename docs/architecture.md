@@ -3,8 +3,9 @@
 This document describes how Intersection Lab is put together. It covers what each Rust
 source file does, how the code is split into layers, and how those layers work together
 during a simulation step, a corridor run, a cooperative crossing, a benchmark and a
-training run. It describes version 0.5.1. Section 9.4 is an illustrated tour of the
-app's window, and Appendix A says how the screenshots were made.
+training run. It describes the code on `main`: version 0.5.1 and the fixes made since.
+Section 9.4 is an illustrated tour of the app's window, and Appendix A says how the
+screenshots were made.
 
 The diagrams are written in [Mermaid](https://mermaid.js.org/), which GitHub renders
 inline. Their colors mean the same thing throughout:
@@ -213,7 +214,7 @@ src/
   bin/train.rs      headless training of the Deep RL and Hybrid networks
 examples/           studies: cooperative, corridor, fya, lpi, preempt, satflow, sweep,
                     plus make_icons
-tests/              safety, cooperative, pedestrian_rule, weights_files
+tests/              safety, cooperative, pedestrian_rule, weights_files, green_wave
 fuzz/               cargo-fuzz target for weights files (a workspace of its own)
 weights/            trained networks (JSON), also compiled into the binary
 web/index.html      page that hosts the browser build (Trunk)
@@ -227,14 +228,14 @@ docs/               this document, insights.md, cooperative-intersections.md (wi
 
 | Directory | Files | Lines |
 |---|---:|---:|
-| `src/sim/` | 11 | 7,602 |
-| `src/control/` | 8 | 1,474 |
+| `src/sim/` | 11 | 7,678 |
+| `src/control/` | 8 | 1,489 |
 | `src/rl/` | 3 | 360 |
-| `src/gui/` | 5 | 3,644 |
-| `src/bin/` | 2 | 589 |
+| `src/gui/` | 5 | 3,694 |
+| `src/bin/` | 2 | 590 |
 | `src/lib.rs`, `src/main.rs` | 2 | 78 |
 | `examples/` | 8 | 575 |
-| `tests/` | 4 | 749 |
+| `tests/` | 5 | 873 |
 | `fuzz/fuzz_targets/` | 1 | 54 |
 
 | Target | Built from | Purpose |
@@ -406,8 +407,8 @@ Three things about this ordering matter:
 | `coop.rs` | 1,883 | The cooperative crossing's intersection manager |
 | `network.rs` | 1,074 | The layouts: legs, lanes, paths, movements, stages and conflict points |
 | `sensors.rs` | 572 | Sensor models and `Sim::sense` |
-| `world.rs` | 387 | One intersection or a corridor |
-| `signal.rs` | 286 | The signal state machine |
+| `world.rs` | 410 | One intersection or a corridor |
+| `signal.rs` | 339 | The signal state machine |
 | `demand.rs` | 273 | Arrivals |
 | `geom.rs` | 268 | Vectors, paths and curves |
 | `stats.rs` | 254 | Measurement |
@@ -863,8 +864,9 @@ stateDiagram-v2
 * **`no_late_walk`** is set while a coordinated fixed-time corridor runs. WALK then
   starts only with its stage, so a pedestrian call never pushes a stage past its
   force-off.
-* **`history`** holds the last 400 `StageSpan`s, which the app draws as the signal
-  timeline.
+* **`history`** holds the last 1,200 `StageSpan`s, which the app draws as the signal
+  timeline: each stage's green and, when the change needs them, the yellow and all-red
+  that end it.
 
 Each crosswalk has its own small machine (`CwSignal`), with a push-button `called`
 flag:
@@ -1123,7 +1125,10 @@ flowchart TB
   longest of their Webster cycles, and offsets for a green wave. The offsets are chosen
   one intersection at a time, in 1 s steps, to give the most green to platoons in both
   directions traveling at 92% of the speed limit. It first sets every signalized
-  intersection to fixed-time control.
+  intersection to fixed-time control, remembering the controller each one ran
+  (`controller_before_wave`). Turning the wave off gives those controllers back, and
+  signals that were fixed-time return to their own Webster plans. An intersection
+  given a controller during the wave, through `World::set_controller`, keeps it.
 * **`sync_settings` and `follow`:** copy settings edited in the app to the other
   intersections and to the comparison twin. Each intersection keeps its own `fed`
   flags.
@@ -1374,14 +1379,14 @@ but only as their reward (§8.3).
 
 | File | Lines | What it holds |
 |---|---:|---|
-| `rl.rs` | 335 | `RlController`, the Deep RL controller, with its input features and safety shield |
+| `rl.rs` | 333 | `RlController`, the Deep RL controller, with its input features and safety shield |
 | `predictive.rs` | 289 | `Predictive`, the rolling-horizon planner |
-| `hybrid.rs` | 246 | `Hybrid`, the planner re-tuned by a network |
+| `hybrid.rs` | 254 | `Hybrid`, the planner re-tuned by a network |
 | `fixed.rs` | 183 | `FixedTime`: Webster's plan and corridor coordination |
 | `mod.rs` | 141 | The `Controller` trait, `Ctx`, `Brain`, `CtrlKind` and `make` |
 | `actuated.rs` | 134 | `Actuated`: gap-out and max-out control |
 | `maxpressure.rs` | 86 | `MaxPressure` |
-| `weights.rs` | 60 | Where trained networks are loaded from and saved to (§8.7) |
+| `weights.rs` | 69 | Where trained networks are loaded from and saved to (§8.7) |
 
 ### 7.1 `control/mod.rs`: the contract
 
@@ -1609,7 +1614,7 @@ Hybrid's major/minor and T-intersection files hold only its best static tuning
 
 | File | Lines | What it holds |
 |---|---:|---|
-| `src/bin/train.rs` | 428 | Training, model selection and the test report |
+| `src/bin/train.rs` | 429 | Training, model selection and the test report |
 | `rl/nn.rs` | 190 | `Mlp`, `Grads` and `Adam` |
 | `rl/dqn.rs` | 165 | `Dqn`, `Transition`, `SavedModel` and `argmax_masked` |
 | `rl/mod.rs` | 5 | The module list |
@@ -2037,32 +2042,32 @@ the static tuning; on the town layout it all comes from the network.
 
 ### 8.7 `control/weights.rs`: loading and saving
 
-`make()` loads a controller's file through `load_or_new`, which asks `weights::load`
-for the file's text and `from_saved` for a controller built from it:
+`make()` loads a controller's file through `load_or_new`. It gives `weights::load`
+the file's name and `from_saved`, which builds a controller from a copy's text, and
+`weights::load` tries each copy in turn:
 
 ```mermaid
 flowchart TB
     MK["<b>make()</b> for Deep RL<br/>or the Hybrid"]
-    L1{{"weights/FILE in the<br/>working directory<br/>readable?"}}
-    L2{{"FILE in the user<br/>data directory<br/>readable?"}}
-    L3["The built-in copy,<br/>compiled in with<br/>include_str!"]
-    V{{"Parses, and the<br/>network fits?"}}
-    RUN["Run the trained<br/>network"]
-    NO["Otherwise, as in<br/>the table below"]
+    L1{{"weights/FILE in the<br/>working directory<br/>readable, and loads?"}}
+    L2{{"FILE in the user<br/>data directory<br/>readable, and loads?"}}
+    L3{{"The built-in copy,<br/>compiled in with<br/>include_str!, loads?"}}
+    RUN["Run what<br/>that copy holds"]
+    NO["Otherwise, as<br/>described below"]
     MK --> L1
-    L1 -->|yes| V
+    L1 -->|yes| RUN
     L1 -->|no| L2
-    L2 -->|yes| V
-    L2 -->|no| L3 --> V
-    V -->|yes| RUN
-    V -->|"no: the other<br/>copies aren't tried"| NO
+    L2 -->|yes| RUN
+    L2 -->|no| L3
+    L3 -->|yes| RUN
+    L3 -->|no| NO
     classDef ctrl fill:#e8f0fe,stroke:#2b6cb0,color:#0b2545
     classDef safe fill:#fdecec,stroke:#c53030,color:#4a0f0f
-    class MK,L1,L2,L3,RUN,NO ctrl
-    class V safe
+    class MK,RUN,NO ctrl
+    class L1,L2,L3 safe
 ```
 
-* **Where it looks:** the first *readable* copy wins. `weights/` in the working
+* **Where it looks:** the first copy that *loads* wins. `weights/` in the working
   directory is where `train` writes. The user data directory is where the app saves:
   * macOS: `~/Library/Application Support/Intersection Lab/weights/`;
   * Windows: `%APPDATA%\Intersection Lab\weights\`;
@@ -2083,18 +2088,24 @@ flowchart TB
 
   The layout name in the file isn't checked, but the layouts' input counts all differ
   (45, 83, 84 and 85), so a file can't be applied to the wrong layout.
-* **What happens when a check fails:** nothing is logged, and the other copies aren't
-  tried.
+* **What happens when a check fails:** nothing is logged, and the next copy is tried,
+  so a damaged file doesn't hide a good copy further down the list. A Hybrid file
+  whose network doesn't fit still loads, without the network, since its base tuning
+  can still run.
 
-| The file found | Deep RL | Hybrid |
+| The copy | Deep RL | Hybrid |
 |---|---|---|
-| Parses, and its network fits | Runs the network, with learning off | Runs the network |
-| Parses, with no network or one that doesn't fit | A fresh network (seed 7) that learns online with ε = 0.2 | The saved base tuning, with no network |
-| Doesn't parse | The same fresh network | The planner's default tuning (`DEFAULT_ACTION`: fairness 0.004, no bias, 60 s), so it behaves exactly like `Predictive` |
+| Parses, and its network fits | Loads, and runs the network with learning off | Loads, and runs the network |
+| Parses, with no network or one that doesn't fit | Is skipped | Loads, and runs the saved base tuning with no network |
+| Can't be read or doesn't parse | Is skipped | Is skipped |
 
-The panel then says "no pretrained weights found" for Deep RL. For the Hybrid it says
-"no network beat the best static tuning", the same as for the shipped static files, or
-"running the planner's default tuning".
+When no copy loads, Deep RL starts a fresh network (seed 7) that learns online with
+ε = 0.2, and its panel says "no pretrained weights found". The Hybrid then runs the
+planner's default tuning (`DEFAULT_ACTION`: fairness 0.004, no bias, 60 s), so it
+behaves exactly like `Predictive`, and its panel says "running the planner's default
+tuning". A Hybrid that loaded only a base tuning says "no network beat the best static
+tuning" when its file has no network, the same as for the shipped static files, and
+"the saved network doesn't fit this layout" when the file's network was left out.
 
 Saving goes through `save_path`. It writes to `weights/` in the working directory when
 that directory exists, which, run from a checkout, overwrites the shipped files.
@@ -2102,25 +2113,29 @@ Otherwise it writes to the user data directory, creating it first, or to `weight
 there is no user data directory. `train` creates `weights/` when it saves, and the next
 build embeds whatever it wrote.
 
-In 0.5.1 two saves write a Hybrid file that doesn't load. The app's *Save weights*
-records the Hybrid's score as NaN, and `train` records an infinite score when no static
-tuning passes the pedestrian check. The JSON writer stores either as `null`, which the
-reader rejects, and since the other copies aren't tried, that Hybrid then runs the
-planner's default tuning.
+A Hybrid file also records `base_score`, the validation person delay of what it
+holds, when there is one. The app's *Save weights* measures no score, and when no
+static tuning passes the pedestrian check, `train`'s score is infinite, which JSON
+can't represent. Both are written as `null`, which loads as no score. The app saves
+the network only while it is choosing the tunings, trained or learning. Version 0.5.1
+wrote the same `null` but couldn't read it back, so such a file didn't load and that
+Hybrid ran the planner's default tuning.
 
 In the app, each learned controller has a *Keep learning online* box, an ε slider and,
 on the desktop, *Save weights*. A loaded Deep RL network starts with learning off and
 ε = 0.05, and its updates start once 1,000 transitions are stored. Deep RL also has
-*Reload pretrained*, which rebuilds the controller through `make`, so it loads whichever
-copy the search finds first: after a save, the saved one. In the browser, learning and
+*Reload pretrained*, which rebuilds the controller through `make`, so it gets the
+first copy that loads: after a save, the saved one. In the browser, learning and
 *Reload pretrained* work in memory, and *Save weights* is hidden.
 
 Weights files can be damaged or edited by hand, so their loading is tested and fuzzed:
 
 * `tests/weights_files.rs` checks that every shipped file loads, that seven kinds of
   misshapen network are rejected (one with a weight of 10³⁹, which is infinite as an
-  `f32`), that a Hybrid whose network doesn't fit keeps its base tuning and that
-  networks whose outputs overflow don't crash anything.
+  `f32`), that a Hybrid whose network doesn't fit keeps its base tuning and says so,
+  that Hybrid files saved with a score that isn't finite load again, that a copy that
+  doesn't load is skipped for the next one and that networks whose outputs overflow
+  don't crash anything.
 * The `weights` fuzz target reads each input as both kinds of file for the
   T-intersection. A file that is accepted gets a training step if it has a network,
   then 20 s of simulation. The CI job "Fuzz (weights)" runs it for 60 s, starting from
@@ -2269,8 +2284,9 @@ The app changes the simulation in only these ways:
   left-turn mode and the max-wait guard. `World::sync_settings` copies them to the
   other intersections of a corridor, and `World::follow` to the twin (§6.10). An edit
   to demand also rebuilds every fixed-time controller, so its Webster plan follows.
-* **Controllers:** `set_controller` swaps the focused intersection's controller, or
-  side B's on every twin intersection. `set_coordination` runs the green wave.
+* **Controllers:** `World::set_controller` swaps the focused intersection's
+  controller, or side B's on every twin intersection. `set_coordination` runs the
+  green wave, and gives back the controllers it replaced when the wave ends.
 * **The cooperative crossing:** `set_scheduling`, `set_gap_policy` and the maximum cycle
   and batch join window, all live.
 * **Rebuilds:** a new `World` when the layout, control mode or corridor size changes,
@@ -2302,10 +2318,12 @@ arrivals, and hand-spawned vehicles and pedestrians are added to both.
 
 This section goes through every part of the window: what it shows, how to read it and
 which code produces it. The screenshots come from the desktop app of version 0.5.1 in
-its default 1600 × 1000 window (the smallest it allows is 1100 × 700). They were taken
-with the scripted-screenshot settings of Appendix A, two simulated minutes into the
-default scenario unless a caption says otherwise. The browser version looks the same,
-without the *Save weights* buttons and training commands of the learning panels.
+its default 1600 × 1000 window (the smallest it allows is 1100 × 700), except the
+close-up of the signal timing chart in part 5, which comes from `main` and shows the
+yellow and all-red drawn since. They were taken with the scripted-screenshot settings
+of Appendix A, two simulated minutes into the default scenario unless a caption says
+otherwise. The browser version looks the same, without the *Save weights* buttons and
+training commands of the learning panels.
 
 #### The window at a glance
 
@@ -2384,7 +2402,9 @@ controller with its description, seed 1 with Restart and the Compare side by sid
 * **Fixed-time green wave** appears with a corridor. It runs `set_coordination`
   (§6.10), which makes every signal of the corridor fixed-time, in both worlds when
   comparing, with a common cycle and offsets that maximize the two-way green band.
-  Turning it off gives each signal back its own Webster plan; they stay fixed-time.
+  While it runs, *Controller* shows *Fixed-time (Webster)*. Turning it off gives each
+  signal back the controller it ran before, unless another was chosen meanwhile, and
+  the bottom panel confirms each change.
 
   <img src="images/architecture/corridor-scenario.png" width="300" alt="Scenario
   section with 3 signals along the main road and the Fixed-time green wave box">
@@ -2395,7 +2415,7 @@ controller with its description, seed 1 with Restart and the Compare side by sid
 * **Controller** (signals only): one of six strategies (§7.3), with a short description
   below the list. Changing it swaps the controller live: traffic keeps moving, only the
   decision-maker changes and the bottom panel confirms the switch. In a corridor it
-  changes only the focused intersection.
+  shows and changes the focused intersection's controller.
 * **Seed** (1 to 99,999) fixes every random arrival: the same seed gives the same
   traffic. *Restart* rebuilds the world from time zero, like *Reset*.
 * **Compare side by side:** see [Comparing two strategies](#comparing-two-strategies).
@@ -2617,14 +2637,16 @@ it describes the focused intersection.
 
 <img src="images/architecture/timeline.png" width="915" alt="Signal timing chart for
 the first two minutes: NS Protected Left, then NS Through, then EW Through for a
-minute, then NS Through again; the other stages unused">
+minute, then NS Through again, with a yellow and a red segment after each of the first
+three greens; the other stages unused">
 
 The chart spans 3 minutes, the last three once the run is longer:
 
 * there is one row per stage, and the current stage's name is white;
-* a bar runs from the start of a stage's green to the start of the next stage's green,
-  so it includes the stage's yellow and all-red;
-* the colors only tell rows apart;
+* a stage's green is a bar in the row's color, followed by the yellow change and the
+  all-red clearance that end it, in yellow and red; a change that needs neither
+  goes straight to the next green;
+* the green bars' colors only tell rows apart;
 * the time axis has a tick every 30 s.
 
 In this window the predictive controller has used only three of its eight stages.
@@ -2746,7 +2768,8 @@ by Q-value">
 * the three tunings with the highest Q-values.
 
 On a layout whose shipped file has no network, the notes say that no network beat the
-best static tuning, and name the tuning that runs (§8.7).
+best static tuning, and name the tuning that runs (§8.7). When a saved file's network
+doesn't fit the layout, they say that instead.
 
 **Other controllers**
 
@@ -2858,7 +2881,7 @@ intersection's measurements">
 * **Main-road trips end to end:** for vehicles that traveled the whole east–west road,
   the number of trips, travel time, stops and delay per trip.
 * The numbers below, the charts, the timeline and the brain describe only the focused
-  intersection.
+  intersection, and so do the *Controller* list and the status overlay.
 * Settings changed in the left panel apply to every intersection, except the
   controller, which changes only the focused one. Side B's controller applies to all
   of B's intersections.
@@ -2969,8 +2992,8 @@ These numbers come from `observe` (§6.11), which measures what the vehicles act
 did, independently of the plans:
 
 * **closest crossing (PET):** the shortest post-encroachment time;
-* **margin over gap:** the smallest PET minus the gap the policy required, green
-  while it isn't negative;
+* **margin over gap:** the smallest PET minus the gap the policy required, with its
+  sign: green while it isn't negative, red otherwise;
 * **zone overlaps**, **entries without slot** (crossings without a reservation) and
   **off trajectory**, green at zero and red otherwise;
 * **worst timing error:** the largest difference between planned and actual times.
@@ -3062,16 +3085,20 @@ The examples are the studies behind `docs/insights.md` and
 
 ### 10.3 Tests
 
-`cargo test` runs four integration test files and the unit tests in `sim/coop.rs`. CI
-runs them in release mode on Linux, macOS and Windows (§11).
+`cargo test` runs five integration test files and the unit tests in `sim/coop.rs`,
+`sim/signal.rs` and `gui/mod.rs`. CI runs them in release mode on Linux, macOS and
+Windows (§11).
 
 | File | Tests | What they require |
 |---|---:|---|
 | `tests/safety.rs` | 4 | Every layout and control combination runs without collisions and serves at least 80% of arrivals at default volumes (65% under two-way stop and under all-way stop on the arterial, which are over capacity); different controllers receive identical arrivals; no gridlock in seeds that used to jam; no collision between a turn finishing late in the yellow and the next stage's traffic |
 | `tests/cooperative.rs` | 14 | The cooperative crossing: no signals, sensors or crosswalks; its geometry and phase order; every gap policy safe under heavy demand, bursts, heavy vehicles and live switching; about 18,000 vehicles per hour served at the design demand, about 19,000 oversaturated and less with single left lanes or first come, first served; reproducible runs; light traffic barely delayed; emergency vehicles first; hand-placed vehicles crossing every way. Every run must show no monitor violations |
 | `tests/pedestrian_rule.rs` | 4 | Deep RL's shield serves a crosswalk whose pedestrians have waited longer than `PED_MAX_WAIT`, longest wait first, and leaves shorter waits to the controller; the reward counts waiting pedestrians |
-| `tests/weights_files.rs` | 4 | The shipped weights load, misshapen networks are rejected, a Hybrid without a fitting network keeps its base tuning and networks that overflow don't crash (§8.7) |
+| `tests/weights_files.rs` | 6 | The shipped weights load, misshapen networks are rejected, a Hybrid without a fitting network keeps its base tuning and says so, Hybrid files saved with a score that isn't finite load again, a copy that doesn't load is skipped for the next one and networks that overflow don't crash (§8.7) |
+| `tests/green_wave.rs` | 2 | The green wave runs every signal of a corridor fixed-time, and ending it gives back the controllers they ran before, except where another was chosen during the wave, without collisions; a single intersection isn't coordinated |
 | `src/sim/coop.rs` | 4 | Approach profiles arrive on time and at speed, a short run-up enters slower but on time, the gap policies give the gaps in §6.11 and the following law holds its time gap |
+| `src/sim/signal.rs` | 1 | The signal history records a change's yellow and all-red between the two greens, with no gaps |
+| `src/gui/mod.rs` | 1 | The safety monitors' margin over the gap keeps its sign |
 
 The `weights` fuzz target (`fuzz/`, a workspace of its own) feeds arbitrary bytes to
 both weights loaders. A network they accept must survive a training step, 20 s of

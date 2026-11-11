@@ -56,7 +56,10 @@ pub const HIDDEN: &[usize] = &[128];
 #[derive(Serialize, Deserialize)]
 pub struct SavedHybrid {
     pub base_action: usize,
-    pub base_score: f64,
+    /// Validation person delay (s) of what the file holds, when training measured one.
+    /// Version 0.5.1 wrote `null` for a score it couldn't store; that loads as `None`.
+    #[serde(default)]
+    pub base_score: Option<f64>,
     pub model: Option<SavedModel>,
 }
 
@@ -66,6 +69,8 @@ pub struct Hybrid {
     pub base_action: usize,
     /// The network is trained (loaded or being trained) and may choose tunings.
     pub has_model: bool,
+    /// The weights file's network doesn't fit this layout, so it was left out.
+    pub model_rejected: bool,
     pub agent: Dqn,
     pub learning: bool,
     pub epsilon: f64,
@@ -99,6 +104,7 @@ impl Hybrid {
             planner: Predictive::new(net),
             base_action: DEFAULT_ACTION,
             has_model: false,
+            model_rejected: false,
             agent,
             learning: false,
             epsilon: 0.0,
@@ -121,9 +127,7 @@ impl Hybrid {
     /// keeps the planner's default tuning (it behaves exactly like the predictive
     /// controller).
     pub fn load_or_new(net: &Network) -> Self {
-        if let Some((txt, source)) = super::weights::load(&weights_file(net.kind.key()))
-            && let Some(mut h) = Self::from_saved(net, &txt)
-        {
+        if let Some((mut h, source)) = super::weights::load(&weights_file(net.kind.key()), |txt| Self::from_saved(net, txt)) {
             h.loaded_from = Some(source);
             return h;
         }
@@ -132,7 +136,8 @@ impl Hybrid {
 
     /// The tuning and network saved as `txt` (a weights file's contents), or `None` if
     /// it doesn't parse. Weights files can be damaged or edited by hand, so a network
-    /// that doesn't fit this layout is left out and only the saved base tuning is kept.
+    /// that doesn't fit this layout is left out (`model_rejected`) and only the saved
+    /// base tuning is kept.
     pub fn from_saved(net: &Network, txt: &str) -> Option<Self> {
         let sv = serde_json::from_str::<SavedHybrid>(txt).ok()?;
         let mut h = match sv.model {
@@ -142,13 +147,15 @@ impl Hybrid {
                 h.has_model = true;
                 h
             }
-            _ => Self::new(net, 11),
+            other => Self { model_rejected: other.is_some(), ..Self::new(net, 11) },
         };
         h.base_action = sv.base_action.min(N_ACTIONS - 1);
         Some(h)
     }
 
-    pub fn save(&self, path: &std::path::Path, base_score: f64, with_model: bool) -> std::io::Result<()> {
+    /// Save the base tuning, its score if known, and the network if `with_model`. A
+    /// score that isn't finite is saved as unknown, since JSON has no number for it.
+    pub fn save(&self, path: &std::path::Path, base_score: Option<f64>, with_model: bool) -> std::io::Result<()> {
         let model = with_model.then(|| SavedModel {
             layout: self.layout.clone(),
             n_in: self.agent.online.n_in(),
@@ -156,7 +163,7 @@ impl Hybrid {
             episodes: self.episodes,
             net: self.agent.online.clone(),
         });
-        let sv = SavedHybrid { base_action: self.base_action, base_score, model };
+        let sv = SavedHybrid { base_action: self.base_action, base_score: base_score.filter(|s| s.is_finite()), model };
         std::fs::write(path, serde_json::to_string(&sv).unwrap())
     }
 
@@ -229,6 +236,7 @@ impl Controller for Hybrid {
         let mut notes = vec![format!("RL tuning now: {}", preset_name(self.action))];
         notes.push(match (&self.loaded_from, self.has_model) {
             (Some(_), true) => format!("trained network ({} episodes) over base tuning {}", self.episodes, preset_name(self.base_action)),
+            (Some(_), false) if self.model_rejected => format!("the saved network doesn't fit this layout; running {}", preset_name(self.base_action)),
             (Some(_), false) => format!("no network beat the best static tuning; running {}", preset_name(self.base_action)),
             (None, _) if self.learning => "learning online from scratch".into(),
             (None, _) => "no trained weights: running the planner's default tuning".into(),
