@@ -32,7 +32,7 @@ This document describes how decisions are made and who does what.
 
 | Role | Who | Responsibilities |
 |---|---|---|
-| Maintainer | Jim Schreckengast ([schreck61](https://github.com/schreck61)) | Sets the project's direction; triages issues; reviews and merges pull requests; keeps CI, dependencies and documentation up to date; makes releases and publishes them on GitHub and crates.io; manages the code-signing and publishing settings; responds to vulnerability reports as [SECURITY.md](SECURITY.md) describes; enforces the [Code of Conduct](CODE_OF_CONDUCT.md) |
+| Maintainer | Jim Schreckengast ([schreck61](https://github.com/schreck61)) | Sets the project's direction and keeps the [roadmap](ROADMAP.md) current; triages issues; reviews and merges pull requests; keeps CI, dependencies and documentation up to date; makes releases and publishes them on GitHub and crates.io; manages the code-signing and publishing settings; responds to vulnerability reports as [SECURITY.md](SECURITY.md) describes; enforces the [Code of Conduct](CODE_OF_CONDUCT.md) |
 | Backup maintainer | Chris Miller ([csm0513](https://github.com/csm0513)) | Keeps the project going if the maintainer can't, as [Continuity](#continuity) describes: answers and closes issues, merges pull requests whose required checks pass, makes releases, and settles the project's long-term future; has no duties otherwise |
 | Contributor | Anyone who opens an issue or pull request | Follows [CONTRIBUTING.md](CONTRIBUTING.md), signs off every commit under the [Developer Certificate of Origin](https://developercertificate.org/), and follows the Code of Conduct |
 | Security reporter | Anyone who finds a vulnerability | Reports it privately as [SECURITY.md](SECURITY.md) describes, not in a public issue |

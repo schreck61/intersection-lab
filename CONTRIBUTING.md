@@ -15,7 +15,8 @@ public issue. How decisions are made and who does what is described in
 * **Anything larger:** open an issue describing the change before writing much code. That
   includes new controllers, changes to vehicle, pedestrian or signal behavior, new
   dependencies, and anything that would change the published results. Agreeing on the
-  approach first saves rework.
+  approach first saves rework. Check [ROADMAP.md](ROADMAP.md) too: it lists what's
+  planned and what isn't.
 * **Simulation realism:** if something behaves unrealistically, say what real traffic
   would do and, where you can, cite a source (for example the *Highway Capacity Manual*,
   the *MUTCD* or a published study).
