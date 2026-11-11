@@ -446,12 +446,18 @@ impl App {
                     self.spawn_kind = k;
                 }
             }
-            let walk = !self.world.sims[self.focus].net.crosswalks.is_empty();
+            let net = &self.world.sims[self.focus].net;
+            let walk = !net.crosswalks.is_empty();
+            let no_walk = match net.kind {
+                LayoutKind::Cooperative => "No crosswalks here: pedestrians use underground passages",
+                LayoutKind::Roundabout => "No crosswalks here: the roundabout is simulated without pedestrians",
+                _ => "No crosswalks here",
+            };
             let ped = ui
                 .add_enabled_ui(walk, |ui| ui.selectable_label(self.tool == Tool::Pedestrian, "🚶 Pedestrian"))
                 .inner
                 .on_hover_text("Click near a crosswalk corner")
-                .on_disabled_hover_text("No crosswalks here: pedestrians use underground passages");
+                .on_disabled_hover_text(no_walk);
             if ped.clicked() {
                 self.tool = if self.tool == Tool::Pedestrian { Tool::Select } else { Tool::Pedestrian };
             }
