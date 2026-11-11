@@ -4,6 +4,7 @@
 //! Small hand-painted charts (line, bars, histograms, signal and crossing timelines) in
 //! egui.
 
+use crate::sim::signal::Phase;
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
 
 pub const SERIES: [Color32; 6] = [
@@ -293,26 +294,21 @@ pub fn timeline(ui: &mut Ui, sim: &crate::sim::Sim, window: f64) {
             p.text(pos2(tx(t), plot.bottom() + 1.0), Align2::CENTER_TOP, format!("{:.0}:{:02.0}", (t / 60.0).floor(), t % 60.0), FontId::proportional(TXT), AXIS_TXT);
         }
     }
-    let hist: Vec<_> = sim.signal.history.iter().collect();
-    for (hi, h) in hist.iter().enumerate() {
+    // Each stage's green in its own color, then the yellow change and all-red clearance
+    // that end it.
+    for h in &sim.signal.history {
         if h.end < t0 {
             continue;
         }
         let y = plot.top() + h.stage as f32 * row_h;
         let a = tx(h.start.max(t0));
         let b = tx(h.end);
-        p.rect_filled(Rect::from_min_max(pos2(a, y + 1.5), pos2(b.max(a + 1.0), y + row_h - 2.5)), 2.0, SERIES[h.stage % SERIES.len()]);
-        // Clearance gap (yellow + all-red) before the next stage.
-        if let Some(nx) = hist.get(hi + 1) && nx.start > h.end + 0.05 {
-            let ya = plot.top() + h.stage as f32 * row_h;
-            p.rect_filled(Rect::from_min_max(pos2(b, ya + 1.5), pos2(tx(nx.start).max(b + 1.0), ya + row_h - 2.5)), 1.0, Color32::from_rgb(230, 190, 40));
-        }
-    }
-    if sim.signal.phase != crate::sim::signal::Phase::Green {
-        let y = plot.top() + sim.signal.stage as f32 * row_h;
-        let a = tx(sim.signal.history.back().map(|h| h.end).unwrap_or(t1));
-        let col = if sim.signal.phase == crate::sim::signal::Phase::Yellow { Color32::from_rgb(230, 190, 40) } else { Color32::from_rgb(220, 60, 50) };
-        p.rect_filled(Rect::from_min_max(pos2(a, y + 1.5), pos2(tx(t1).max(a + 1.0), y + row_h - 2.5)), 1.0, col);
+        let (col, round) = match h.phase {
+            Phase::Green => (SERIES[h.stage % SERIES.len()], 2.0),
+            Phase::Yellow => (Color32::from_rgb(230, 190, 40), 1.0),
+            Phase::AllRed => (Color32::from_rgb(220, 60, 50), 1.0),
+        };
+        p.rect_filled(Rect::from_min_max(pos2(a, y + 1.5), pos2(b.max(a + 1.0), y + row_h - 2.5)), round, col);
     }
 }
 
