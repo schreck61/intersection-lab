@@ -25,6 +25,12 @@ fn scratch(name: &str) -> PathBuf {
     dir
 }
 
+/// What the app says about where the hybrid's tuning comes from.
+fn status(mut h: Hybrid) -> String {
+    h.loaded_from = Some("a weights file".into());
+    h.brain().notes.join("\n")
+}
+
 /// The shipped tee-intersection network with `edit` applied to its layers.
 fn edited(edit: impl FnOnce(&mut Vec<Value>)) -> String {
     let mut v: Value = serde_json::from_str(DQN_TEE).unwrap();
@@ -102,6 +108,14 @@ fn hybrid_without_a_fitting_network_keeps_its_base_tuning() {
     let h = Hybrid::from_saved(&net, &hybrid_file(&net, json!([]))).unwrap();
     assert!(!h.has_model);
     assert_eq!(h.base_action, 10);
+    // The app says the network was left out, not that training found none worth keeping.
+    let notes = status(h);
+    assert!(notes.contains("network doesn't fit"), "{notes}");
+    assert!(!notes.contains("no network beat"), "{notes}");
+
+    let no_network = json!({ "base_action": 10, "base_score": 0.0, "model": null }).to_string();
+    let notes = status(Hybrid::from_saved(&net, &no_network).unwrap());
+    assert!(notes.contains("no network beat the best static tuning"), "{notes}");
 }
 
 #[test]
