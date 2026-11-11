@@ -468,10 +468,14 @@ src/bin/        bench (comparisons, sensor study), train (RL training)
 weights/        trained DQN and hybrid weights per layout
 tests/          safety + throughput regression tests
 examples/       corridor, lpi, fya, satflow, preempt, sweep (multi-seed safety sweep), cooperative
-docs/           insights.md (every finding), cooperative-intersections.md (design notes for the
+docs/           architecture.md (how the code fits together, with a tour of the app),
+                insights.md (every finding), cooperative-intersections.md (design notes for the
                 signal-free crossing, with the scripts behind its estimates and figures),
                 assurance-case.md (why SECURITY.md's expectations hold), screenshots
 ```
+
+[docs/architecture.md](docs/architecture.md) explains what each source file does, how one
+simulation step runs and how to add a controller, layout or sensor.
 
 ## Notes and limitations
 
