@@ -20,6 +20,10 @@ public issue. How decisions are made and who does what is described in
 * **Simulation realism:** if something behaves unrealistically, say what real traffic
   would do and, where you can, cite a source (for example the *Highway Capacity Manual*,
   the *MUTCD* or a published study).
+* **Finding your way around:** [docs/architecture.md](docs/architecture.md) explains what
+  each source file does and how the parts work together. Its
+  [section 13](docs/architecture.md#13-extending-the-program) lists the places to change
+  when you add a controller, a layout or a sensor.
 
 ## Setting up
 
