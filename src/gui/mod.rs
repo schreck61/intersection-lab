@@ -84,8 +84,12 @@ pub struct App {
     anim_t: f64,
     message: Option<(String, Instant)>,
     shot: Option<(String, f64)>,
+    /// Scripted runs: when the clock stopped at the screenshot time.
+    shot_since: Option<Instant>,
     /// Scripted runs: hold the right panel at this scroll offset.
     scroll_right: Option<f32>,
+    /// Scripted runs: hold the left panel at this scroll offset.
+    scroll_left: Option<f32>,
 }
 
 impl App {
@@ -146,7 +150,9 @@ impl App {
             anim_t: 0.0,
             message: None,
             shot: None,
+            shot_since: None,
             scroll_right: None,
+            scroll_left: None,
         }
         .with_env()
     }
@@ -155,8 +161,11 @@ impl App {
     /// a controller, allway/twoway, a gap policy p2/ph/p1 with batches, or fcfs for first
     /// come, first served), TS_POLICY (gap policy p2/ph/p1), TS_SCHED (fcfs),
     /// TS_CORRIDOR (signals), TS_WAVE, TS_SPEED, TS_ZOOM, TS_COLOR, TS_NIGHT, TS_COND,
-    /// TS_LOOP_FAULT, TS_ABOUT, TS_SCROLL (right panel offset), TS_SHOT (png path) +
-    /// TS_SHOT_AFTER (sim seconds).
+    /// TS_LOOP_FAULT, TS_ABOUT, TS_OVERLAYS (the overlays to show, comma-separated:
+    /// sensors, detections, conflicts, paths, labels), TS_SELECT (a vehicle id to select),
+    /// TS_BENCH (controllers or sensors: start that benchmark), TS_SCROLL (right panel
+    /// offset), TS_SCROLL_LEFT (left panel offset), TS_SHOT (png path) + TS_SHOT_AFTER
+    /// (sim seconds).
     fn with_env(mut self) -> Self {
         let var = |k: &str| std::env::var(k).ok();
         if let Some(l) = var("TS_LAYOUT").and_then(|v| LayoutKind::ALL.into_iter().find(|k| k.key() == v)) {
@@ -217,7 +226,22 @@ impl App {
         if let Some(f) = var("TS_LOOP_FAULT").and_then(|v| v.parse().ok()) {
             self.world.sims[self.focus].sensors.loop_fault = f;
         }
+        if let Some(list) = var("TS_OVERLAYS") {
+            let on = |name: &str| list.split(',').any(|s| s.trim() == name);
+            self.ov.sensors = on("sensors");
+            self.ov.detections = on("detections");
+            self.ov.conflicts = on("conflicts");
+            self.ov.paths = on("paths");
+            self.ov.labels = on("labels");
+        }
+        self.selected = var("TS_SELECT").and_then(|v| v.parse().ok());
+        match var("TS_BENCH").as_deref() {
+            Some("controllers") => self.start_bench(false),
+            Some("sensors") => self.start_bench(true),
+            _ => {}
+        }
         self.scroll_right = var("TS_SCROLL").and_then(|v| v.parse().ok());
+        self.scroll_left = var("TS_SCROLL_LEFT").and_then(|v| v.parse().ok());
         if let Some(p) = var("TS_SHOT") {
             let after = var("TS_SHOT_AFTER").and_then(|v| v.parse().ok()).unwrap_or(120.0);
             self.shot = Some((p, after));
@@ -342,7 +366,14 @@ impl App {
         self.acc += real * self.speed as f64;
         let budget = Instant::now();
         let dt = self.world.dt();
+        // A scripted screenshot stops the clock at its time, so every capture of the same
+        // run shows the same moment.
+        let stop = self.shot.as_ref().map(|s| s.1);
         while self.acc >= dt {
+            if stop.is_some_and(|t| self.world.sims[self.focus].t >= t) {
+                self.acc = 0.0;
+                break;
+            }
             self.world.step();
             if let Some(t) = self.twin.as_mut() {
                 t.step();
@@ -456,7 +487,11 @@ impl App {
     }
 
     fn left_panel(&mut self, ui: &mut Ui) {
-        egui::ScrollArea::vertical().show(ui, |ui| {
+        let mut area = egui::ScrollArea::vertical();
+        if let Some(y) = self.scroll_left {
+            area = area.vertical_scroll_offset(y);
+        }
+        area.show(ui, |ui| {
             ui.heading("Scenario");
             let mut layout = self.layout;
             let label = ui.label("Intersection");
@@ -1702,8 +1737,12 @@ impl eframe::App for App {
         self.bench_window(&ctx);
         self.about_window(&ctx);
         if let Some((path, after)) = self.shot.clone() && self.world.sims[self.focus].t >= after {
-            self.shot = None;
-            shot::request(&ctx, path);
+            // Let the panels refresh at the stopped time before capturing.
+            let since = *self.shot_since.get_or_insert_with(Instant::now);
+            if since.elapsed().as_millis() > 600 {
+                self.shot = None;
+                shot::request(&ctx, path);
+            }
         }
     }
 }
