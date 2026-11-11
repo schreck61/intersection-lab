@@ -60,7 +60,7 @@ cargo run --release --example lpi                 # pedestrian safety treatments
 cargo run --release --example fya                 # left-turn phasing modes
 cargo run --release --example satflow             # calibration against HCM saturation flow
 cargo run --release --example cooperative         # capacity of the signal-free cooperative crossing
-cargo test --release                              # safety + throughput regression tests
+cargo test --release                              # regression tests: safety, throughput, app, tools
 ```
 
 The browser version is the same app compiled to WebAssembly. Build and serve it locally
@@ -473,7 +473,7 @@ src/rl/         MLP + Adam, Double DQN with replay
 src/gui/        eframe/egui app: renderer, charts, panels, self-screenshot (TS_SHOT=…)
 src/bin/        bench (comparisons, sensor study), train (RL training)
 weights/        trained DQN and hybrid weights per layout
-tests/          safety + throughput regression tests
+tests/          regression tests: safety, throughput, the app (headless) and the tools
 examples/       corridor, lpi, fya, satflow, preempt, sweep (multi-seed safety sweep), cooperative
 docs/           architecture.md (how the code fits together, with a tour of the app),
                 insights.md (every finding), cooperative-intersections.md (design notes for the

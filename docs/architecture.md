@@ -108,7 +108,7 @@ flowchart TB
     SIM <-->|"Ctx in, stage out"| CTRL
     CTRL --> RL
     CTRL --> W
-    STUDY -->|"fuzz/: rl::dqn"| RL
+    STUDY -->|"fuzz/, tests/: rl"| RL
     RL -.->|"random numbers"| SIM
     classDef ui fill:#fff3e0,stroke:#c05621,color:#3b1d06
     classDef sim fill:#e7f5ec,stroke:#2f855a,color:#123524
@@ -132,7 +132,7 @@ Each front end uses only the library's public modules:
 | `bin/bench.rs` | `lib.rs` (`scenario`, `run_scenario`), `sim` and `control` |
 | `bin/train.rs` | `sim` and `control` (it drives `Sim` itself) |
 | `examples/` | `sim` and `control`; `make_icons` uses only `gui::shot` |
-| `tests/` | `sim` and `control` |
+| `tests/` | `sim`, `control`, `rl` and `gui` (the app, run without a window); `bench` and `train` as programs |
 | `fuzz/` | `sim`, `control` and `rl::dqn` |
 
 ### 2.1 Responsibilities by layer
@@ -214,7 +214,8 @@ src/
   bin/train.rs      headless training of the Deep RL and Hybrid networks
 examples/           studies: cooperative, corridor, fya, lpi, preempt, satflow, sweep,
                     plus make_icons
-tests/              safety, cooperative, pedestrian_rule, weights_files, green_wave
+tests/              safety, cooperative, pedestrian_rule, weights_files, green_wave,
+                    networks, gui, scripted, tools, and common/ (shared by the tests)
 fuzz/               cargo-fuzz target for weights files (a workspace of its own)
 weights/            trained networks (JSON), also compiled into the binary
 web/index.html      page that hosts the browser build (Trunk)
@@ -235,7 +236,7 @@ docs/               this document, insights.md, cooperative-intersections.md (wi
 | `src/bin/` | 2 | 590 |
 | `src/lib.rs`, `src/main.rs` | 2 | 78 |
 | `examples/` | 8 | 575 |
-| `tests/` | 5 | 873 |
+| `tests/` | 10 | 2,557 |
 | `fuzz/fuzz_targets/` | 1 | 54 |
 
 | Target | Built from | Purpose |
@@ -250,7 +251,8 @@ docs/               this document, insights.md, cooperative-intersections.md (wi
 
 The crate is edition 2024 and has four dependencies: `eframe` and `egui` 0.37, `serde`
 and `serde_json`. The browser build adds two more, `web-time` and
-`wasm-bindgen-futures`. The crate has no features and no dev-dependencies. The package
+`wasm-bindgen-futures`. The crate has no features. Its one dev-dependency,
+`egui_kittest` 0.37, runs the app without a window for the tests (§10.3). The package
 published to crates.io holds only the library, the app, the weights files, the icon, the
 licenses and the README, so `bench`, `train`, the examples and the tests are not in it.
 
@@ -3085,9 +3087,9 @@ The examples are the studies behind `docs/insights.md` and
 
 ### 10.3 Tests
 
-`cargo test` runs five integration test files and the unit tests in `sim/coop.rs`,
+`cargo test` runs nine integration test files and the unit tests in `sim/coop.rs`,
 `sim/signal.rs` and `gui/mod.rs`. CI runs them in release mode on Linux, macOS and
-Windows (§11).
+Windows, and measures how much of the crate they cover (§11).
 
 | File | Tests | What they require |
 |---|---:|---|
@@ -3096,6 +3098,10 @@ Windows (§11).
 | `tests/pedestrian_rule.rs` | 4 | Deep RL's shield serves a crosswalk whose pedestrians have waited longer than `PED_MAX_WAIT`, longest wait first, and leaves shorter waits to the controller; the reward counts waiting pedestrians |
 | `tests/weights_files.rs` | 6 | The shipped weights load, misshapen networks are rejected, a Hybrid without a fitting network keeps its base tuning and says so, Hybrid files saved with a score that isn't finite load again, a copy that doesn't load is skipped for the next one and networks that overflow don't crash (§8.7) |
 | `tests/green_wave.rs` | 2 | The green wave runs every signal of a corridor fixed-time, and ending it gives back the controllers they ran before, except where another was chosen during the wave, without collisions; a single intersection isn't coordinated |
+| `tests/networks.rs` | 7 | Backpropagation agrees with the gradient measured numerically, Adam fits a line, the shape check rejects every malformed network (sizes whose product overflows included), the target network moves part way toward the online one, the action mask is respected, Double DQN learns which action pays in which state and the replay memory keeps the latest 60,000 transitions |
+| `tests/gui.rs` | 16 | The app, run without a window by `egui_kittest` and driven through its accessibility tree, the keyboard and the pointer: every panel opens and every control has a name; Space pauses and Step advances one second; every layout, control mode and controller runs, side by side too and along a corridor with the green wave; the demand, sensor and operations settings apply; the learning controllers show what they learn; every overlay and coloring draws; vehicles and pedestrians placed by hand, movements an approach lacks refused; a clicked vehicle's details; pan, zoom and *Fit view*; both benchmark windows; *About* |
+| `tests/scripted.rs` | 8 | Each `TS_*` variable of the scripted mode sets up its scene, a scripted screenshot stops the clock at its moment and screenshots are valid PNG files. The app reads the variables as it starts, so each scene opens in a process of its own |
+| `tests/tools.rs` | 7 | `bench` compares every strategy on every layout without collisions, takes each arrival pattern and runs the sensor study; `train` trains, saves and resumes both learning controllers, in a scratch directory with its own home directory |
 | `src/sim/coop.rs` | 4 | Approach profiles arrive on time and at speed, a short run-up enters slower but on time, the gap policies give the gaps in §6.11 and the following law holds its time gap |
 | `src/sim/signal.rs` | 1 | The signal history records a change's yellow and all-red between the two greens, with no gaps |
 | `src/gui/mod.rs` | 1 | The safety monitors' margin over the gap keeps its sign |
@@ -3117,6 +3123,7 @@ flowchart TB
     PR["<b>Pull request</b>"]
     CI["<b>Checks</b><br/>CI, CodeQL and DCO;<br/>10 are required"]
     FZ["Fuzz (weights), 60 s:<br/>reported, not required"]
+    CV["Coverage, at least 80%<br/>of lines: reported,<br/>not required"]
     M["<b>Merge to main</b><br/>branch up to date"]
     PG["<b>Pages</b>: the browser<br/>build, deployed"]
     SC["<b>Scorecard</b><br/>also weekly"]
@@ -3126,13 +3133,14 @@ flowchart TB
     C["<b>publish-crate</b><br/>cargo publish to<br/>crates.io"]
     PR --> CI --> M --> T --> R --> P --> C
     PR -.-> FZ
+    PR -.-> CV
     M --> PG
     M --> SC
     classDef ui fill:#fff3e0,stroke:#c05621,color:#3b1d06
     classDef data fill:#f1f3f5,stroke:#5f6b7a,color:#1f2933
     classDef safe fill:#fdecec,stroke:#c53030,color:#4a0f0f
     class PR,M,T,P ui
-    class CI,FZ safe
+    class CI,FZ,CV safe
     class PG,SC,R,C data
 ```
 
@@ -3151,6 +3159,13 @@ date:
 
 * **Fuzz (weights)** in `ci.yml` runs the fuzz target for 60 s from its seeds on the
   nightly toolchain, and uploads any crash. It isn't required.
+* **Coverage** in `ci.yml` runs the tests on Linux with
+  [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) and fails if they run less
+  than 80% of the crate's lines, every file counted (CONTRIBUTING.md says how to measure
+  it locally). The tests run one at a time, and under `cfg(coverage)` the ones that run
+  many simulations at once run them in turn: code built for coverage counts what it runs
+  in counters that every thread updates, so threads running the same code at once slow
+  one another down many times over. It isn't required.
 * **`pages.yml`** builds the browser version with Trunk on every push to `main` and
   deploys it to GitHub Pages.
 * **`release.yml`** runs on a `v*` tag, or by hand to build unsigned packages:

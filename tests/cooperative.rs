@@ -14,6 +14,8 @@ use intersection_lab::sim::stats::Summary;
 use intersection_lab::sim::vtypes::VKind;
 use intersection_lab::sim::{ControlMode, Sim};
 
+mod common;
+
 /// A crossing with `n_left` left-turn lanes per approach and `total` veh/h spread evenly
 /// over the four approaches, with the safety checks on.
 fn crossing(n_left: usize, total: f64, cars_only: bool, policy: GapPolicy, seed: u64) -> Sim {
@@ -150,7 +152,7 @@ fn every_gap_policy_is_safe_under_heavy_demand() {
         for (n_left, total) in [(2, 18_000.0), (1, 12_000.0)] {
             for cars in [false, true] {
                 for seed in 31..34 {
-                    jobs.push(std::thread::spawn(move || {
+                    jobs.push(common::spawn(move || {
                         let mut sim = crossing(n_left, total, cars, policy, seed);
                         sim.run_for(1200.0);
                         let fleet = if cars { "cars" } else { "mixed" };
@@ -205,7 +207,7 @@ fn bursts_heavy_vehicles_and_uneven_demand_are_served_safely() {
     let jobs: Vec<_> = cases
         .into_iter()
         .map(|(name, d, limits)| {
-            std::thread::spawn(move || {
+            common::spawn(move || {
                 let mut sim =
                     Sim::with_demand(build_cooperative(2), ControlMode::Cooperative, CtrlKind::Fixed, d, 41);
                 sim.check_safety = true;
@@ -259,7 +261,7 @@ fn weaving_one_at_a_time_carries_far_less() {
     // quicker than waiting for a batch; but every switch between crossing streams costs
     // a full safety gap, which a batch pays once, so it saturates far below the batches.
     let run = |sched: Scheduling, total: f64, seed: u64| {
-        std::thread::spawn(move || {
+        common::spawn(move || {
             let mut sim = crossing(2, total, false, GapPolicy::FailSafe, seed);
             sim.set_scheduling(sched);
             sim.run_for(120.0 + 900.0);
@@ -305,7 +307,7 @@ fn dual_left_design_serves_18000_vehicles_per_hour() {
     // arrives is served, nobody waits long, and the monitors see nothing wrong.
     let jobs: Vec<_> = (0..3)
         .map(|seed| {
-            std::thread::spawn(move || {
+            common::spawn(move || {
                 let mut sim = crossing(2, 18_000.0, false, GapPolicy::FailSafe, 7000 + seed);
                 sim.run_for(120.0 + 1200.0);
                 let s = summary(&sim, 120.0);
@@ -348,7 +350,7 @@ fn oversaturated_capacity_is_about_19000_vehicles_per_hour() {
 #[test]
 fn single_left_lanes_fall_short_of_the_design_demand() {
     let run = |n_left: usize| {
-        std::thread::spawn(move || {
+        common::spawn(move || {
             let mut sim = crossing(n_left, 16_000.0, false, GapPolicy::FailSafe, 3);
             sim.run_for(900.0);
             (summary(&sim, 120.0).throughput_vph, queued(&sim))

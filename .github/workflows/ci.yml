@@ -1,9 +1,10 @@
 # Copyright (c) 2026 Jim Schreckengast
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
-# Build and test on every platform, build the browser version, check formatting and lint
-# with clippy, build the crate from the files crates.io would get, check licenses,
-# advisories and attributions, and fuzz the loading of weights files.
+# Build and test on every platform, measure how much of the crate the tests run, build
+# the browser version, check formatting and lint with clippy, build the crate from the
+# files crates.io would get, check licenses, advisories and attributions, and fuzz the
+# loading of weights files.
 name: CI
 
 on:
@@ -33,6 +34,27 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo build --locked --release --all-targets
       - run: cargo test --locked --release
+
+  # The share of the crate's lines the tests run, every file counted: the app's panels
+  # and the developer tools in src/bin too. Fails below 80%.
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
+        with:
+          tool: cargo-llvm-cov@0.9.1
+      # One test at a time: code built for coverage counts what it runs in counters every
+      # thread updates, so threads running the same code at once slow one another down
+      # many times over (tests/common/mod.rs).
+      - run: cargo llvm-cov --locked --release --fail-under-lines 80 -- --test-threads=1
 
   web:
     name: Web (wasm32)

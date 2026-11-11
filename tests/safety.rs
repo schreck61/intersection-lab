@@ -8,6 +8,8 @@ use intersection_lab::control::CtrlKind;
 use intersection_lab::sim::network::LayoutKind;
 use intersection_lab::sim::{ControlMode, Sim};
 
+mod common;
+
 #[test]
 fn all_scenarios_safe_and_flowing() {
     let mut handles = vec![];
@@ -16,7 +18,7 @@ fn all_scenarios_safe_and_flowing() {
             let ctrls: Vec<CtrlKind> =
                 if mode == ControlMode::Signal { CtrlKind::ALL.to_vec() } else { vec![CtrlKind::Fixed] };
             for c in ctrls {
-                handles.push(std::thread::spawn(move || {
+                handles.push(common::spawn(move || {
                     let mut sim = Sim::new(kind, mode, c, 77);
                     sim.check_safety = true;
                     sim.run_for(900.0);
@@ -81,7 +83,7 @@ fn no_gridlock_when_oversaturated() {
     let handles: Vec<_> = cases
         .into_iter()
         .map(|(c, seed, scale, until)| {
-            std::thread::spawn(move || {
+            common::spawn(move || {
                 let net = Network::build(LayoutKind::Arterial4);
                 let mut demand = DemandConfig::default_for(&net);
                 demand.scale = scale;
@@ -126,7 +128,7 @@ fn no_collision_between_late_yellow_and_clearing_turn() {
     let handles: Vec<_> = [(1, 5400.0), (3, 9900.0), (4, 7700.0)]
         .into_iter()
         .map(|(seed, until)| {
-            std::thread::spawn(move || {
+            common::spawn(move || {
                 let net = Network::build(LayoutKind::Tee);
                 let mut demand = DemandConfig::default_for(&net);
                 demand.scale = 1.25;
