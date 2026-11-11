@@ -3841,7 +3841,7 @@ DEALINGS IN THE SOFTWARE.
 
 Used by:
 
-* toml_datetime 1.1.2+spec-1.1.0 (https://github.com/toml-rs/toml)
+* toml_datetime 1.1.3+spec-1.1.0 (https://github.com/toml-rs/toml)
 * toml_edit 0.25.17+spec-1.1.0 (https://github.com/toml-rs/toml)
 * toml_parser 1.1.5+spec-1.1.0 (https://github.com/toml-rs/toml)
 

@@ -59,6 +59,23 @@ cargo clippy --locked --release --target wasm32-unknown-unknown --bin intersecti
 cargo deny --locked check
 ```
 
+CI also measures how much of the crate the tests run, with
+[cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov), and fails if they run less
+than 80% of its lines. Every file counts, including the app's panels and the developer
+tools in `src/bin`, so new code needs tests that reach it. To measure locally:
+
+```bash
+rustup component add llvm-tools-preview
+cargo install cargo-llvm-cov --locked
+cargo llvm-cov --locked --release --fail-under-lines 80 -- --test-threads=1
+```
+
+The tests run one at a time, as in CI: code built for coverage slows down many times
+over when several threads run it at once. For the same reason, a test that runs many
+simulations at once should start them with `spawn` from
+[tests/common/mod.rs](tests/common/mod.rs), which runs them in turn when measuring
+coverage. Add `--open` to see, file by file, the lines no test runs.
+
 If you add or update a dependency, also regenerate the third-party license list with
 `packaging/licenses.sh` (it needs `cargo-about` 0.9.1). CI fails if
 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) is out of date.
@@ -95,9 +112,11 @@ pass that file's path in place of the two folders.
   check it, and a bug fix comes with a test that fails without the fix. Put tests that
   use the public API in [tests/](tests/) (see
   [tests/pedestrian_rule.rs](tests/pedestrian_rule.rs) for an example) and narrower ones
-  in a `#[cfg(test)]` module next to the code. Use fixed seeds so tests are
-  deterministic, and keep them fast enough to run on every pull request. Changes to
-  documentation, UI text or styling don't need tests.
+  in a `#[cfg(test)]` module next to the code. Test the app the way
+  [tests/gui.rs](tests/gui.rs) does: without a window, through the names its controls
+  give screen readers. Use fixed seeds so tests are deterministic, and keep them fast
+  enough to run on every pull request. Changes to documentation, UI text or styling
+  don't need tests.
 * **Report results with your change.** If it changes how traffic behaves, include before
   and after numbers from `cargo run --release --bin bench all 20 6` (and the corridor or
   sensor study where relevant), and update the tables in the README and
