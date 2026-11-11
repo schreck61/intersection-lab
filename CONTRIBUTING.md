@@ -43,6 +43,9 @@ rustup target add wasm32-unknown-unknown
 trunk serve --release --open
 ```
 
+To make `git blame` skip commits that only reformat code, as GitHub's blame view does,
+run `git config blame.ignoreRevsFile .git-blame-ignore-revs` once in your clone.
+
 ## Checks your change must pass
 
 CI runs these on every pull request. Running them locally first saves a round trip:
