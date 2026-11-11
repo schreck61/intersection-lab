@@ -46,12 +46,19 @@ pub struct CwSignal {
     pub called: bool,
 }
 
+/// One interval of the signal's history: a stage's green, or the yellow change or the
+/// all-red clearance that ends it.
 #[derive(Clone, Debug)]
 pub struct StageSpan {
     pub stage: usize,
+    pub phase: Phase,
     pub start: f64,
     pub end: f64,
 }
+
+/// Intervals the history keeps (up to three per stage change): far more than the
+/// 3-minute timing chart shows.
+const HISTORY_LEN: usize = 1200;
 
 #[derive(Clone, Debug)]
 pub struct SignalState {
@@ -105,8 +112,20 @@ impl SignalState {
             lpi_hold: vec![false; net.movements.len()],
             no_late_walk: false,
         };
-        s.history.push_back(StageSpan { stage: first, start: t, end: t });
+        s.history.push_back(StageSpan { stage: first, phase: Phase::Green, start: t, end: t });
         s
+    }
+
+    /// End the interval the history is recording at `t` and start one for `phase` of
+    /// the current stage.
+    fn record(&mut self, phase: Phase, t: f64) {
+        if let Some(h) = self.history.back_mut() {
+            h.end = t;
+        }
+        self.history.push_back(StageSpan { stage: self.stage, phase, start: t, end: t });
+        while self.history.len() > HISTORY_LEN {
+            self.history.pop_front();
+        }
     }
 
     pub fn status(&self, net: &Network, m: usize) -> Sig {
@@ -181,15 +200,13 @@ impl SignalState {
         if any {
             self.phase = Phase::Yellow;
             self.t_phase = 0.0;
+            self.record(Phase::Yellow, t);
         } else {
             self.start_green(net, t);
         }
     }
 
     fn start_green(&mut self, net: &Network, t: f64) {
-        if let Some(h) = self.history.back_mut() {
-            h.end = t;
-        }
         let prev_stage = self.stage;
         self.stage = self.next;
         self.phase = Phase::Green;
@@ -197,10 +214,7 @@ impl SignalState {
         self.green_elapsed = 0.0;
         self.cur_min = self.min_green;
         let was_departing = std::mem::replace(&mut self.departing, vec![false; net.movements.len()]);
-        self.history.push_back(StageSpan { stage: self.stage, start: t, end: t });
-        while self.history.len() > 400 {
-            self.history.pop_front();
-        }
+        self.record(Phase::Green, t);
         let prev: Vec<PedSig> = self.cw.iter().map(|c| c.state).collect();
         self.serve_peds(net);
         // LPI applies only to WALK that starts with the stage (never mid-green), and
@@ -256,6 +270,7 @@ impl SignalState {
                 if self.t_phase >= self.yellow {
                     self.phase = Phase::AllRed;
                     self.t_phase = 0.0;
+                    self.record(Phase::AllRed, t);
                 }
             }
             Phase::AllRed => {
@@ -282,5 +297,43 @@ impl SignalState {
                 PedSig::Dw => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::control::needs_clearance;
+    use crate::sim::network::LayoutKind;
+
+    /// The history records the yellow change and all-red clearance between two greens,
+    /// so the signal timing chart can show them.
+    #[test]
+    fn history_records_the_clearance() {
+        let net = Network::build(LayoutKind::Arterial4);
+        let dt = 0.1;
+        let mut s = SignalState::new(&net, 0.0);
+        let mut t = 0.0;
+        let mut run = |s: &mut SignalState, secs: f64| {
+            for _ in 0..(secs / dt).round() as usize {
+                t += dt;
+                s.step(&net, dt, t);
+            }
+            t
+        };
+        let t_req = run(&mut s, 10.0);
+        let (a, b) = (s.stage, (0..net.stages.len()).find(|&j| needs_clearance(&net, s.stage, j)).unwrap());
+        s.request(&net, b, t_req);
+        let t_end = run(&mut s, net.yellow + net.all_red + 5.0);
+        assert_eq!((s.stage, s.phase), (b, Phase::Green));
+
+        let spans: Vec<(usize, Phase)> = s.history.iter().map(|h| (h.stage, h.phase)).collect();
+        assert_eq!(spans, [(a, Phase::Green), (a, Phase::Yellow), (a, Phase::AllRed), (b, Phase::Green)]);
+        let h = &s.history;
+        // One step's rounding is allowed on each interval's end.
+        let close = |x: f64, y: f64| (x - y).abs() <= dt + 1e-9;
+        assert!(close(h[0].end, t_req) && close(h[1].end - h[1].start, net.yellow) && close(h[2].end - h[2].start, net.all_red));
+        assert!(h.iter().zip(h.iter().skip(1)).all(|(x, y)| x.end == y.start), "gaps between intervals");
+        assert_eq!((h[0].start, h[3].end), (0.0, t_end));
     }
 }
