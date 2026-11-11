@@ -6,10 +6,13 @@
 > marked *estimate* come from the simple models in Appendix A and the Monte Carlo runs in
 > Appendix B: [cim_numbers.py](cooperative-scripts/cim_numbers.py) prints every estimate,
 > and [make_figures.py](cooperative-scripts/make_figures.py) draws the two diagrams.
-> Intersection Lab has since built the reference design, with a second left-turn lane on
-> each approach, as its signal-free cooperative crossing. Section 12 describes what was
-> built and what the simulator measured; figures marked *measured* come from it.
-> November 2026.
+> Intersection Lab has since built the reference design's lanes and paths as its
+> signal-free cooperative crossing, with a second left-turn lane on each approach and an
+> intersection manager to run it. It doesn't build the rest of the reference design:
+> the approach zones A–E and the authority point (sections 3.4, 3.5 and 6.6), the
+> elevated walking and cycling ring (section 6.7; pedestrians use underpasses instead)
+> and the roadside equipment (section 6.8). Section 12 describes what was built and what
+> the simulator measured; figures marked *measured* come from it. November 2026.
 
 ## Contents
 
@@ -232,7 +235,7 @@ together):
 | **P0** occupancy only | timing error only | 0.20 s (2 m) | 3,910 | 3,658 | 3,619 |
 | **P1** brake-safe | the first vehicle brakes as hard as it can; the next brakes too | 0.50 s (6 m) | 2,949 | 3,399 | 3,487 |
 | **PH** harm-limited | the first vehicle stops dead; the next hits it at 25 km/h or less | 1.06 s (12 m) | 2,018 | 3,000 | 3,265 |
-| **P2** stop-safe | the first vehicle stops dead; the next stops short of it | 1.42 s (16 m) | 1,678 | 2,790 | 3,136 |
+| **P2** stop-safe | the first vehicle stops dead; the next stops short of it | 1.43 s (16 m) | 1,678 | 2,790 | 3,136 |
 
 For comparison, one lane of automated vehicles following at 0.6 s gaps carries
 3,581 veh/h at 40 km/h. The crossing point of two lanes at a well-timed two-phase signal
@@ -574,7 +577,13 @@ An authority contains:
 
 ### 3.5 Zones along each approach
 
-![Approach zones](images/cooperative/approach-zones.svg)
+> *Not built in Intersection Lab.* Its manager has no approach zones, commitment line or
+> authority point (section 3.4). In each lane it considers only the first vehicle
+> without a trajectory and may grant it one anywhere on the approach. A vehicle without
+> one follows the vehicle ahead and, if it must, waits far enough before the stop line
+> to reach the crossing speed by the time it crosses (section 12.1).
+
+![Approach zones of the reference design](images/cooperative/approach-zones.svg)
 
 | Zone | Before the stop line (50 km/h) | What happens | What sets its length |
 |---|---|---|---|
@@ -969,8 +978,10 @@ becomes gentle metering upstream instead of a blocked box.
 
 ## 6. A reference design: a large, purpose-built cooperative crossing
 
-Intersection Lab builds this design with one change, a second left-turn lane on each
-approach, which its measurements showed is needed for the design demand (section 12).
+Intersection Lab builds this design's lanes and paths with one change, a second
+left-turn lane on each approach, which its measurements showed is needed for the design
+demand (section 12). It doesn't build the approach zones (section 6.6), the elevated
+ring (section 6.7) or the roadside equipment (section 6.8).
 
 ### 6.1 Goals and assumptions
 
@@ -983,12 +994,18 @@ approach, which its measurements showed is needed for the design demand (section
 
 ### 6.2 Plan
 
-![Plan view of the reference cooperative crossing](images/cooperative/plan-view.svg)
+![Plan view of the reference design](images/cooperative/plan-view.svg)
+
+The plan shows the reference design, not the crossing Intersection Lab draws. That one
+has two left-turn lanes per approach, so its box is 43 m across with 100 crossing
+conflict zones, and it has pedestrian underpasses instead of the ring and no roadside
+equipment.
 
 ### 6.3 Lanes and paths
 
-* **Each approach,** from the median out: one left-turn lane (L), three through lanes (T),
-  and a right-turn lane (R) that leaves on a channelized slip lane 43 m before the box.
+* **Each approach,** from the median out: one left-turn lane (L), three through lanes
+  (T) and a right-turn lane (R) that leaves on a channelized slip lane about 25 m before
+  the stop line.
 * **Each exit:** a receiving lane per movement. Left turns arrive in XL next to the
   median, through traffic in three XT lanes, and right turns in XR at the curb.
 * **One lane, one path.** Every entry lane has exactly one path through the box and one
@@ -1045,7 +1062,7 @@ about 4.5 s.
 
 The zones are those of section 3.5. Physically, zones C to E must have no driveways or
 side access. They need fences or barriers to keep people and animals out, and good
-lighting.
+lighting. Intersection Lab doesn't build them: its approaches are 260 m of plain road.
 
 ### 6.7 Walking and cycling
 
@@ -1053,6 +1070,8 @@ lighting.
   box, like the Hovenring, a suspended cycle roundabout over a large intersection near
   Eindhoven, landing on the corner islands with ramps and elevators. It costs money and
   adds climbing and distance. People avoid detours, so fencing is needed as well.
+  Intersection Lab doesn't build the ring; its pedestrians use underpasses instead
+  (section 12.1).
 * **Alternative: crossing windows at grade.** Crossing one leg means 32–39 m of road. Even
   split at the median, each half takes 12–15 s at 1.2 m/s, plus clearance. During a window,
   every movement entering or leaving that leg must stay out of the crosswalk. The IM can
@@ -1066,6 +1085,10 @@ suburban arterials, freight and port areas, and new towns built around it, not d
 streets.
 
 ### 6.8 Roadside equipment
+
+Intersection Lab builds none of this equipment: its crossing has no roadside sensors,
+radio units or backup signal heads, and its manager runs without a standby or a
+separate checker (section 12.1).
 
 | Item | Purpose |
 |---|---|
@@ -1392,15 +1415,16 @@ Every figure in it is *measured*.
 ### 12.1 What was built
 
 * **Layout** (`build_cooperative` in [`src/sim/network.rs`](../src/sim/network.rs)). Each
-  approach has two left-turn lanes, three through lanes, and a right-turn slip lane on a
-  25 m radius around a corner island; lanes are 3.5 m and the median 2 m. Every lane has
+  approach has two left-turn lanes, three through lanes and a right-turn slip lane on a
+  25 m radius around a corner island; lanes are 3.5 m and the median 4 m. Every lane has
   its own path through the box and its own receiving lane, so the box has 100 crossing
   zones and no merges, and right turns never enter it. Pedestrians use underpasses, with
   stairs on the corner islands and plazas, so there are no crosswalks at grade. Default
   demand: 4,500 veh/h per approach, 18,000 in all, 20% turning left and 15% right.
 * **Manager** ([`src/sim/coop.rs`](../src/sim/coop.rs)). There are no signals and no
-  sensors. When a vehicle enters the approach it asks for a slot, and the manager answers
-  with a complete trajectory: one acceleration per simulation step until the vehicle
+  sensors. In each lane the manager considers only the first vehicle without a slot, and
+  right turns, which never enter the box, never ask for one. When it grants a slot, it
+  sends a complete trajectory: one acceleration per simulation step until the vehicle
   leaves the map. The manager builds trajectories with the simulator's own integrator, so
   it knows to rounding error when each vehicle will be in each zone, and grants one only
   if it keeps the policy gap to every trajectory already granted. A granted trajectory
@@ -1416,8 +1440,9 @@ Every figure in it is *measured*.
     after it, while the reverse switch would cost 5.9 s. When a queue is waiting, its
     first vehicle goes after the last conflicting one rather than into an earlier gap, so
     the queue crosses together; a vehicle on its own may still slip into a gap.
-  * *First come, first served* gives each vehicle, as soon as it can be scheduled, the
-    earliest set of windows that fits: the zipper.
+  * *First come, first served* takes next whichever vehicle, first in its lane without
+    a slot, could cross the stop line soonest, and gives it the earliest set of windows
+    that fits: the zipper.
   * Under either, an emergency vehicle and the vehicles ahead of it in its lane are
     scheduled first.
 * **Vehicles.** Within a lane they follow with cooperative adaptive cruise control: a
@@ -1435,6 +1460,11 @@ Every figure in it is *measured*.
   crossings. Side by side, B weaves the same arrivals through one at a time under the
   same gaps, and *Compare schedules* benchmarks batches under each policy against the
   zipper.
+* **Not built.** The approach zones A–E and the authority point (sections 3.4 and 3.5),
+  the elevated walking and cycling ring (section 6.7) and the roadside equipment
+  (section 6.8). The crossing has no roadside sensors, radio units or backup signal
+  heads, and the manager runs without a standby or a separate checker. A vehicle can get
+  its trajectory anywhere on the 260 m approach.
 * **Reproducing the numbers.**
   `cargo run --release --example cooperative -- [policy] [left lanes] [fleet] [seconds] [seeds] [demands] [arrivals] [scheduling]`
   runs the sweeps below, and [`tests/cooperative.rs`](../tests/cooperative.rs) checks the
@@ -1626,7 +1656,8 @@ its queues grow (9,834 at 22,000).
 * **Occupancy:** τ = (L + W)/v.
 * **Gap after the first vehicle clears a zone:**
   * P0: g = 2δ
-  * P1: g = 2δ + tᵣ + max(0, v/2a_second − v/2a_first)
+  * P1: g = 2δ + tᵣ, which holds only if the second vehicle brakes at least as hard as
+    the first (section 2.2)
   * PH: g = 2δ + tᵣ + (v² − v_s²)/(2av)
   * P2: g = 2δ + tᵣ + v/2a
 * **Entry-to-entry separation between conflicting vehicles:** S = τ + g.
@@ -1648,6 +1679,20 @@ its queues grow (9,834 at 22,000).
     Σ flow × headway ≤ 1 − 3ℓ/C_m, where C_m is the micro-cycle;
   * headways: through 0.92 s at 50 km/h (AV-aware signal) or 1.0 s at 40 km/h (box); left
     1.2 s at 27 km/h; human 1,900 veh/h per lane, 1,805 for protected lefts.
+
+**Where Intersection Lab differs.** Its manager (section 12) uses the same formulas for
+P1, PH and P2, with these differences:
+
+* **δ and tᵣ.** The gaps start from the same 0.5 s, divided differently. Vehicles drive
+  their trajectories exactly, so there is no timing tolerance: the 0.2 s is two one-way
+  message latencies of 0.1 s, and the 0.3 s is the actuation delay alone.
+* **t_gap.** Cars keep a 2 m standstill gap plus a 0.42 s time gap; trucks and buses
+  keep 0.75 s. For a car at 40 km/h that comes to the same 0.6 s.
+* **a.** Cars count on 6 m/s² of emergency braking, trucks and buses on 4.5 m/s².
+* **P1** is its nominal gap, which assumes that no vehicle fails. It is the same 0.5 s
+  for every vehicle, including a truck crossing behind a car.
+* **W.** Its reservation zones are about 3.2 m long at a right angle: the stretch where
+  a vehicle 2.55 m wide could touch one on the other path, plus 0.3 m on each side.
 
 ---
 

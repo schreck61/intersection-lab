@@ -322,6 +322,11 @@ for k in (0, 10, 20):
     svg.append(line(add(sb0, (k, 0)), add(sb0, (k, 1.2)), stroke="#222", stroke_width=2))
 svg.append(text(add(sb0, (10, 3)), "20 m", size=12))
 
+# Title: the plan is the reference design, which Intersection Lab builds only in part
+svg.append(text((-EXT + 4, EXT - 5), "Reference design (section 6)", size=17, anchor="start", weight="bold"))
+svg.append(text((-EXT + 4, EXT - 8.7), "not the crossing Intersection Lab draws", size=13, anchor="start",
+                fill="#444"))
+
 # Legend under the plan
 ly = W_PX + 22
 items = [

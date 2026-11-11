@@ -785,7 +785,7 @@ impl App {
                     ui.add(egui::Slider::new(&mut s.signal_use, 0.0..=1.0).text("turn-signal use"))
                         .on_hover_text("Drivers who don't signal look like through traffic to the camera");
                 });
-                ui.label(RichText::new("Controllers only see these sensors — never ground truth. Try turning cameras/radar off and watch the adaptive controllers degrade.").small().color(Color32::from_gray(160)));
+                ui.label(RichText::new("Controllers see vehicles only through these sensors — never ground truth. Try turning cameras/radar off and watch the adaptive controllers degrade.").small().color(Color32::from_gray(160)));
 
                 ui.separator();
                 ui.heading("Operations");
@@ -924,7 +924,7 @@ impl App {
         ui.heading("Intersection manager");
         ui.label(
             RichText::new(
-                "No signals and no roadside sensors. Every vehicle is automated and connected: it asks the manager for a slot as it enters the map and drives exactly the trajectory it is granted. Pedestrians use underground passages.",
+                "No signals and no roadside sensors. Every vehicle is automated and connected. In each lane the manager considers only the first vehicle without a trajectory, and each vehicle drives exactly the one it is granted. Right turns bypass the box on slip lanes and never ask. Pedestrians use underground passages.",
             )
             .small()
             .color(Color32::from_gray(170)),
@@ -941,7 +941,7 @@ impl App {
             })
             .response
             .labelled_by(label.id)
-            .on_hover_text("Batches serve each movement in turn, like a signal without yellow or all-red. First come, first served gives each vehicle the earliest gap that fits as soon as it asks, so the streams weave through one another one vehicle at a time.");
+            .on_hover_text("Batches serve each movement in turn, like a signal without yellow or all-red. First come, first served gives the earliest gap that fits to whichever vehicle, first in its lane without a slot, could cross the stop line soonest, so the streams weave through one another one vehicle at a time.");
         if sch != self.coop_sched {
             // Live: vehicles keep the trajectories they already have.
             self.coop_sched = sch;
@@ -990,7 +990,7 @@ impl App {
                 .changed();
             changed |= ui
                 .add(egui::Slider::new(&mut self.coop_slack, 0.0..=5.0).step_by(0.1).text("batch join window s"))
-                .on_hover_text("How far behind the batch's latest vehicle a vehicle may cross and still join the batch. A phase ends when no vehicle of its movement can.")
+                .on_hover_text("How far behind the batch's latest vehicle, beyond its own headway, a vehicle may cross and still join the batch. A phase ends when no vehicle of its movement can.")
                 .changed();
         });
         if changed {

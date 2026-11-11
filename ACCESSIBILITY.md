@@ -5,7 +5,7 @@ and a set of live charts. That makes some of it hard or impossible to use withou
 and some of it hard to use without a mouse. This page says what works today, what
 doesn't, and how to get every result without the visual app.
 
-Last reviewed: November 2026, version 0.5.0.
+Last reviewed: November 2026, version 0.5.1.
 
 ## Every result is available as text
 
@@ -53,8 +53,8 @@ findings as text and tables, and every image in them has a text description.
 * **No screen-reader support in the browser version.** It draws everything on a single
   canvas, so assistive technology finds nothing to read. Use the desktop app or the
   command-line tools instead.
-* **Mouse-only tasks:** selecting a vehicle, placing sensors and choosing a crosswalk
-  corner need a pointer.
+* **Pointer-only tasks:** panning and zooming the map, selecting a vehicle, placing a
+  pedestrian at a crosswalk corner and the charts' hover readouts need a pointer.
 * **No shortcuts between panels:** reaching the settings means tabbing through the whole
   top toolbar, about two dozen controls.
 * **Color:** the *Color by delay* and *Color by speed* map views use color alone. The

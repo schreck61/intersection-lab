@@ -1,20 +1,24 @@
 // Copyright (c) 2026 Jim Schreckengast
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Sensor models. Controllers never see ground truth: they see a `SensorView`
-//! assembled from whichever sensors are enabled.
+//! Sensor models. Controllers never see the vehicles' ground truth: they see a
+//! `SensorView` assembled from whichever sensors are enabled.
 //!
 //! * Inductive loops: stop-bar presence zone + an advance point detector per lane.
 //!   Gives presence, actuation pulses, spot speeds and an input-output queue estimate,
 //!   but not a vehicle's intended turn in a shared lane.
 //! * Intersection camera (video analytics): tracks vehicles within range, sees turn
-//!   signals (intent), vehicle class and how long each vehicle has waited; also counts
-//!   waiting pedestrians.
+//!   signals (intent), vehicle class and how long each vehicle has waited.
 //! * Advance radar: long-range position/speed tracking upstream (arrival prediction),
 //!   no intent.
 //! * Connected vehicles (V2I): equipped vehicles broadcast position, speed, route and
 //!   class from any distance.
-//! * Emergency preemption receivers (optical/GPS).
+//! * Emergency preemption receivers (optical/GPS), always fitted and exact; only the
+//!   simulation's own preemption reads them, never a controller.
+//!
+//! Pedestrians are the exception: how many wait at each crosswalk, the longest wait and
+//! the push-button calls reach the `SensorView` straight from ground truth, whichever
+//! sensors are enabled.
 //!
 //! With `realistic` on, every sensor errs the way field equipment does: cameras lose
 //! vehicles in bad weather, at night, at range and behind trucks and buses, and only

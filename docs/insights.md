@@ -140,12 +140,13 @@ the design and compare these results with their estimates.
   batches, in two rings with a barrier like an actuated signal, but with no yellow or
   all-red. Weaving vehicles through one at a time, first come, first served, is better
   only below about 6,000 veh/h and saturates near 10,100 veh/h. Each switch between
-  conflicting paths costs about 2.2 s, against 1.0 s for one more following vehicle; each
-  path crosses ten other lanes, whose free windows must all line up; and a vehicle
+  conflicting paths costs about 2.1 s, against 1.0 s for one more following vehicle;
+  each path crosses ten other lanes, whose free windows must all line up; and a vehicle
   waiting for its windows holds up its whole lane.
-- **The safety rule matters most to the zipper:** gaps that cover message latency only
-  add 25% to first come, first served (12,600 veh/h) but only 3.5% to batches (19,700),
-  which switch a few times a minute instead of at almost every vehicle.
+- **The safety rule matters most to the zipper:** gaps that cover only message latency
+  and the actuation delay add 25% to first come, first served (12,600 veh/h) but only
+  3.5% to batches (19,700), which switch a few times a minute instead of at almost every
+  vehicle.
 - **Left-turn lanes:** with one per approach the crossing saturates near 13,500 veh/h;
   the second is worth about 5,500 veh/h.
 - **Uneven arrivals:** at the design demand (8 seeds), platoons from an upstream signal
