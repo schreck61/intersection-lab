@@ -1,0 +1,6 @@
+# Commits that only reformat code, which `git blame` can skip. GitHub's blame view reads
+# this file automatically; to use it locally, run
+# `git config blame.ignoreRevsFile .git-blame-ignore-revs` once in your clone.
+
+# Format the code with rustfmt (#17)
+68a23f1d4cdc5b90c81ff751f1c70bfb854b39fd
