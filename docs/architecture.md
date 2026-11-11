@@ -3121,9 +3121,8 @@ permissions unless a job needs more.
 ```mermaid
 flowchart TB
     PR["<b>Pull request</b>"]
-    CI["<b>Checks</b><br/>CI, CodeQL and DCO;<br/>10 are required"]
+    CI["<b>Checks</b><br/>CI, CodeQL and DCO;<br/>11 are required"]
     FZ["Fuzz (weights), 60 s:<br/>reported, not required"]
-    CV["Coverage, at least 80%<br/>of lines: reported,<br/>not required"]
     M["<b>Merge to main</b><br/>branch up to date"]
     PG["<b>Pages</b>: the browser<br/>build, deployed"]
     SC["<b>Scorecard</b><br/>also weekly"]
@@ -3133,23 +3132,23 @@ flowchart TB
     C["<b>publish-crate</b><br/>cargo publish to<br/>crates.io"]
     PR --> CI --> M --> T --> R --> P --> C
     PR -.-> FZ
-    PR -.-> CV
     M --> PG
     M --> SC
     classDef ui fill:#fff3e0,stroke:#c05621,color:#3b1d06
     classDef data fill:#f1f3f5,stroke:#5f6b7a,color:#1f2933
     classDef safe fill:#fdecec,stroke:#c53030,color:#4a0f0f
     class PR,M,T,P ui
-    class CI,FZ,CV safe
+    class CI,FZ safe
     class PG,SC,R,C data
 ```
 
-The 10 checks that must pass before anything merges to `main`, with the branch up to
+The 11 checks that must pass before anything merges to `main`, with the branch up to
 date:
 
 | Check | Workflow | What it does |
 |---|---|---|
 | Test (ubuntu-22.04), Test (macos-15), Test (windows-latest) | `ci.yml` | `cargo build --locked --release --all-targets`, then `cargo test --locked --release` |
+| Coverage | `ci.yml` | Runs the tests on Linux with [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) and fails if they run less than 80% of the crate's lines, every file counted (CONTRIBUTING.md says how to measure it locally). They run one at a time, and under `cfg(coverage)` the tests that run many simulations at once run them in turn, because code built for coverage slows down many times over when several threads run it at once |
 | Web (wasm32) | `ci.yml` | Builds the app for `wasm32-unknown-unknown` |
 | Clippy | `ci.yml` | `cargo fmt --check` on the crate and the fuzz target, then `cargo clippy` with warnings as errors, for the native targets and the browser app |
 | Crate package | `ci.yml` | `cargo package --locked`, which builds the crate from the files crates.io would get |
@@ -3159,13 +3158,6 @@ date:
 
 * **Fuzz (weights)** in `ci.yml` runs the fuzz target for 60 s from its seeds on the
   nightly toolchain, and uploads any crash. It isn't required.
-* **Coverage** in `ci.yml` runs the tests on Linux with
-  [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) and fails if they run less
-  than 80% of the crate's lines, every file counted (CONTRIBUTING.md says how to measure
-  it locally). The tests run one at a time, and under `cfg(coverage)` the ones that run
-  many simulations at once run them in turn: code built for coverage counts what it runs
-  in counters that every thread updates, so threads running the same code at once slow
-  one another down many times over. It isn't required.
 * **`pages.yml`** builds the browser version with Trunk on every push to `main` and
   deploys it to GitHub Pages.
 * **`release.yml`** runs on a `v*` tag, or by hand to build unsigned packages:
