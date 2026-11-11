@@ -487,6 +487,8 @@ docs/           insights.md (every finding), cooperative-intersections.md (desig
   per core: `RESUME=1 cargo run --release --bin train all 300 900 hybrid` fine-tunes the
   shipped weights.
 
+[ROADMAP.md](ROADMAP.md) says which of these the project plans to work on.
+
 ![Three-signal corridor](docs/corridor.png)
 
 ![Side-by-side comparison](docs/compare.png)
@@ -494,8 +496,9 @@ docs/           insights.md (every finding), cooperative-intersections.md (desig
 ## Contributing
 
 Bug reports, realism fixes and new experiments are welcome; see
-[CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md). Every
-commit must be signed off under the
+[CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).
+[ROADMAP.md](ROADMAP.md) says what's planned and what isn't. Every commit must be
+signed off under the
 [Developer Certificate of Origin](https://developercertificate.org/) (`git commit -s`).
 [GOVERNANCE.md](GOVERNANCE.md) describes how decisions are made and who does what. Please
 report security vulnerabilities privately, as described in [SECURITY.md](SECURITY.md).
