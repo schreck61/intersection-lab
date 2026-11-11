@@ -257,7 +257,9 @@ impl App {
         let net = Network::build(self.layout);
         let demand = if keep_demand && old.net.kind == self.layout { old.demand.clone() } else { DemandConfig::default_for(&net) };
         let template = Self::settings_of(old);
-        self.world = self.make_world(self.mode, self.ctrl, (self.coop_policy, self.coop_sched), demand, &template);
+        // Under the green wave, the controller to give back when it ends.
+        let ctrl = self.world.controller_before_wave(self.focus).unwrap_or(self.ctrl);
+        self.world = self.make_world(self.mode, ctrl, (self.coop_policy, self.coop_sched), demand, &template);
         // The view is centered on the middle of the corridor: start the panels there.
         self.focus = self.world.sims.len() / 2;
         self.rebuild_twin();
@@ -283,7 +285,9 @@ impl App {
         let src = &self.world.sims[0];
         let template = Self::settings_of(src);
         let demand = src.demand.clone();
-        self.twin = Some(self.make_world(self.twin_mode, self.twin_ctrl, (self.twin_policy, self.twin_sched), demand, &template));
+        // B runs one controller everywhere; under the green wave, the one it ran before.
+        let ctrl = self.twin.as_ref().and_then(|t| t.controller_before_wave(0)).unwrap_or(self.twin_ctrl);
+        self.twin = Some(self.make_world(self.twin_mode, ctrl, (self.twin_policy, self.twin_sched), demand, &template));
         self.twin_summary = Summary::default();
     }
 
@@ -541,7 +545,7 @@ impl App {
                 let mut gw = self.green_wave;
                 if ui
                     .checkbox(&mut gw, "Fixed-time green wave")
-                    .on_hover_text("Common cycle and offsets that maximize the two-way green band (applies to fixed-time signals)")
+                    .on_hover_text("Every signal runs fixed-time, with a common cycle and offsets that maximize the two-way green band. Turning it off gives each signal back the controller it ran before.")
                     .changed()
                 {
                     self.green_wave = gw;
@@ -549,6 +553,7 @@ impl App {
                     if let Some(t) = self.twin.as_mut() {
                         t.set_coordination(gw);
                     }
+                    self.notify(if gw { "Green wave on: every signal runs fixed-time" } else { "Green wave off: the signals run their previous controllers again" });
                 }
             }
             let mut mode = self.mode;
@@ -583,7 +588,7 @@ impl App {
                 if c != self.ctrl {
                     // Hot-swap: traffic keeps flowing, only the brain changes.
                     self.ctrl = c;
-                    self.world.sims[self.focus].set_controller(c);
+                    self.world.set_controller(self.focus, c);
                     self.notify(format!("Controller switched live to {}", c.name()));
                 }
                 ui.label(RichText::new(self.ctrl.description()).small().color(Color32::from_gray(170)));
@@ -680,8 +685,8 @@ impl App {
                 } else if c != self.twin_ctrl {
                     self.twin_ctrl = c;
                     if let Some(t) = self.twin.as_mut() {
-                        for s in &mut t.sims {
-                            s.set_controller(c);
+                        for i in 0..t.sims.len() {
+                            t.set_controller(i, c);
                         }
                     }
                 }
