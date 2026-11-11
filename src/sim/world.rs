@@ -54,12 +54,14 @@ pub struct World {
     pub journeys: Vec<Journey>,
     /// Fixed-time intersections run a coordinated (green wave) plan.
     pub coordinated: bool,
+    /// Each intersection's controller from before the green wave made it fixed-time.
+    before_wave: Vec<Option<CtrlKind>>,
     rng: Rng,
 }
 
 impl World {
     pub fn single(sim: Sim) -> World {
-        World { sims: vec![sim], offsets: vec![v2(0.0, 0.0)], journeys: vec![], coordinated: false, rng: Rng::new(1) }
+        World { sims: vec![sim], offsets: vec![v2(0.0, 0.0)], journeys: vec![], coordinated: false, before_wave: vec![], rng: Rng::new(1) }
     }
 
     /// `n` intersections of `kind` along the east-west main road. Interior approaches
@@ -85,6 +87,7 @@ impl World {
             sims,
             journeys: vec![],
             coordinated: false,
+            before_wave: vec![],
             rng: Rng::new(seed ^ 0xC0FF_EE00),
         }
     }
@@ -268,16 +271,22 @@ impl World {
         self.sims.iter().map(|s| s.stats.summary(from_t, s.t, &s.vehicles, &s.queues).person_delay_all).sum::<f64>() / k
     }
 
-    /// Turn the fixed-time green wave on or off. A common cycle (the longest Webster
-    /// cycle), the main-road through stage first in each cycle, and offsets chosen
-    /// greedily to maximize the two-way green band at progression speed.
+    /// Turn the fixed-time green wave on or off. On, every signal runs fixed-time: a
+    /// common cycle (the longest Webster cycle), the main-road through stage first in
+    /// each cycle, and offsets chosen greedily to maximize the two-way green band at
+    /// progression speed. Off, each signal the wave made fixed-time gets back the
+    /// controller it ran before, and fixed-time signals return to their own Webster plans.
     pub fn set_coordination(&mut self, on: bool) {
+        if on && !self.coordinated {
+            self.before_wave = self.sims.iter().map(|s| s.signalized().then_some(s.ctrl_kind)).collect();
+        }
         self.coordinated = on;
         if !on || !self.is_corridor() {
-            for s in &mut self.sims {
+            let before = std::mem::take(&mut self.before_wave);
+            for (i, s) in self.sims.iter_mut().enumerate() {
                 s.coordination = None;
                 if s.ctrl_kind == CtrlKind::Fixed && s.signalized() {
-                    s.set_controller(CtrlKind::Fixed);
+                    s.set_controller(before.get(i).copied().flatten().unwrap_or(CtrlKind::Fixed));
                 }
             }
             return;
@@ -345,6 +354,20 @@ impl World {
                 }
             }
         }
+    }
+
+    /// Switch intersection `i` to `ctrl`, which it keeps when the green wave ends.
+    pub fn set_controller(&mut self, i: usize, ctrl: CtrlKind) {
+        self.sims[i].set_controller(ctrl);
+        if let Some(b) = self.before_wave.get_mut(i) {
+            *b = None;
+        }
+    }
+
+    /// The controller intersection `i` ran before the green wave made it fixed-time,
+    /// which it gets back when the wave ends.
+    pub fn controller_before_wave(&self, i: usize) -> Option<CtrlKind> {
+        self.before_wave.get(i).copied().flatten()
     }
 
     /// Copy the user-adjustable settings (sensors, operations, demand) of intersection
