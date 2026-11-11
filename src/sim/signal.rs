@@ -177,8 +177,9 @@ impl SignalState {
         let b = &net.stages[j].stat;
         // With LPI, turns that continue into the next stage but cross a crosswalk about
         // to start WALK get a yellow/red arrow so pedestrians can lead.
-        let lpi_cw: Vec<bool> =
-            (0..self.cw.len()).map(|cw| self.lpi > 0.0 && self.cw[cw].called && net.stages[j].walk.contains(&cw)).collect();
+        let lpi_cw: Vec<bool> = (0..self.cw.len())
+            .map(|cw| self.lpi > 0.0 && self.cw[cw].called && net.stages[j].walk.contains(&cw))
+            .collect();
         let mut any = false;
         for m in 0..a.len() {
             let dep = match (a[m], b[m]) {
@@ -224,7 +225,10 @@ impl SignalState {
             *hold = self.lpi > 0.0
                 && net.stages[self.stage].stat[m].is_some()
                 && (net.stages[prev_stage].stat[m].is_none() || was_departing[m])
-                && net.movements[m].crosswalks.iter().any(|&cw| prev[cw] != PedSig::Walk && self.cw[cw].state == PedSig::Walk);
+                && net.movements[m]
+                    .crosswalks
+                    .iter()
+                    .any(|&cw| prev[cw] != PedSig::Walk && self.cw[cw].state == PedSig::Walk);
         }
         if self.lpi_hold.iter().any(|&h| h) {
             self.cur_min = self.cur_min.max(self.lpi + self.min_green);
@@ -332,7 +336,11 @@ mod tests {
         let h = &s.history;
         // One step's rounding is allowed on each interval's end.
         let close = |x: f64, y: f64| (x - y).abs() <= dt + 1e-9;
-        assert!(close(h[0].end, t_req) && close(h[1].end - h[1].start, net.yellow) && close(h[2].end - h[2].start, net.all_red));
+        assert!(
+            close(h[0].end, t_req)
+                && close(h[1].end - h[1].start, net.yellow)
+                && close(h[2].end - h[2].start, net.all_red)
+        );
         assert!(h.iter().zip(h.iter().skip(1)).all(|(x, y)| x.end == y.start), "gaps between intervals");
         assert_eq!((h[0].start, h[3].end), (0.0, t_end));
     }

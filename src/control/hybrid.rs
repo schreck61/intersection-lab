@@ -14,9 +14,9 @@ use super::predictive::Predictive;
 use super::rl::{GAMMA_PER_2S, REWARD_SCALE, RlController};
 use super::{Brain, Controller, Ctx};
 use crate::rl::dqn::{Dqn, SavedModel, Transition, argmax};
-use serde::{Deserialize, Serialize};
 use crate::sim::network::Network;
 use crate::sim::rng::Rng;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 const FAIRNESS: [f64; 3] = [0.0, 0.004, 0.012];
@@ -127,7 +127,9 @@ impl Hybrid {
     /// keeps the planner's default tuning (it behaves exactly like the predictive
     /// controller).
     pub fn load_or_new(net: &Network) -> Self {
-        if let Some((mut h, source)) = super::weights::load(&weights_file(net.kind.key()), |txt| Self::from_saved(net, txt)) {
+        if let Some((mut h, source)) =
+            super::weights::load(&weights_file(net.kind.key()), |txt| Self::from_saved(net, txt))
+        {
             h.loaded_from = Some(source);
             return h;
         }
@@ -155,7 +157,12 @@ impl Hybrid {
 
     /// Save the base tuning, its score if known, and the network if `with_model`. A
     /// score that isn't finite is saved as unknown, since JSON has no number for it.
-    pub fn save(&self, path: &std::path::Path, base_score: Option<f64>, with_model: bool) -> std::io::Result<()> {
+    pub fn save(
+        &self,
+        path: &std::path::Path,
+        base_score: Option<f64>,
+        with_model: bool,
+    ) -> std::io::Result<()> {
         let model = with_model.then(|| SavedModel {
             layout: self.layout.clone(),
             n_in: self.agent.online.n_in(),
@@ -163,7 +170,11 @@ impl Hybrid {
             episodes: self.episodes,
             net: self.agent.online.clone(),
         });
-        let sv = SavedHybrid { base_action: self.base_action, base_score: base_score.filter(|s| s.is_finite()), model };
+        let sv = SavedHybrid {
+            base_action: self.base_action,
+            base_score: base_score.filter(|s| s.is_finite()),
+            model,
+        };
         std::fs::write(path, serde_json::to_string(&sv).unwrap())
     }
 
@@ -202,10 +213,19 @@ impl Controller for Hybrid {
         if ctx.t >= self.next_decision {
             self.next_decision = ctx.t + DECISION_DT;
             let s = RlController::features(ctx);
-            if let Some((ps, pa, pt)) = self.prev.take() && self.learning {
+            if let Some((ps, pa, pt)) = self.prev.take()
+                && self.learning
+            {
                 let disc = GAMMA_PER_2S.powf((ctx.t - pt) / 2.0) as f32;
                 let mask2 = vec![true; N_ACTIONS];
-                self.agent.push(Transition { s: ps, a: pa, r: self.r_acc as f32, s2: s.clone(), disc, mask2 });
+                self.agent.push(Transition {
+                    s: ps,
+                    a: pa,
+                    r: self.r_acc as f32,
+                    s2: s.clone(),
+                    disc,
+                    mask2,
+                });
                 for _ in 0..4 {
                     self.agent.train_step();
                 }
@@ -235,9 +255,18 @@ impl Controller for Hybrid {
         let inner = self.planner.brain();
         let mut notes = vec![format!("RL tuning now: {}", preset_name(self.action))];
         notes.push(match (&self.loaded_from, self.has_model) {
-            (Some(_), true) => format!("trained network ({} episodes) over base tuning {}", self.episodes, preset_name(self.base_action)),
-            (Some(_), false) if self.model_rejected => format!("the saved network doesn't fit this layout; running {}", preset_name(self.base_action)),
-            (Some(_), false) => format!("no network beat the best static tuning; running {}", preset_name(self.base_action)),
+            (Some(_), true) => format!(
+                "trained network ({} episodes) over base tuning {}",
+                self.episodes,
+                preset_name(self.base_action)
+            ),
+            (Some(_), false) if self.model_rejected => format!(
+                "the saved network doesn't fit this layout; running {}",
+                preset_name(self.base_action)
+            ),
+            (Some(_), false) => {
+                format!("no network beat the best static tuning; running {}", preset_name(self.base_action))
+            }
             (None, _) if self.learning => "learning online from scratch".into(),
             (None, _) => "no trained weights: running the planner's default tuning".into(),
         });
@@ -245,10 +274,19 @@ impl Controller for Hybrid {
             let mut order: Vec<usize> = (0..N_ACTIONS).collect();
             // A network can overflow to NaN even with finite weights, so no partial_cmp.
             order.sort_by(|&a, &b| self.last_q[b].total_cmp(&self.last_q[a]));
-            let top: Vec<String> = order.iter().take(3).map(|&a| format!("{} ({:.2})", preset_name(a), self.last_q[a])).collect();
+            let top: Vec<String> = order
+                .iter()
+                .take(3)
+                .map(|&a| format!("{} ({:.2})", preset_name(a), self.last_q[a]))
+                .collect();
             notes.push(format!("best tunings by Q: {}", top.join("; ")));
         }
         notes.extend(inner.notes);
-        Brain { title: format!("RL-tuned planner · {}", inner.title), bars: inner.bars, lower_is_better: true, notes }
+        Brain {
+            title: format!("RL-tuned planner · {}", inner.title),
+            bars: inner.bars,
+            lower_is_better: true,
+            notes,
+        }
     }
 }

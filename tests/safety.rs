@@ -24,9 +24,16 @@ fn all_scenarios_safe_and_flowing() {
                     let served = sim.stats.done.len() as f64 / sim.stats.generated.max(1) as f64;
                     // Stop control is legitimately over capacity on busy roads (the arterial
                     // carries ~2,500 veh/h, above all-way-stop capacity).
-                    let over = mode == ControlMode::TwoWayStop || (mode == ControlMode::AllWayStop && kind == LayoutKind::Arterial4);
+                    let over = mode == ControlMode::TwoWayStop
+                        || (mode == ControlMode::AllWayStop && kind == LayoutKind::Arterial4);
                     let need = if over { 0.65 } else { 0.8 };
-                    (format!("{} / {} / {}", kind.key(), mode.name(), c.short()), sim.collisions, served, s.avg_delay, need)
+                    (
+                        format!("{} / {} / {}", kind.key(), mode.name(), c.short()),
+                        sim.collisions,
+                        served,
+                        s.avg_delay,
+                        need,
+                    )
                 }));
             }
         }
@@ -38,7 +45,8 @@ fn all_scenarios_safe_and_flowing() {
             failures.push(format!("{name}: {coll} overlap ticks"));
         }
         if served < need {
-            failures.push(format!("{name}: only {:.0}% of arrivals served (delay {delay:.0}s)", served * 100.0));
+            failures
+                .push(format!("{name}: only {:.0}% of arrivals served (delay {delay:.0}s)", served * 100.0));
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
@@ -84,9 +92,18 @@ fn no_gridlock_when_oversaturated() {
                     sim.step();
                     for v in &sim.vehicles {
                         let t = still.entry(v.id).or_insert(0.0);
-                        *t = if v.v < 0.05 && sim.net.links[v.link()].kind.in_box() { *t + sim.dt } else { 0.0 };
+                        *t = if v.v < 0.05 && sim.net.links[v.link()].kind.in_box() {
+                            *t + sim.dt
+                        } else {
+                            0.0
+                        };
                         if *t > 300.0 {
-                            return Some(format!("{} seed {seed} ×{scale}: vehicle {} stuck in the box at t={:.0}", c.short(), v.id, sim.t));
+                            return Some(format!(
+                                "{} seed {seed} ×{scale}: vehicle {} stuck in the box at t={:.0}",
+                                c.short(),
+                                v.id,
+                                sim.t
+                            ));
                         }
                     }
                 }
@@ -124,7 +141,9 @@ fn no_collision_between_late_yellow_and_clearing_turn() {
         .into_iter()
         .map(|h| h.join().unwrap())
         .filter(|r| r.1 > 0)
-        .map(|(seed, n, first)| format!("seed {seed}: {n} overlap ticks, first: {}", first.unwrap_or_default()))
+        .map(|(seed, n, first)| {
+            format!("seed {seed}: {n} overlap ticks, first: {}", first.unwrap_or_default())
+        })
         .collect();
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

@@ -58,11 +58,17 @@ pub struct Camera {
 impl Camera {
     pub fn to_screen(&self, p: V2) -> Pos2 {
         let c = self.rect.center();
-        pos2(c.x + (p.x as f32 - self.center.x as f32) * self.scale, c.y + (p.y as f32 - self.center.y as f32) * self.scale)
+        pos2(
+            c.x + (p.x as f32 - self.center.x as f32) * self.scale,
+            c.y + (p.y as f32 - self.center.y as f32) * self.scale,
+        )
     }
     pub fn to_world(&self, p: Pos2) -> V2 {
         let c = self.rect.center();
-        v2(self.center.x + ((p.x - c.x) / self.scale) as f64, self.center.y + ((p.y - c.y) / self.scale) as f64)
+        v2(
+            self.center.x + ((p.x - c.x) / self.scale) as f64,
+            self.center.y + ((p.y - c.y) / self.scale) as f64,
+        )
     }
 }
 
@@ -165,7 +171,8 @@ impl Scene {
     }
     fn circle(&mut self, c: V2, r: f64, col: Color32) {
         let n = ((r * 3.0) as usize).clamp(12, 64);
-        let pts: Vec<V2> = (0..n).map(|i| c + V2::from_angle(i as f64 / n as f64 * std::f64::consts::TAU) * r).collect();
+        let pts: Vec<V2> =
+            (0..n).map(|i| c + V2::from_angle(i as f64 / n as f64 * std::f64::consts::TAU) * r).collect();
         self.poly(&pts, col);
     }
     fn ring(&mut self, c: V2, r0: f64, r1: f64, col: Color32) {
@@ -186,7 +193,8 @@ impl Scene {
         };
         let stem_end = base + fwd * 2.2;
         self.quad_line(base, stem_end, 0.28, col);
-        let (tip, from) = if turn == Turn::T { (base + fwd * 3.6, stem_end) } else { (stem_end + side * 1.4, stem_end) };
+        let (tip, from) =
+            if turn == Turn::T { (base + fwd * 3.6, stem_end) } else { (stem_end + side * 1.4, stem_end) };
         if turn != Turn::T {
             self.quad_line(from, tip - side * 0.3, 0.28, col);
         }
@@ -195,7 +203,8 @@ impl Scene {
     }
 
     pub fn build(net: &Network) -> Scene {
-        let mut sc = Scene { kind: net.kind, pos: vec![], col: vec![], idx: vec![], trees: vec![], buildings: vec![] };
+        let mut sc =
+            Scene { kind: net.kind, pos: vec![], col: vec![], idx: vec![], trees: vec![], buildings: vec![] };
         let mut rng = crate::sim::rng::Rng::new(net.kind as u64 * 31 + 5);
         let ext = 420.0;
         // Terrain with a little texture.
@@ -221,12 +230,23 @@ impl Scene {
         for leg in &net.legs {
             let (d, ins) = (leg.d, leg.in_side());
             let p = |r: f64, lat: f64| d * r + ins * lat;
-            self.poly(&[p(0.0, -leg.out_width - sw), p(far, -leg.out_width - sw), p(far, leg.in_width + sw), p(0.0, leg.in_width + sw)], SIDEWALK);
+            self.poly(
+                &[
+                    p(0.0, -leg.out_width - sw),
+                    p(far, -leg.out_width - sw),
+                    p(far, leg.in_width + sw),
+                    p(0.0, leg.in_width + sw),
+                ],
+                SIDEWALK,
+            );
         }
         for leg in &net.legs {
             let (d, ins) = (leg.d, leg.in_side());
             let p = |r: f64, lat: f64| d * r + ins * lat;
-            self.poly(&[p(0.0, -leg.out_width), p(far, -leg.out_width), p(far, leg.in_width), p(0.0, leg.in_width)], ASPHALT);
+            self.poly(
+                &[p(0.0, -leg.out_width), p(far, -leg.out_width), p(far, leg.in_width), p(0.0, leg.in_width)],
+                ASPHALT,
+            );
             self.quad_line(p(0.0, -leg.out_width - 0.15), p(far, -leg.out_width - 0.15), 0.3, CURB);
             self.quad_line(p(0.0, leg.in_width + 0.15), p(far, leg.in_width + 0.15), 0.3, CURB);
         }
@@ -255,7 +275,8 @@ impl Scene {
             while a1 - a2 > std::f64::consts::PI {
                 a2 += std::f64::consts::TAU;
             }
-            let arc: Vec<V2> = (0..=16).map(|i| o + V2::from_angle(a1 + (a2 - a1) * i as f64 / 16.0) * rf).collect();
+            let arc: Vec<V2> =
+                (0..=16).map(|i| o + V2::from_angle(a1 + (a2 - a1) * i as f64 / 16.0) * rf).collect();
             // Sidewalk ring around the corner block, then asphalt fan.
             for w in arc.windows(2) {
                 let (i0, i1) = (o + (w[0] - o) * ((rf - sw) / rf), o + (w[1] - o) * ((rf - sw) / rf));
@@ -270,7 +291,15 @@ impl Scene {
         for leg in &net.legs {
             let (d, ins) = (leg.d, leg.in_side());
             let p = |r: f64, lat: f64| d * r + ins * lat;
-            self.poly(&[p(0.0, -leg.out_width), p(leg.stop_dist, -leg.out_width), p(leg.stop_dist, leg.in_width), p(0.0, leg.in_width)], ASPHALT);
+            self.poly(
+                &[
+                    p(0.0, -leg.out_width),
+                    p(leg.stop_dist, -leg.out_width),
+                    p(leg.stop_dist, leg.in_width),
+                    p(0.0, leg.in_width),
+                ],
+                ASPHALT,
+            );
         }
         // Markings.
         for (li, leg) in net.legs.iter().enumerate() {
@@ -296,7 +325,10 @@ impl Scene {
             let rb = if bay > 0.0 { net.in_len - bay } else { far };
             if bay > 0.0 {
                 let taper = 18.0;
-                self.poly(&[p(rb + taper, 0.2), p(far, 0.2), p(far, w - 0.15), p(rb + taper, w - 0.15)], MEDIAN);
+                self.poly(
+                    &[p(rb + taper, 0.2), p(far, 0.2), p(far, w - 0.15), p(rb + taper, w - 0.15)],
+                    MEDIAN,
+                );
                 self.tri(p(rb, 0.2), p(rb + taper, 0.2), p(rb + taper, w - 0.15), MEDIAN);
                 self.quad_line(p(rb, 0.2), p(rb + taper, w - 0.15), 0.14, YELLOW);
                 self.quad_line(p(rb + taper, w - 0.15), p(far, w - 0.15), 0.12, YELLOW);
@@ -350,13 +382,24 @@ impl Scene {
         for leg in &net.legs {
             let (d, ins) = (leg.d, leg.in_side());
             let p = |r: f64, lat: f64| d * r + ins * lat;
-            self.poly(&[p(rr, -leg.out_width - sw), p(far, -leg.out_width - sw), p(far, leg.in_width + sw), p(rr, leg.in_width + sw)], SIDEWALK);
+            self.poly(
+                &[
+                    p(rr, -leg.out_width - sw),
+                    p(far, -leg.out_width - sw),
+                    p(far, leg.in_width + sw),
+                    p(rr, leg.in_width + sw),
+                ],
+                SIDEWALK,
+            );
         }
         self.circle(c0, rr + rw / 2.0 + 2.0 + sw, SIDEWALK);
         for leg in &net.legs {
             let (d, ins) = (leg.d, leg.in_side());
             let p = |r: f64, lat: f64| d * r + ins * lat;
-            self.poly(&[p(rr, -leg.out_width), p(far, -leg.out_width), p(far, leg.in_width), p(rr, leg.in_width)], ASPHALT);
+            self.poly(
+                &[p(rr, -leg.out_width), p(far, -leg.out_width), p(far, leg.in_width), p(rr, leg.in_width)],
+                ASPHALT,
+            );
             self.quad_line(p(rr + 6.0, -leg.out_width - 0.15), p(far, -leg.out_width - 0.15), 0.3, CURB);
             self.quad_line(p(rr + 6.0, leg.in_width + 0.15), p(far, leg.in_width + 0.15), 0.3, CURB);
         }
@@ -372,8 +415,20 @@ impl Scene {
             let (d, ins) = (leg.d, leg.in_side());
             let p = |r: f64, lat: f64| d * r + ins * lat;
             let r0 = rr + rw / 2.0 + 1.2;
-            self.poly(&[p(r0, 0.0), p(r0 + 14.0, -1.7), p(r0 + 26.0, -0.6), p(r0 + 26.0, 0.6), p(r0 + 14.0, 1.7)], CURB);
-            self.poly(&[p(r0 + 1.0, 0.0), p(r0 + 14.0, -1.3), p(r0 + 25.0, -0.35), p(r0 + 25.0, 0.35), p(r0 + 14.0, 1.3)], Color32::from_rgb(98, 146, 76));
+            self.poly(
+                &[p(r0, 0.0), p(r0 + 14.0, -1.7), p(r0 + 26.0, -0.6), p(r0 + 26.0, 0.6), p(r0 + 14.0, 1.7)],
+                CURB,
+            );
+            self.poly(
+                &[
+                    p(r0 + 1.0, 0.0),
+                    p(r0 + 14.0, -1.3),
+                    p(r0 + 25.0, -0.35),
+                    p(r0 + 25.0, 0.35),
+                    p(r0 + 14.0, 1.3),
+                ],
+                Color32::from_rgb(98, 146, 76),
+            );
             self.quad_line(p(r0 + 26.0, 0.12), p(far, 0.12), 0.12, YELLOW);
             self.quad_line(p(r0 + 26.0, -0.12), p(far, -0.12), 0.12, YELLOW);
             let ry = leg.stop_dist;
@@ -391,7 +446,12 @@ impl Scene {
         for i in (0..n).step_by(2) {
             let a0 = i as f64 / n as f64 * std::f64::consts::TAU;
             let a1 = (i as f64 + 0.8) / n as f64 * std::f64::consts::TAU;
-            self.quad_line(V2::from_angle(a0) * (rr + rw / 2.0), V2::from_angle(a1) * (rr + rw / 2.0), 0.15, WHITE);
+            self.quad_line(
+                V2::from_angle(a0) * (rr + rw / 2.0),
+                V2::from_angle(a1) * (rr + rw / 2.0),
+                0.15,
+                WHITE,
+            );
         }
     }
 
@@ -416,7 +476,10 @@ impl Scene {
         let corner = |d: V2, ins: V2| ((d + ins) * rs, -ins, -d);
         let at = |(c, ex, ey): (V2, V2, V2), x: f64, y: f64| c + ex * x + ey * y;
         let arc = |k: (V2, V2, V2), r: f64, a0: f64, a1: f64, n: usize| -> Vec<V2> {
-            (0..=n).map(|i| a0 + (a1 - a0) * i as f64 / n as f64).map(|a| at(k, r * a.cos(), r * a.sin())).collect()
+            (0..=n)
+                .map(|i| a0 + (a1 - a0) * i as f64 / n as f64)
+                .map(|a| at(k, r * a.cos(), r * a.sin()))
+                .collect()
         };
         let band = |sc: &mut Scene, outer_pts: &[V2], inner_pts: &[V2], col: Color32| {
             for i in 0..outer_pts.len() - 1 {
@@ -428,7 +491,10 @@ impl Scene {
             let (d, ins) = (leg.d, leg.in_side());
             let p = |r: f64, lat: f64| d * r + ins * lat;
             for s in [1.0, -1.0] {
-                self.poly(&[p(rs, s * outer), p(far, s * outer), p(far, s * (outer + sw)), p(rs, s * (outer + sw))], SIDEWALK);
+                self.poly(
+                    &[p(rs, s * outer), p(far, s * outer), p(far, s * (outer + sw)), p(rs, s * (outer + sw))],
+                    SIDEWALK,
+                );
             }
             let k = corner(d, ins);
             band(self, &arc(k, slip_in, 0.0, quarter, 24), &arc(k, slip_in - sw, 0.0, quarter, 24), SIDEWALK);
@@ -441,11 +507,19 @@ impl Scene {
             let w = inner + gutter;
             self.poly(&[p(r0 - 0.01, -w), p(far, -w), p(far, w), p(r0 - 0.01, w)], ASPHALT);
             for s in [1.0, -1.0] {
-                self.poly(&[p(rs, s * inner), p(far, s * inner), p(far, s * outer), p(rs, s * outer)], ASPHALT);
+                self.poly(
+                    &[p(rs, s * inner), p(far, s * inner), p(far, s * outer), p(rs, s * outer)],
+                    ASPHALT,
+                );
                 self.quad_line(p(rs, s * (outer + 0.15)), p(far, s * (outer + 0.15)), 0.3, CURB);
             }
             let k = corner(d, ins);
-            band(self, &arc(k, slip_out + gutter, 0.0, quarter, 24), &arc(k, slip_in, 0.0, quarter, 24), ASPHALT);
+            band(
+                self,
+                &arc(k, slip_out + gutter, 0.0, quarter, 24),
+                &arc(k, slip_in, 0.0, quarter, 24),
+                ASPHALT,
+            );
             self.polyline(&arc(k, slip_in - 0.15, 0.0, quarter, 24), 0.3, CURB);
         }
         // Corner islands between the box lanes and the slip lanes.
@@ -474,7 +548,10 @@ impl Scene {
             }
             let hw = m - 0.45;
             let nose = r0 + 1.2 + hw;
-            let mut pts: Vec<V2> = (0..=12).map(|i| std::f64::consts::PI * i as f64 / 12.0).map(|a| p(nose - hw * a.sin(), hw * a.cos())).collect();
+            let mut pts: Vec<V2> = (0..=12)
+                .map(|i| std::f64::consts::PI * i as f64 / 12.0)
+                .map(|a| p(nose - hw * a.sin(), hw * a.cos()))
+                .collect();
             pts.extend([p(far, -hw), p(far, hw)]);
             self.poly(&pts, CONCRETE);
             self.quad_line(p(nose + 1.0, 0.0), p(far, 0.0), hw * 1.2, shade(ISLAND, 0.9));
@@ -524,7 +601,8 @@ impl Scene {
         for leg in &net.legs {
             let k = corner(leg.d, leg.in_side());
             let diag = (k.1 + k.2).norm();
-            let mid = (slip_out + gutter) * std::f64::consts::FRAC_1_SQRT_2 * 0.5 + (rs - inner - gutter) * 0.5;
+            let mid =
+                (slip_out + gutter) * std::f64::consts::FRAC_1_SQRT_2 * 0.5 + (rs - inner - gutter) * 0.5;
             let (a, b) = (at(k, mid, mid), at(k, 12.0, 12.0));
             self.tunnel(a, b);
             self.stairs(a, -diag);
@@ -580,7 +658,10 @@ impl Scene {
             for leg in &net.legs {
                 let r = p.dot(leg.d);
                 let lat = p.dot(leg.in_side());
-                if r > -leg.in_width.max(leg.out_width) - 6.0 && lat < leg.in_width + 4.5 + margin && lat > -leg.out_width - 4.5 - margin {
+                if r > -leg.in_width.max(leg.out_width) - 6.0
+                    && lat < leg.in_width + 4.5 + margin
+                    && lat > -leg.out_width - 4.5 - margin
+                {
                     return false;
                 }
             }
@@ -604,7 +685,11 @@ impl Scene {
             placed.push((c, rad));
             let (hx, hy) = (v2(w / 2.0, 0.0), v2(0.0, h / 2.0));
             let col = roofs[rng.below(roofs.len())];
-            self.buildings.push(([c - hx - hy, c + hx - hy, c + hx + hy, c - hx + hy], col, rng.range(0.6, 1.4) as f32));
+            self.buildings.push((
+                [c - hx - hy, c + hx - hy, c + hx + hy, c - hx + hy],
+                col,
+                rng.range(0.6, 1.4) as f32,
+            ));
             if placed.len() > 70 {
                 break;
             }
@@ -619,7 +704,11 @@ impl Scene {
                     let p = leg.d * r + leg.in_side() * lat;
                     if !placed.iter().any(|&(q, rad)| q.dist(p) < rad + 3.0) {
                         let g = rng.range(0.85, 1.15) as f32;
-                        self.trees.push((p, rng.range(2.6, 3.8) as f32, shade(Color32::from_rgb(52, 110, 50), g)));
+                        self.trees.push((
+                            p,
+                            rng.range(2.6, 3.8) as f32,
+                            shade(Color32::from_rgb(52, 110, 50), g),
+                        ));
                     }
                 }
                 r += rng.range(11.0, 17.0);
@@ -632,7 +721,11 @@ impl Scene {
                 let (ex, ey) = (-leg.in_side(), -leg.d);
                 for (x, y) in [(4.0, 9.5), (9.5, 4.0), (3.5, 15.5), (15.5, 3.5), (6.0, 6.0)] {
                     let g = rng.range(0.85, 1.15) as f32;
-                    self.trees.push((c + ex * x + ey * y, rng.range(2.4, 3.4) as f32, shade(Color32::from_rgb(52, 110, 50), g)));
+                    self.trees.push((
+                        c + ex * x + ey * y,
+                        rng.range(2.4, 3.4) as f32,
+                        shade(Color32::from_rgb(52, 110, 50), g),
+                    ));
                 }
             }
         }
@@ -661,7 +754,11 @@ impl Scene {
             let sh: Vec<Pos2> = pts.iter().map(|p| cam.to_screen(*p + off)).collect();
             painter.add(Shape::convex_polygon(sh, Color32::from_black_alpha(70), Stroke::NONE));
             let s: Vec<Pos2> = pts.iter().map(|p| cam.to_screen(*p)).collect();
-            painter.add(Shape::convex_polygon(s.clone(), shade(*col, tint), Stroke::new(1.0, shade(*col, 0.7 * tint))));
+            painter.add(Shape::convex_polygon(
+                s.clone(),
+                shade(*col, tint),
+                Stroke::new(1.0, shade(*col, 0.7 * tint)),
+            ));
             let c = pts[0].lerp(pts[2], 0.5);
             let inset: Vec<Pos2> = pts.iter().map(|p| cam.to_screen(c.lerp(*p, 0.7))).collect();
             painter.add(Shape::convex_polygon(inset, shade(*col, 1.12 * tint), Stroke::NONE));
@@ -726,7 +823,8 @@ impl DrawCtx<'_> {
     }
 
     pub fn center(&self, v: &Vehicle) -> V2 {
-        self.sim.point_behind(v, self.sim.lag(v, self.alpha) + v.len() * 0.5) + self.sim.lc_offset(v, self.alpha)
+        self.sim.point_behind(v, self.sim.lag(v, self.alpha) + v.len() * 0.5)
+            + self.sim.lc_offset(v, self.alpha)
     }
 }
 
@@ -741,7 +839,10 @@ pub fn paint_dynamic(painter: &egui::Painter, dc: &DrawCtx) {
         for l in &sim.net.links {
             if l.kind.in_box() {
                 let pts: Vec<Pos2> = l.path.pts.iter().step_by(2).map(|p| cam.to_screen(*p)).collect();
-                painter.add(Shape::line(pts, Stroke::new(1.0, Color32::from_rgba_unmultiplied(120, 200, 255, 60))));
+                painter.add(Shape::line(
+                    pts,
+                    Stroke::new(1.0, Color32::from_rgba_unmultiplied(120, 200, 255, 60)),
+                ));
             }
         }
     }
@@ -782,7 +883,11 @@ pub fn paint_dynamic(painter: &egui::Painter, dc: &DrawCtx) {
         let reserved = sim.coop.as_ref().map(|c| {
             let mut st = vec![0u8; sim.net.conflicts.len()];
             for z in c.plans.values().flat_map(|p| &p.zones) {
-                let s = if z.t_in <= sim.t && sim.t < z.t_out { 2 } else { u8::from(z.t_in > sim.t && z.t_in - sim.t < 3.0) };
+                let s = if z.t_in <= sim.t && sim.t < z.t_out {
+                    2
+                } else {
+                    u8::from(z.t_in > sim.t && z.t_in - sim.t < 3.0)
+                };
                 st[z.cid] = st[z.cid].max(s);
             }
             st
@@ -795,18 +900,30 @@ pub fn paint_dynamic(painter: &egui::Painter, dc: &DrawCtx) {
                     match st[c.id] {
                         2 => painter.circle_filled(p, r, Color32::from_rgba_unmultiplied(255, 80, 60, 200)),
                         1 => painter.circle_stroke(p, r, Stroke::new(1.8, Color32::from_rgb(255, 190, 60))),
-                        _ => painter.circle_stroke(p, r * 0.6, Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 230, 120, 70))),
+                        _ => painter.circle_stroke(
+                            p,
+                            r * 0.6,
+                            Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 230, 120, 70)),
+                        ),
                     };
                 }
                 None => {
                     let held = sim.vehicles.iter().any(|v| v.commits.contains(&c.id));
-                    let col = if held { Color32::from_rgb(255, 90, 60) } else if c.merge { Color32::from_rgb(120, 180, 255) } else { Color32::from_rgb(255, 230, 120) };
+                    let col = if held {
+                        Color32::from_rgb(255, 90, 60)
+                    } else if c.merge {
+                        Color32::from_rgb(120, 180, 255)
+                    } else {
+                        Color32::from_rgb(255, 230, 120)
+                    };
                     painter.circle_stroke(p, r, Stroke::new(1.5, col));
                 }
             }
         }
     }
-    if let Some(id) = dc.selected && let Some(v) = sim.vehicles.iter().find(|v| v.id == id) {
+    if let Some(id) = dc.selected
+        && let Some(v) = sim.vehicles.iter().find(|v| v.id == id)
+    {
         // Remaining route.
         let mut pts = vec![];
         for k in v.ri..v.route.len() {
@@ -819,14 +936,26 @@ pub fn paint_dynamic(painter: &egui::Painter, dc: &DrawCtx) {
             }
         }
         if pts.len() > 1 {
-            painter.add(Shape::dashed_line(&pts, Stroke::new(2.0, Color32::from_rgb(255, 255, 255)), 6.0, 4.0));
+            painter.add(Shape::dashed_line(
+                &pts,
+                Stroke::new(2.0, Color32::from_rgb(255, 255, 255)),
+                6.0,
+                4.0,
+            ));
         }
         for (c, ax, hl, hw) in dc.body(v) {
-            let pts: Vec<Pos2> = rect_pts(c, ax, hl + 0.6, hw + 0.6).iter().map(|p| cam.to_screen(*p)).collect();
+            let pts: Vec<Pos2> =
+                rect_pts(c, ax, hl + 0.6, hw + 0.6).iter().map(|p| cam.to_screen(*p)).collect();
             painter.add(Shape::closed_line(pts, Stroke::new(2.0, Color32::from_rgb(255, 255, 120))));
         }
-        if let Some(yid) = v.yield_to && let Some(w) = sim.vehicles.iter().find(|w| w.id == yid) {
-            painter.arrow(cam.to_screen(dc.front(v)), cam.to_screen(dc.center(w)) - cam.to_screen(dc.front(v)), Stroke::new(2.0, Color32::from_rgb(255, 160, 60)));
+        if let Some(yid) = v.yield_to
+            && let Some(w) = sim.vehicles.iter().find(|w| w.id == yid)
+        {
+            painter.arrow(
+                cam.to_screen(dc.front(v)),
+                cam.to_screen(dc.center(w)) - cam.to_screen(dc.front(v)),
+                Stroke::new(2.0, Color32::from_rgb(255, 160, 60)),
+            );
         }
     }
 }
@@ -846,10 +975,17 @@ fn paint_sensors(painter: &egui::Painter, dc: &DrawCtx) {
                 // Stop-bar presence loop.
                 let c = l.path.point(len - 4.5);
                 let on = lo.stopbar;
-                let col = if on { Color32::from_rgba_unmultiplied(255, 190, 40, 110) } else { Color32::from_rgba_unmultiplied(255, 190, 40, 18) };
+                let col = if on {
+                    Color32::from_rgba_unmultiplied(255, 190, 40, 110)
+                } else {
+                    Color32::from_rgba_unmultiplied(255, 190, 40, 18)
+                };
                 let pts = rect_pts(c, ax, 4.3, hw);
                 poly(painter, &cam, &pts, col);
-                painter.add(Shape::closed_line(pts.iter().map(|p| cam.to_screen(*p)).collect(), Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 200, 60, 150))));
+                painter.add(Shape::closed_line(
+                    pts.iter().map(|p| cam.to_screen(*p)).collect(),
+                    Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 200, 60, 150)),
+                ));
                 if lo.fault {
                     // Diagnostics flagged this station: red cross (lane on recall).
                     let red = Stroke::new((0.25 * cam.scale).max(1.5), Color32::from_rgb(240, 60, 50));
@@ -860,10 +996,17 @@ fn paint_sensors(painter: &egui::Painter, dc: &DrawCtx) {
                 if cfg.adv_dist < len {
                     let c = l.path.point(len - cfg.adv_dist);
                     let recent = sim.t - lo.last_pulse < 0.6 && !lo.stopbar;
-                    let col = if recent { Color32::from_rgba_unmultiplied(255, 220, 80, 170) } else { Color32::from_rgba_unmultiplied(255, 200, 60, 30) };
+                    let col = if recent {
+                        Color32::from_rgba_unmultiplied(255, 220, 80, 170)
+                    } else {
+                        Color32::from_rgba_unmultiplied(255, 200, 60, 30)
+                    };
                     let pts = rect_pts(c, ax, 1.0, hw);
                     poly(painter, &cam, &pts, col);
-                    painter.add(Shape::closed_line(pts.iter().map(|p| cam.to_screen(*p)).collect(), Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 200, 60, 140))));
+                    painter.add(Shape::closed_line(
+                        pts.iter().map(|p| cam.to_screen(*p)).collect(),
+                        Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 200, 60, 140)),
+                    ));
                 }
             }
         }
@@ -891,7 +1034,12 @@ fn paint_sensors(painter: &egui::Painter, dc: &DrawCtx) {
             let c = cam.to_screen(rp);
             let s = (0.7 * cam.scale).max(3.0);
             painter.add(Shape::convex_polygon(
-                vec![c + egui::vec2(0.0, -s), c + egui::vec2(s, 0.0), c + egui::vec2(0.0, s), c + egui::vec2(-s, 0.0)],
+                vec![
+                    c + egui::vec2(0.0, -s),
+                    c + egui::vec2(s, 0.0),
+                    c + egui::vec2(0.0, s),
+                    c + egui::vec2(-s, 0.0),
+                ],
                 Color32::from_rgb(190, 110, 255),
                 Stroke::NONE,
             ));
@@ -899,11 +1047,20 @@ fn paint_sensors(painter: &egui::Painter, dc: &DrawCtx) {
             let r = leg.d * (leg.stop_dist + cfg.radar_range);
             let a = cam.to_screen(r + ins * (leg.in_width + 1.0));
             let b = cam.to_screen(r);
-            painter.add(Shape::dashed_line(&[a, b], Stroke::new(1.5, Color32::from_rgba_unmultiplied(190, 110, 255, 140)), 5.0, 4.0));
+            painter.add(Shape::dashed_line(
+                &[a, b],
+                Stroke::new(1.5, Color32::from_rgba_unmultiplied(190, 110, 255, 140)),
+                5.0,
+                4.0,
+            ));
             // Sweep beam.
             let phase = (dc.time * 0.8).fract() as f32;
             let sweep = leg.d * (leg.stop_dist + cfg.radar_range * phase as f64) + ins * (leg.in_width * 0.5);
-            painter.circle_filled(cam.to_screen(sweep), (0.6 * cam.scale).max(2.0), Color32::from_rgba_unmultiplied(190, 110, 255, 90));
+            painter.circle_filled(
+                cam.to_screen(sweep),
+                (0.6 * cam.scale).max(2.0),
+                Color32::from_rgba_unmultiplied(190, 110, 255, 90),
+            );
         }
     }
 }
@@ -920,8 +1077,14 @@ fn paint_signals(painter: &egui::Painter, dc: &DrawCtx) {
                     let l = &net.links[lane];
                     // Lane head: show the most restrictive relevant indication for the lane.
                     let moves = &l.lane_moves;
-                    let sigs: Vec<(Turn, Sig)> = moves.iter().map(|&m| (net.movements[m].turn, sim.signal.status(net, m))).collect();
-                    let main = sigs.iter().find(|s| s.0 == Turn::T).or_else(|| sigs.first()).map(|s| s.1).unwrap_or(Sig::R);
+                    let sigs: Vec<(Turn, Sig)> =
+                        moves.iter().map(|&m| (net.movements[m].turn, sim.signal.status(net, m))).collect();
+                    let main = sigs
+                        .iter()
+                        .find(|s| s.0 == Turn::T)
+                        .or_else(|| sigs.first())
+                        .map(|s| s.1)
+                        .unwrap_or(Sig::R);
                     // A turn-only lane has an arrow head: its permissive phase is the
                     // flashing yellow arrow alone, never a green ball.
                     let turn_only = !sigs.iter().any(|s| s.0 == Turn::T);
@@ -943,7 +1106,11 @@ fn paint_signals(painter: &egui::Painter, dc: &DrawCtx) {
                         let pc = cam.to_screen(p);
                         let r = (0.36 * cam.scale).max(1.5);
                         if lit {
-                            painter.circle_filled(pc, r * 2.4, Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 40));
+                            painter.circle_filled(
+                                pc,
+                                r * 2.4,
+                                Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 40),
+                            );
                         }
                         painter.circle_filled(pc, r, col);
                     }
@@ -951,8 +1118,22 @@ fn paint_signals(painter: &egui::Painter, dc: &DrawCtx) {
                     let tturn = sigs.iter().find(|s| s.0 != Turn::T && (sigs.len() == 1 || s.1 != main));
                     if let Some(&(t, s)) = tturn {
                         let p = base - ax * 1.4;
-                        let col = if s == Sig::P { if blink { Color32::from_rgb(250, 200, 40) } else { shade(Color32::from_rgb(250, 200, 40), 0.3) } } else { sig_color(s) };
-                        let side = if t == Turn::L { ax.left() } else if t == Turn::R { ax.right() } else { ax };
+                        let col = if s == Sig::P {
+                            if blink {
+                                Color32::from_rgb(250, 200, 40)
+                            } else {
+                                shade(Color32::from_rgb(250, 200, 40), 0.3)
+                            }
+                        } else {
+                            sig_color(s)
+                        };
+                        let side = if t == Turn::L {
+                            ax.left()
+                        } else if t == Turn::R {
+                            ax.right()
+                        } else {
+                            ax
+                        };
                         let a = cam.to_screen(p - side * 0.6);
                         let b = cam.to_screen(p + side * 0.6);
                         painter.arrow(a, b - a, Stroke::new((0.25 * cam.scale).max(1.2), col));
@@ -961,7 +1142,13 @@ fn paint_signals(painter: &egui::Painter, dc: &DrawCtx) {
                     let a = l.path.point(l.length()) + ax.right() * (leg.lane_w * 0.45);
                     let b = l.path.point(l.length()) - ax.right() * (leg.lane_w * 0.45);
                     let col = sig_color(main);
-                    painter.line_segment([cam.to_screen(a), cam.to_screen(b)], Stroke::new((0.25 * cam.scale).max(1.0), Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 140)));
+                    painter.line_segment(
+                        [cam.to_screen(a), cam.to_screen(b)],
+                        Stroke::new(
+                            (0.25 * cam.scale).max(1.0),
+                            Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 140),
+                        ),
+                    );
                     let _ = k;
                 }
             }
@@ -970,19 +1157,33 @@ fn paint_signals(painter: &egui::Painter, dc: &DrawCtx) {
                 let st = sim.signal.cw[i].state;
                 let col = match st {
                     PedSig::Walk => Color32::from_rgb(235, 245, 255),
-                    PedSig::Fdw => if blink { Color32::from_rgb(255, 140, 40) } else { Color32::from_rgb(70, 40, 20) },
+                    PedSig::Fdw => {
+                        if blink {
+                            Color32::from_rgb(255, 140, 40)
+                        } else {
+                            Color32::from_rgb(70, 40, 20)
+                        }
+                    }
                     PedSig::Dw => Color32::from_rgb(230, 110, 30),
                 };
                 let dir = (cw.b - cw.a).norm();
                 for (p, s) in [(cw.a, -1.0), (cw.b, 1.0)] {
                     let q = cam.to_screen(p + dir * (s * 1.6));
                     let r = (0.55 * cam.scale).max(2.5);
-                    painter.rect_filled(Rect::from_center_size(q, egui::vec2(r * 2.2, r * 2.2)), 2.0, Color32::from_rgb(20, 20, 22));
+                    painter.rect_filled(
+                        Rect::from_center_size(q, egui::vec2(r * 2.2, r * 2.2)),
+                        2.0,
+                        Color32::from_rgb(20, 20, 22),
+                    );
                     painter.circle_filled(q, r * 0.8, col);
                 }
                 if sim.signal.cw[i].called && st == PedSig::Dw {
                     let q = cam.to_screen(cw.a.lerp(cw.b, 0.5));
-                    painter.circle_stroke(q, (1.2 * cam.scale).max(4.0), Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 80)));
+                    painter.circle_stroke(
+                        q,
+                        (1.2 * cam.scale).max(4.0),
+                        Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 80)),
+                    );
                 }
             }
         }
@@ -1001,9 +1202,19 @@ fn paint_signals(painter: &egui::Painter, dc: &DrawCtx) {
                         c + egui::vec2(a.cos(), a.sin()) * r
                     })
                     .collect();
-                painter.add(Shape::convex_polygon(pts, Color32::from_rgb(200, 30, 30), Stroke::new(1.0, Color32::WHITE)));
+                painter.add(Shape::convex_polygon(
+                    pts,
+                    Color32::from_rgb(200, 30, 30),
+                    Stroke::new(1.0, Color32::WHITE),
+                ));
                 if r > 6.0 {
-                    painter.text(c, Align2::CENTER_CENTER, "STOP", FontId::proportional(r * 0.55), Color32::WHITE);
+                    painter.text(
+                        c,
+                        Align2::CENTER_CENTER,
+                        "STOP",
+                        FontId::proportional(r * 0.55),
+                        Color32::WHITE,
+                    );
                 }
             }
         }
@@ -1029,7 +1240,10 @@ fn paint_admission(painter: &egui::Painter, dc: &DrawCtx) {
             let n = ax.right() * (leg.lane_w * 0.45);
             let glow = Color32::from_rgba_unmultiplied(ADMITTING.r(), ADMITTING.g(), ADMITTING.b(), 28);
             poly(painter, &cam, &[end + n, end - n, end - n - ax * 8.0, end + n - ax * 8.0], glow);
-            painter.line_segment([cam.to_screen(end + n), cam.to_screen(end - n)], Stroke::new((0.3 * cam.scale).max(1.5), ADMITTING));
+            painter.line_segment(
+                [cam.to_screen(end + n), cam.to_screen(end - n)],
+                Stroke::new((0.3 * cam.scale).max(1.5), ADMITTING),
+            );
         }
     }
 }
@@ -1049,7 +1263,11 @@ fn base_color(v: &Vehicle, by: ColorBy) -> Color32 {
             Turn::T => Color32::from_rgb(200, 200, 205),
             Turn::R => Color32::from_rgb(255, 150, 70),
         },
-        ColorBy::Speed => lerp_color(Color32::from_rgb(220, 60, 60), Color32::from_rgb(70, 210, 120), (v.v / v.v0.max(1.0)) as f32),
+        ColorBy::Speed => lerp_color(
+            Color32::from_rgb(220, 60, 60),
+            Color32::from_rgb(70, 210, 120),
+            (v.v / v.v0.max(1.0)) as f32,
+        ),
     }
 }
 
@@ -1080,13 +1298,24 @@ fn paint_vehicle(painter: &egui::Painter, dc: &DrawCtx, v: &Vehicle) {
                         // Window band along both sides and roof units.
                         for side in [1.0, -1.0] {
                             let a = c + ax.right() * (hw * 0.78 * side);
-                            poly(painter, &cam, &rect_pts(a, ax, hl * 0.92, hw * 0.16), shade(Color32::from_rgb(40, 60, 80), tint));
+                            poly(
+                                painter,
+                                &cam,
+                                &rect_pts(a, ax, hl * 0.92, hw * 0.16),
+                                shade(Color32::from_rgb(40, 60, 80), tint),
+                            );
                         }
                         if k == 1 || segs.len() == 1 {
-                            poly(painter, &cam, &rect_pts(c, ax, 0.9, hw * 0.5), shade(Color32::from_rgb(220, 220, 220), tint));
+                            poly(
+                                painter,
+                                &cam,
+                                &rect_pts(c, ax, 0.9, hw * 0.5),
+                                shade(Color32::from_rgb(220, 220, 220), tint),
+                            );
                         }
                     } else if k > 0 || v.kind == VKind::Truck {
-                        let pts: Vec<Pos2> = rect_pts(c, ax, hl, hw).iter().map(|p| cam.to_screen(*p)).collect();
+                        let pts: Vec<Pos2> =
+                            rect_pts(c, ax, hl, hw).iter().map(|p| cam.to_screen(*p)).collect();
                         painter.add(Shape::closed_line(pts, Stroke::new(0.8, shade(body, 0.7))));
                     }
                 }
@@ -1094,7 +1323,12 @@ fn paint_vehicle(painter: &egui::Painter, dc: &DrawCtx, v: &Vehicle) {
             if !simple {
                 // Windshield.
                 let ws = fc + fax * (fhl - 0.55);
-                poly(painter, &cam, &rect_pts(ws, fax, 0.28, hw * 0.85), shade(Color32::from_rgb(40, 55, 70), tint));
+                poly(
+                    painter,
+                    &cam,
+                    &rect_pts(ws, fax, 0.28, hw * 0.85),
+                    shade(Color32::from_rgb(40, 55, 70), tint),
+                );
             }
         }
         _ => {
@@ -1102,21 +1336,59 @@ fn paint_vehicle(painter: &egui::Painter, dc: &DrawCtx, v: &Vehicle) {
             let pts = rect_pts(c, ax, hl, hw);
             poly(painter, &cam, &pts, body);
             if v.kind == VKind::Motorcycle {
-                painter.circle_filled(cam.to_screen(c - ax * 0.1), (0.35 * cam.scale).max(1.5), Color32::from_rgb(25, 25, 25));
+                painter.circle_filled(
+                    cam.to_screen(c - ax * 0.1),
+                    (0.35 * cam.scale).max(1.5),
+                    Color32::from_rgb(25, 25, 25),
+                );
             } else if !simple {
                 let glass = shade(Color32::from_rgb(35, 48, 62), tint);
                 // Windshield, roof, rear window.
-                poly(painter, &cam, &[c + ax * (hl * 0.55) + ax.right() * (hw * 0.82), c + ax * (hl * 0.55) - ax.right() * (hw * 0.82), c + ax * (hl * 0.2) - ax.right() * (hw * 0.72), c + ax * (hl * 0.2) + ax.right() * (hw * 0.72)], glass);
-                poly(painter, &cam, &rect_pts(c - ax * (hl * 0.12), ax, hl * 0.3, hw * 0.72), shade(body, 0.88));
+                poly(
+                    painter,
+                    &cam,
+                    &[
+                        c + ax * (hl * 0.55) + ax.right() * (hw * 0.82),
+                        c + ax * (hl * 0.55) - ax.right() * (hw * 0.82),
+                        c + ax * (hl * 0.2) - ax.right() * (hw * 0.72),
+                        c + ax * (hl * 0.2) + ax.right() * (hw * 0.72),
+                    ],
+                    glass,
+                );
+                poly(
+                    painter,
+                    &cam,
+                    &rect_pts(c - ax * (hl * 0.12), ax, hl * 0.3, hw * 0.72),
+                    shade(body, 0.88),
+                );
                 poly(painter, &cam, &rect_pts(c - ax * (hl * 0.58), ax, hl * 0.13, hw * 0.7), glass);
                 if v.kind == VKind::Emergency {
                     let on = blink;
                     let l1 = if on { Color32::from_rgb(255, 40, 40) } else { Color32::from_rgb(40, 80, 255) };
                     let l2 = if on { Color32::from_rgb(40, 80, 255) } else { Color32::from_rgb(255, 40, 40) };
-                    poly(painter, &cam, &rect_pts(c - ax * 0.2 + ax.right() * (hw * 0.4), ax, 0.25, hw * 0.35), l1);
-                    poly(painter, &cam, &rect_pts(c - ax * 0.2 - ax.right() * (hw * 0.4), ax, 0.25, hw * 0.35), l2);
-                    painter.circle_filled(cam.to_screen(c), 4.0 * cam.scale, Color32::from_rgba_unmultiplied(l1.r(), l1.g(), l1.b(), 22));
-                    poly(painter, &cam, &rect_pts(c + ax * (hl * 0.05), ax, 0.3, hw * 0.9), Color32::from_rgb(210, 40, 40));
+                    poly(
+                        painter,
+                        &cam,
+                        &rect_pts(c - ax * 0.2 + ax.right() * (hw * 0.4), ax, 0.25, hw * 0.35),
+                        l1,
+                    );
+                    poly(
+                        painter,
+                        &cam,
+                        &rect_pts(c - ax * 0.2 - ax.right() * (hw * 0.4), ax, 0.25, hw * 0.35),
+                        l2,
+                    );
+                    painter.circle_filled(
+                        cam.to_screen(c),
+                        4.0 * cam.scale,
+                        Color32::from_rgba_unmultiplied(l1.r(), l1.g(), l1.b(), 22),
+                    );
+                    poly(
+                        painter,
+                        &cam,
+                        &rect_pts(c + ax * (hl * 0.05), ax, 0.3, hw * 0.9),
+                        Color32::from_rgb(210, 40, 40),
+                    );
                 }
             }
         }
@@ -1144,25 +1416,49 @@ fn paint_vehicle(painter: &egui::Painter, dc: &DrawCtx, v: &Vehicle) {
         if dc.ov.night {
             let tip = p + fax * 14.0 + fax.right() * (2.5 * side);
             let tip2 = p + fax * 14.0 - fax.right() * (1.5 * side);
-            painter.add(Shape::convex_polygon(vec![cam.to_screen(p), cam.to_screen(tip), cam.to_screen(tip2)], Color32::from_rgba_unmultiplied(255, 240, 180, 26), Stroke::NONE));
+            painter.add(Shape::convex_polygon(
+                vec![cam.to_screen(p), cam.to_screen(tip), cam.to_screen(tip2)],
+                Color32::from_rgba_unmultiplied(255, 240, 180, 26),
+                Stroke::NONE,
+            ));
         }
-        painter.circle_filled(cam.to_screen(p), (0.15 * cam.scale).max(0.8), Color32::from_rgb(255, 250, 215));
+        painter.circle_filled(
+            cam.to_screen(p),
+            (0.15 * cam.scale).max(0.8),
+            Color32::from_rgb(255, 250, 215),
+        );
     }
     // Turn indicators near and inside the intersection.
     let link = &sim.net.links[v.link()];
     let near = link.kind.in_box() || (link.kind == LinkKind::Inbound && link.length() - v.s < 70.0);
     if near && v.turn != Turn::T && blink {
         let side = if v.turn == Turn::L { -1.0 } else { 1.0 };
-        for p in [front - fax * 0.2 + fax.right() * (hw * side), rear + lax * 0.2 + lax.right() * (lhw * side)] {
-            painter.circle_filled(cam.to_screen(p), (0.2 * cam.scale).max(1.2), Color32::from_rgb(255, 170, 30));
+        for p in
+            [front - fax * 0.2 + fax.right() * (hw * side), rear + lax * 0.2 + lax.right() * (lhw * side)]
+        {
+            painter.circle_filled(
+                cam.to_screen(p),
+                (0.2 * cam.scale).max(1.2),
+                Color32::from_rgb(255, 170, 30),
+            );
         }
     }
     if v.manual {
-        painter.circle_stroke(cam.to_screen(fc), (1.2 * cam.scale).max(4.0), Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 90)));
+        painter.circle_stroke(
+            cam.to_screen(fc),
+            (1.2 * cam.scale).max(4.0),
+            Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 90)),
+        );
     }
     if dc.ov.labels && cam.scale > 5.0 {
         let txt = format!("{:.0}s", v.delay);
-        painter.text(cam.to_screen(lc), Align2::CENTER_CENTER, txt, FontId::proportional(10.0), Color32::WHITE);
+        painter.text(
+            cam.to_screen(lc),
+            Align2::CENTER_CENTER,
+            txt,
+            FontId::proportional(10.0),
+            Color32::WHITE,
+        );
     }
     if v.reason == Reason::Yielding && dc.ov.labels {
         painter.circle_filled(cam.to_screen(front + fax * 1.0), 2.5, Color32::from_rgb(255, 160, 60));
@@ -1199,16 +1495,22 @@ pub fn paint_detections(painter: &egui::Painter, dc: &DrawCtx) {
                 }
             }
             Source::Radar => {
-                painter.circle_stroke(cam.to_screen(c), (hl as f32 * 0.6 * cam.scale).max(4.0), Stroke::new(1.0, Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 140)));
+                painter.circle_stroke(
+                    cam.to_screen(c),
+                    (hl as f32 * 0.6 * cam.scale).max(4.0),
+                    Stroke::new(1.0, Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 140)),
+                );
             }
             Source::Cv => {
                 let p = cam.to_screen(c);
                 for r in [3.0f32, 6.0] {
                     painter.add(Shape::Path(PathShape::line(
-                        (0..7).map(|i| {
-                            let a = -2.3 + i as f32 * 0.27;
-                            p + egui::vec2(a.cos(), a.sin()) * r * (cam.scale / 4.0).max(0.8)
-                        }).collect(),
+                        (0..7)
+                            .map(|i| {
+                                let a = -2.3 + i as f32 * 0.27;
+                                p + egui::vec2(a.cos(), a.sin()) * r * (cam.scale / 4.0).max(0.8)
+                            })
+                            .collect(),
                         PathStroke::new(1.2, col),
                     )));
                 }
@@ -1225,7 +1527,11 @@ fn paint_ped(painter: &egui::Painter, dc: &DrawCtx, p: &crate::sim::Ped) {
     let cw = &sim.net.crosswalks[p.cw];
     let dir = (cw.b - cw.a).norm() * p.dir;
     let fwd = if p.state == PedState::Leaving { sim.net.legs[cw.leg].d } else { dir };
-    let alpha = if p.state == PedState::Leaving { (255.0 * (1.0 - p.t_state / 2.0)).clamp(0.0, 255.0) as u8 } else { 255 };
+    let alpha = if p.state == PedState::Leaving {
+        (255.0 * (1.0 - p.t_state / 2.0)).clamp(0.0, 255.0) as u8
+    } else {
+        255
+    };
     let shirts = [
         Color32::from_rgb(220, 80, 80),
         Color32::from_rgb(80, 120, 220),
@@ -1243,12 +1549,19 @@ fn paint_ped(painter: &egui::Painter, dc: &DrawCtx, p: &crate::sim::Ped) {
     for (s, sw) in [(1.0, swing), (-1.0, -swing)] {
         let hip = pos + side * (0.12 * s);
         let foot = hip + fwd * sw;
-        painter.line_segment([cam.to_screen(hip), cam.to_screen(foot)], Stroke::new((0.12 * cam.scale).max(1.0), Color32::from_rgba_unmultiplied(40, 40, 50, alpha)));
+        painter.line_segment(
+            [cam.to_screen(hip), cam.to_screen(foot)],
+            Stroke::new((0.12 * cam.scale).max(1.0), Color32::from_rgba_unmultiplied(40, 40, 50, alpha)),
+        );
     }
     // Shoulders and head.
     let sh = rect_pts(pos, side, 0.28, 0.14);
     poly(painter, &cam, &sh, shirt);
-    painter.circle_filled(cam.to_screen(pos), (0.13 * cam.scale).max(1.0), Color32::from_rgba_unmultiplied(70, 50, 40, alpha));
+    painter.circle_filled(
+        cam.to_screen(pos),
+        (0.13 * cam.scale).max(1.0),
+        Color32::from_rgba_unmultiplied(70, 50, 40, alpha),
+    );
     if p.state == PedState::Waiting && cam.scale > 3.0 {
         let wait = sim.t - p.arrive_t;
         if wait > 20.0 {
@@ -1269,23 +1582,46 @@ pub fn hud(painter: &egui::Painter, rect: Rect, sim: &Sim, ctrl_name: &str, spee
         ctrl_name
     );
     let pos = rect.left_top() + egui::vec2(12.0, 10.0);
-    let r = painter.text(pos + egui::vec2(1.0, 1.0), Align2::LEFT_TOP, &txt, FontId::monospace(14.0), Color32::from_black_alpha(160));
+    let r = painter.text(
+        pos + egui::vec2(1.0, 1.0),
+        Align2::LEFT_TOP,
+        &txt,
+        FontId::monospace(14.0),
+        Color32::from_black_alpha(160),
+    );
     painter.text(pos, Align2::LEFT_TOP, &txt, FontId::monospace(14.0), Color32::WHITE);
     if let Some(c) = &sim.coop {
         let mut line = if c.scheduling == Scheduling::FirstCome {
             format!("First come, first served  ·  {} vehicles scheduled", c.plans.len())
         } else {
-            let names: Vec<&str> = c.ring_phases().into_iter().flatten().map(|m| sim.net.movements[m].name.as_str()).collect();
+            let names: Vec<&str> =
+                c.ring_phases().into_iter().flatten().map(|m| sim.net.movements[m].name.as_str()).collect();
             let group = if c.group() == 0 { "N–S" } else { "E–W" };
             let serving = if names.is_empty() { "switching".to_string() } else { names.join(" + ") };
             format!("Serving {group}: {serving}  ·  {} vehicles scheduled", c.plans.len())
         };
-        if sim.vehicles.iter().any(|v| v.kind == VKind::Emergency && c.managed(v.movement) && !c.plans.contains_key(&v.id)) {
+        if sim
+            .vehicles
+            .iter()
+            .any(|v| v.kind == VKind::Emergency && c.managed(v.movement) && !c.plans.contains_key(&v.id))
+        {
             line.push_str("  ·  🚨 EMERGENCY VEHICLE FIRST");
         }
         let p2 = pos + egui::vec2(0.0, r.height() + 4.0);
-        painter.text(p2 + egui::vec2(1.0, 1.0), Align2::LEFT_TOP, &line, FontId::proportional(13.0), Color32::from_black_alpha(160));
-        painter.text(p2, Align2::LEFT_TOP, &line, FontId::proportional(13.0), Color32::from_rgb(200, 245, 255));
+        painter.text(
+            p2 + egui::vec2(1.0, 1.0),
+            Align2::LEFT_TOP,
+            &line,
+            FontId::proportional(13.0),
+            Color32::from_black_alpha(160),
+        );
+        painter.text(
+            p2,
+            Align2::LEFT_TOP,
+            &line,
+            FontId::proportional(13.0),
+            Color32::from_rgb(200, 245, 255),
+        );
     }
     if sim.signalized() {
         let st = &sim.net.stages[sim.signal.stage];
@@ -1299,8 +1635,20 @@ pub fn hud(painter: &egui::Painter, rect: Rect, sim: &Sim, ctrl_name: &str, spee
             line.push_str("  ·  🚨 EMERGENCY PREEMPTION");
         }
         let p2 = pos + egui::vec2(0.0, r.height() + 4.0);
-        painter.text(p2 + egui::vec2(1.0, 1.0), Align2::LEFT_TOP, &line, FontId::proportional(13.0), Color32::from_black_alpha(160));
-        painter.text(p2, Align2::LEFT_TOP, &line, FontId::proportional(13.0), Color32::from_rgb(230, 240, 255));
+        painter.text(
+            p2 + egui::vec2(1.0, 1.0),
+            Align2::LEFT_TOP,
+            &line,
+            FontId::proportional(13.0),
+            Color32::from_black_alpha(160),
+        );
+        painter.text(
+            p2,
+            Align2::LEFT_TOP,
+            &line,
+            FontId::proportional(13.0),
+            Color32::from_rgb(230, 240, 255),
+        );
     }
 }
 

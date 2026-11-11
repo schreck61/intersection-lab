@@ -6,13 +6,13 @@
 //! usage: bench [layout|all] [minutes] [seeds] [demand-scale] [pattern]
 //!        bench sensors <layout> [minutes] [seeds]   (sensor-package study)
 
-use std::time::Instant;
 use intersection_lab::control::CtrlKind;
-use intersection_lab::{run_scenario, scenario};
+use intersection_lab::sim::ControlMode;
 use intersection_lab::sim::demand::{DemandConfig, Pattern};
 use intersection_lab::sim::network::{LayoutKind, Network};
 use intersection_lab::sim::sensors::{Conditions, SensorConfig};
-use intersection_lab::sim::ControlMode;
+use intersection_lab::{run_scenario, scenario};
+use std::time::Instant;
 
 /// How much does each sensor package help each sensor-driven controller, with ideal
 /// and field-realistic sensors, across weather, and with failed loop detectors?
@@ -32,32 +32,71 @@ fn sensor_study(kind: LayoutKind, minutes: f64, seeds: u64) {
         ("100% CV only".into(), cv_only),
         ("+radar IDEAL".into(), rad.clone().ideal()),
     ];
-    table(kind, "Sensor packages (realistic errors, clear day; last column ideal sensors)", &packages, &demand, minutes, seeds);
+    table(
+        kind,
+        "Sensor packages (realistic errors, clear day; last column ideal sensors)",
+        &packages,
+        &demand,
+        minutes,
+        seeds,
+    );
 
     let mut conds: Vec<(String, SensorConfig)> = Conditions::ALL
         .iter()
         .map(|&c| (c.name().to_string(), SensorConfig { conditions: c, ..rad.clone() }))
         .collect();
     conds.push(("loops, 25% faulty".into(), SensorConfig { loop_fault: 0.25, ..loops }));
-    conds.push(("fog + 25% faulty".into(), SensorConfig { conditions: Conditions::Fog, loop_fault: 0.25, ..rad }));
-    table(kind, "Weather and detector faults (loops + camera + radar unless noted)", &conds, &demand, minutes, seeds);
+    conds.push((
+        "fog + 25% faulty".into(),
+        SensorConfig { conditions: Conditions::Fog, loop_fault: 0.25, ..rad },
+    ));
+    table(
+        kind,
+        "Weather and detector faults (loops + camera + radar unless noted)",
+        &conds,
+        &demand,
+        minutes,
+        seeds,
+    );
 }
 
-fn table(kind: LayoutKind, title: &str, packages: &[(String, SensorConfig)], demand: &DemandConfig, minutes: f64, seeds: u64) {
-    println!("\n=== {} | {title} | person delay incl. unserved (s), {:.0} min x {} seeds ===", kind.name(), minutes, seeds);
+fn table(
+    kind: LayoutKind,
+    title: &str,
+    packages: &[(String, SensorConfig)],
+    demand: &DemandConfig,
+    minutes: f64,
+    seeds: u64,
+) {
+    println!(
+        "\n=== {} | {title} | person delay incl. unserved (s), {:.0} min x {} seeds ===",
+        kind.name(),
+        minutes,
+        seeds
+    );
     print!("{:<14}", "controller");
     for (n, _) in packages {
         print!(" {:>17}", n);
     }
     println!();
-    for c in [CtrlKind::Actuated, CtrlKind::MaxPressure, CtrlKind::Predictive, CtrlKind::DeepRl, CtrlKind::Hybrid] {
+    for c in
+        [CtrlKind::Actuated, CtrlKind::MaxPressure, CtrlKind::Predictive, CtrlKind::DeepRl, CtrlKind::Hybrid]
+    {
         let hs: Vec<_> = packages
             .iter()
             .map(|(_, s)| {
                 let (d, s) = (demand.clone(), s.clone());
                 std::thread::spawn(move || {
                     (0..seeds)
-                        .map(|k| run_scenario(scenario(kind, ControlMode::Signal, c, &d, &s, 1000 + k), 300.0, minutes * 60.0).0.person_delay_all)
+                        .map(|k| {
+                            run_scenario(
+                                scenario(kind, ControlMode::Signal, c, &d, &s, 1000 + k),
+                                300.0,
+                                minutes * 60.0,
+                            )
+                            .0
+                            .person_delay_all
+                        })
                         .sum::<f64>()
                         / seeds as f64
                 })
@@ -77,7 +116,9 @@ fn main() {
         let which = args.get(2).map(|s| s.as_str()).unwrap_or("arterial4");
         let minutes: f64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(20.0);
         let seeds: u64 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(3);
-        for k in LayoutKind::ALL.iter().copied().filter(|k| k.signalized() && (which == "all" || k.key() == which)) {
+        for k in
+            LayoutKind::ALL.iter().copied().filter(|k| k.signalized() && (which == "all" || k.key() == which))
+        {
             sensor_study(k, minutes, seeds);
         }
         return;
@@ -132,7 +173,14 @@ fn main() {
                     let t0 = Instant::now();
                     let mut acc = [0.0f64; 8];
                     for seed in 0..seeds {
-                        let sim = scenario(kind, mode, c.unwrap_or(CtrlKind::Fixed), &demand, &sensors, 1000 + seed);
+                        let sim = scenario(
+                            kind,
+                            mode,
+                            c.unwrap_or(CtrlKind::Fixed),
+                            &demand,
+                            &sensors,
+                            1000 + seed,
+                        );
                         let (s, coll) = run_scenario(sim, 300.0, minutes * 60.0);
                         acc[0] += s.avg_delay;
                         acc[1] += s.p95_delay;

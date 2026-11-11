@@ -18,8 +18,8 @@ use crate::sim::stats::{HIST_BIN, Summary, los};
 use crate::sim::vtypes::{ALL_KINDS, VKind};
 use crate::sim::world::{CorridorSummary, SPACING, World};
 use crate::sim::{ControlMode, LeftMode, Sim};
-use egui::{Color32, RichText, Sense, Ui, vec2};
 use bench::{Bench, BenchRow, Job};
+use egui::{Color32, RichText, Sense, Ui, vec2};
 use render::{Camera, ColorBy, DrawCtx, Overlays, Scene};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
@@ -203,7 +203,10 @@ impl App {
                     self.twin_sched = Scheduling::Batches;
                 }
                 (None, None) if b == "fcfs" => self.twin_sched = Scheduling::FirstCome,
-                (None, None) => self.twin_mode = if b == "allway" { ControlMode::AllWayStop } else { ControlMode::TwoWayStop },
+                (None, None) => {
+                    self.twin_mode =
+                        if b == "allway" { ControlMode::AllWayStop } else { ControlMode::TwoWayStop }
+                }
             }
         }
         self.rebuild(false);
@@ -220,7 +223,9 @@ impl App {
         }
         self.ov.night = var("TS_NIGHT").is_some();
         self.show_about = var("TS_ABOUT").is_some();
-        if let Some(c) = var("TS_COND").and_then(|v| Conditions::ALL.into_iter().find(|c| format!("{c:?}").eq_ignore_ascii_case(&v))) {
+        if let Some(c) = var("TS_COND")
+            .and_then(|v| Conditions::ALL.into_iter().find(|c| format!("{c:?}").eq_ignore_ascii_case(&v)))
+        {
             self.world.sims[self.focus].sensors.conditions = c;
         }
         if let Some(f) = var("TS_LOOP_FAULT").and_then(|v| v.parse().ok()) {
@@ -255,7 +260,11 @@ impl App {
         }
         let old = &self.world.sims[self.focus];
         let net = Network::build(self.layout);
-        let demand = if keep_demand && old.net.kind == self.layout { old.demand.clone() } else { DemandConfig::default_for(&net) };
+        let demand = if keep_demand && old.net.kind == self.layout {
+            old.demand.clone()
+        } else {
+            DemandConfig::default_for(&net)
+        };
         let template = Self::settings_of(old);
         // Under the green wave, the controller to give back when it ends.
         let ctrl = self.world.controller_before_wave(self.focus).unwrap_or(self.ctrl);
@@ -287,7 +296,13 @@ impl App {
         let demand = src.demand.clone();
         // B runs one controller everywhere; under the green wave, the one it ran before.
         let ctrl = self.twin.as_ref().and_then(|t| t.controller_before_wave(0)).unwrap_or(self.twin_ctrl);
-        self.twin = Some(self.make_world(self.twin_mode, ctrl, (self.twin_policy, self.twin_sched), demand, &template));
+        self.twin = Some(self.make_world(
+            self.twin_mode,
+            ctrl,
+            (self.twin_policy, self.twin_sched),
+            demand,
+            &template,
+        ));
         self.twin_summary = Summary::default();
     }
 
@@ -318,7 +333,14 @@ impl App {
     /// One intersection, or a corridor of `corridor_n` along the main road. The
     /// cooperative crossing always stands alone: its manager schedules every vehicle from
     /// the edge of its own map.
-    fn make_world(&self, mode: ControlMode, ctrl: CtrlKind, (policy, sched): (GapPolicy, Scheduling), demand: DemandConfig, settings: &Sim) -> World {
+    fn make_world(
+        &self,
+        mode: ControlMode,
+        ctrl: CtrlKind,
+        (policy, sched): (GapPolicy, Scheduling),
+        demand: DemandConfig,
+        settings: &Sim,
+    ) -> World {
         let n = if self.is_coop() { 1 } else { self.corridor_n };
         let mut w = World::corridor(n, self.layout, mode, ctrl, &demand, self.seed);
         for sim in &mut w.sims {
@@ -457,7 +479,11 @@ impl App {
                     VKind::Emergency => "🚑",
                 };
                 let sel = self.tool == Tool::Vehicle && self.spawn_kind == k;
-                if ui.selectable_label(sel, format!("{icon} {}", k.name())).on_hover_text("Then click an approach road (or use the N/E/S/W buttons)").clicked() {
+                if ui
+                    .selectable_label(sel, format!("{icon} {}", k.name()))
+                    .on_hover_text("Then click an approach road (or use the N/E/S/W buttons)")
+                    .clicked()
+                {
                     self.tool = if sel { Tool::Select } else { Tool::Vehicle };
                     self.spawn_kind = k;
                 }
@@ -466,11 +492,15 @@ impl App {
             let walk = !net.crosswalks.is_empty();
             let no_walk = match net.kind {
                 LayoutKind::Cooperative => "No crosswalks here: pedestrians use underground passages",
-                LayoutKind::Roundabout => "No crosswalks here: the roundabout is simulated without pedestrians",
+                LayoutKind::Roundabout => {
+                    "No crosswalks here: the roundabout is simulated without pedestrians"
+                }
                 _ => "No crosswalks here",
             };
             let ped = ui
-                .add_enabled_ui(walk, |ui| ui.selectable_label(self.tool == Tool::Pedestrian, "🚶 Pedestrian"))
+                .add_enabled_ui(walk, |ui| {
+                    ui.selectable_label(self.tool == Tool::Pedestrian, "🚶 Pedestrian")
+                })
                 .inner
                 .on_hover_text("Click near a crosswalk corner")
                 .on_disabled_hover_text(no_walk);
@@ -495,7 +525,8 @@ impl App {
                         (leg.compass.letter(), leg.compass.bound())
                     };
                     if ui.button(format!("+ {letter}")).on_hover_text(format!("{bound} approach")).clicked() {
-                        let ok = self.world.sims[self.focus].spawn_manual(li, self.spawn_kind, self.spawn_turn);
+                        let ok =
+                            self.world.sims[self.focus].spawn_manual(li, self.spawn_kind, self.spawn_turn);
                         if let Some(t) = self.twin.as_mut() {
                             t.sims[self.focus].spawn_manual(li, self.spawn_kind, self.spawn_turn);
                         }
@@ -909,11 +940,20 @@ impl App {
         });
     }
 
-    fn strategy_name(&self, mode: ControlMode, ctrl: CtrlKind, (policy, sched): (GapPolicy, Scheduling)) -> String {
+    fn strategy_name(
+        &self,
+        mode: ControlMode,
+        ctrl: CtrlKind,
+        (policy, sched): (GapPolicy, Scheduling),
+    ) -> String {
         match (mode, sched) {
             (ControlMode::Signal, _) if self.layout.signalized() => ctrl.short().to_string(),
-            (ControlMode::Cooperative, Scheduling::Batches) => format!("Intersection manager · {} gaps", policy.label()),
-            (ControlMode::Cooperative, Scheduling::FirstCome) => format!("First come, first served · {} gaps", policy.label()),
+            (ControlMode::Cooperative, Scheduling::Batches) => {
+                format!("Intersection manager · {} gaps", policy.label())
+            }
+            (ControlMode::Cooperative, Scheduling::FirstCome) => {
+                format!("First come, first served · {} gaps", policy.label())
+            }
             _ => mode.name().to_string(),
         }
     }
@@ -962,7 +1002,9 @@ impl App {
             })
             .response
             .labelled_by(label.id)
-            .on_hover_text("How long after a crossing vehicle leaves a conflict zone the next one may enter it");
+            .on_hover_text(
+                "How long after a crossing vehicle leaves a conflict zone the next one may enter it",
+            );
         if p != self.coop_policy {
             // Live: trajectories already granted keep their gaps.
             self.coop_policy = p;
@@ -1234,7 +1276,13 @@ impl App {
         let cyan = Color32::from_rgb(90, 220, 240);
         ui.heading("Intersection manager");
         if c.scheduling == Scheduling::FirstCome {
-            ui.label(RichText::new("First come, first served: each vehicle gets the earliest gap that fits as it arrives").strong().color(cyan));
+            ui.label(
+                RichText::new(
+                    "First come, first served: each vehicle gets the earliest gap that fits as it arrives",
+                )
+                .strong()
+                .color(cyan),
+            );
             egui::Grid::new("coop_kpis").num_columns(3).spacing(vec2(16.0, 6.0)).show(ui, |ui| {
                 Self::kpi(ui, "vehicles scheduled", c.plans.len().to_string(), Color32::WHITE);
                 Self::kpi(ui, "zone reservations", c.reservations().to_string(), Color32::WHITE);
@@ -1249,7 +1297,9 @@ impl App {
         } else {
             self.phase_table(ui, c, sim);
         }
-        ui.label(RichText::new("Right turns use the slip lanes and never enter the box.").small().color(gray));
+        ui.label(
+            RichText::new("Right turns use the slip lanes and never enter the box.").small().color(gray),
+        );
         ui.add_space(4.0);
         self.safety_monitors(ui, c);
     }
@@ -1272,14 +1322,23 @@ impl App {
         egui::Grid::new("coop_kpis").num_columns(3).spacing(vec2(16.0, 6.0)).show(ui, |ui| {
             Self::kpi(ui, "vehicles scheduled", c.plans.len().to_string(), Color32::WHITE);
             Self::kpi(ui, "zone reservations", c.reservations().to_string(), Color32::WHITE);
-            Self::kpi(ui, "average cycle", if cycles >= 1.0 { format!("{:.0} s", sim.t / cycles) } else { "–".into() }, Color32::WHITE);
+            Self::kpi(
+                ui,
+                "average cycle",
+                if cycles >= 1.0 { format!("{:.0} s", sim.t / cycles) } else { "–".into() },
+                Color32::WHITE,
+            );
             ui.end_row();
             Self::kpi(ui, "switching lost / cycle", format!("{:.1} s", c.lost_time()), Color32::WHITE);
             Self::kpi(ui, "phases served", c.stats.batches.to_string(), Color32::WHITE);
             Self::kpi(ui, "emergency priority", c.stats.preempted.to_string(), Color32::WHITE);
             ui.end_row();
         });
-        ui.label(RichText::new("Phases in service order (two rings, barrier between north–south and east–west)").small().color(gray));
+        ui.label(
+            RichText::new("Phases in service order (two rings, barrier between north–south and east–west)")
+                .small()
+                .color(gray),
+        );
         egui::Grid::new("coop_moves").striped(true).num_columns(4).show(ui, |ui| {
             for h in ["movement", "demand veh/h", "max phase", ""] {
                 ui.label(RichText::new(h).small().color(gray));
@@ -1291,7 +1350,11 @@ impl App {
                     ui.label(format!("{} · {}", r + 1, name(m)));
                     ui.label(format!("{:.0}", c.arrival_rate(m)));
                     ui.label(format!("{:.0} s", c.max_green(m)));
-                    ui.label(if open.contains(&m) { RichText::new("serving").color(cyan) } else { RichText::new("") });
+                    ui.label(if open.contains(&m) {
+                        RichText::new("serving").color(cyan)
+                    } else {
+                        RichText::new("")
+                    });
                     ui.end_row();
                 }
             }
@@ -1307,8 +1370,18 @@ impl App {
         let flag = |n: u64| if n == 0 { ok } else { Color32::from_rgb(240, 90, 90) };
         let (margin, margin_ok) = margin_kpi(st.margin_min);
         egui::Grid::new("coop_safety").num_columns(3).spacing(vec2(16.0, 6.0)).show(ui, |ui| {
-            Self::kpi(ui, "closest crossing (PET)", if st.pet_min.is_finite() { format!("{:.2} s", st.pet_min) } else { "–".into() }, Color32::WHITE);
-            Self::kpi(ui, "margin over gap", margin, if margin_ok { ok } else { Color32::from_rgb(240, 90, 90) });
+            Self::kpi(
+                ui,
+                "closest crossing (PET)",
+                if st.pet_min.is_finite() { format!("{:.2} s", st.pet_min) } else { "–".into() },
+                Color32::WHITE,
+            );
+            Self::kpi(
+                ui,
+                "margin over gap",
+                margin,
+                if margin_ok { ok } else { Color32::from_rgb(240, 90, 90) },
+            );
             Self::kpi(ui, "zone overlaps", st.zone_violations.to_string(), flag(st.zone_violations));
             ui.end_row();
             Self::kpi(ui, "entries without slot", st.unauthorized.to_string(), flag(st.unauthorized));
@@ -1361,7 +1434,11 @@ impl App {
             match &sim.coop {
                 Some(c) => {
                     let slot = match c.plans.get(&v.id) {
-                        Some(p) if p.t_line > sim.t => format!("crosses the line in {:.1} s at {:.0} km/h", p.t_line - sim.t, p.v_line * 3.6),
+                        Some(p) if p.t_line > sim.t => format!(
+                            "crosses the line in {:.1} s at {:.0} km/h",
+                            p.t_line - sim.t,
+                            p.v_line * 3.6
+                        ),
                         Some(p) => format!("crossed the line at {:.0} km/h", p.v_line * 3.6),
                         None if c.managed(v.movement) => "none yet: waiting for one".to_string(),
                         None => "not needed (right turns bypass the box)".to_string(),
@@ -1405,15 +1482,28 @@ impl App {
                 ("all + 30% CV", cv),
                 ("100% connected vehicles", cv_only),
             ];
-            for c in [CtrlKind::Actuated, CtrlKind::MaxPressure, CtrlKind::Predictive, CtrlKind::DeepRl, CtrlKind::Hybrid] {
+            for c in [
+                CtrlKind::Actuated,
+                CtrlKind::MaxPressure,
+                CtrlKind::Predictive,
+                CtrlKind::DeepRl,
+                CtrlKind::Hybrid,
+            ] {
                 for (name, s) in &packages {
-                    jobs.push(Job { label: format!("{} · {}", c.short(), name), mode: ControlMode::Signal, ctrl: c, sensors: s.clone(), coop: None });
+                    jobs.push(Job {
+                        label: format!("{} · {}", c.short(), name),
+                        mode: ControlMode::Signal,
+                        ctrl: c,
+                        sensors: s.clone(),
+                        coop: None,
+                    });
                 }
             }
         } else if kind == LayoutKind::Cooperative {
             // Batches under the three safety margins, and the vehicles weaving through one
             // at a time under the fail-safe one.
-            let mut runs: Vec<(GapPolicy, Scheduling)> = GapPolicy::ALL.into_iter().map(|p| (p, Scheduling::Batches)).collect();
+            let mut runs: Vec<(GapPolicy, Scheduling)> =
+                GapPolicy::ALL.into_iter().map(|p| (p, Scheduling::Batches)).collect();
             runs.push((GapPolicy::FailSafe, Scheduling::FirstCome));
             for (p, sch) in runs {
                 let label = match sch {
@@ -1421,22 +1511,42 @@ impl App {
                     Scheduling::FirstCome => format!("First come, first served · {} gaps", p.label()),
                 };
                 let coop = Some((p, sch, self.coop_max_cycle, self.coop_slack));
-                jobs.push(Job { label, mode: ControlMode::Cooperative, ctrl: CtrlKind::Fixed, sensors: base.clone(), coop });
+                jobs.push(Job {
+                    label,
+                    mode: ControlMode::Cooperative,
+                    ctrl: CtrlKind::Fixed,
+                    sensors: base.clone(),
+                    coop,
+                });
             }
         } else {
             for m in ControlMode::options(kind) {
                 if m == ControlMode::Signal {
                     for c in CtrlKind::ALL {
-                        jobs.push(Job { label: c.name().to_string(), mode: m, ctrl: c, sensors: base.clone(), coop: None });
+                        jobs.push(Job {
+                            label: c.name().to_string(),
+                            mode: m,
+                            ctrl: c,
+                            sensors: base.clone(),
+                            coop: None,
+                        });
                     }
                 } else {
-                    jobs.push(Job { label: m.name().to_string(), mode: m, ctrl: CtrlKind::Fixed, sensors: base.clone(), coop: None });
+                    jobs.push(Job {
+                        label: m.name().to_string(),
+                        mode: m,
+                        ctrl: CtrlKind::Fixed,
+                        sensors: base.clone(),
+                        coop: None,
+                    });
                 }
             }
         }
         let title = match (sensor_study, kind) {
             (true, _) => format!("Sensor study — {}", kind.name()),
-            (false, LayoutKind::Cooperative) => format!("Scheduling and gap policy comparison — {}", kind.name()),
+            (false, LayoutKind::Cooperative) => {
+                format!("Scheduling and gap policy comparison — {}", kind.name())
+            }
             _ => format!("Controller comparison — {}", kind.name()),
         };
         self.bench = Some(Bench::start(title, kind, &demand, jobs));
@@ -1490,12 +1600,15 @@ impl App {
                 return;
             }
             ui.label(RichText::new("Person delay incl. unserved (s) — lower is better").strong());
-            let bars: Vec<(String, f64, bool)> = rows.iter().map(|r| (r.label.clone(), r.summary.person_delay_all, false)).collect();
+            let bars: Vec<(String, f64, bool)> =
+                rows.iter().map(|r| (r.label.clone(), r.summary.person_delay_all, false)).collect();
             charts::hbars(ui, &bars, " s", true);
             ui.separator();
             egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
                 egui::Grid::new("bench").striped(true).num_columns(8).show(ui, |ui| {
-                    for h in ["strategy", "delay s", "p95 s", "veh/h", "stops", "pers dly*", "CO₂ g", "ped wait"] {
+                    for h in
+                        ["strategy", "delay s", "p95 s", "veh/h", "stops", "pers dly*", "CO₂ g", "ped wait"]
+                    {
                         ui.label(RichText::new(h).strong());
                     }
                     ui.end_row();
@@ -1522,9 +1635,15 @@ impl App {
     fn bottom_panel(&mut self, ui: &mut Ui) {
         let coop = self.world.sims[self.focus].coop.is_some();
         ui.horizontal(|ui| {
-            let title = if coop { "Stop-line crossings by movement (last 2.5 min and the next 30 s already scheduled)" } else { "Signal timing (last 3 min)" };
+            let title = if coop {
+                "Stop-line crossings by movement (last 2.5 min and the next 30 s already scheduled)"
+            } else {
+                "Signal timing (last 3 min)"
+            };
             ui.label(RichText::new(title).strong().size(12.0));
-            if let Some((m, t)) = &self.message && t.elapsed().as_secs() < 5 {
+            if let Some((m, t)) = &self.message
+                && t.elapsed().as_secs() < 5
+            {
                 ui.separator();
                 ui.label(RichText::new(m).color(Color32::from_rgb(255, 210, 120)));
             }
@@ -1549,7 +1668,8 @@ impl App {
             let extent = net.legs.iter().map(|l| l.stop_dist).fold(0.0, f64::max) + margin;
             let half_w = if self.twin.is_some() { rect.width() * 0.5 } else { rect.width() };
             let span = (self.world.sims.len() - 1) as f64 * SPACING;
-            self.scale = (half_w / (2.0 * extent + span) as f32).min(rect.height() / (2.0 * extent as f32)).max(0.6);
+            self.scale =
+                (half_w / (2.0 * extent + span) as f32).min(rect.height() / (2.0 * extent as f32)).max(0.6);
             if let Some(z) = std::env::var("TS_ZOOM").ok().and_then(|v| v.parse::<f32>().ok()) {
                 self.scale *= z;
             }
@@ -1564,7 +1684,9 @@ impl App {
         if resp.hovered() {
             let (scroll, zoom) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
             let factor = zoom * (scroll * 0.0025).exp();
-            if (factor - 1.0).abs() > 1e-4 && let Some(h) = resp.hover_pos() {
+            if (factor - 1.0).abs() > 1e-4
+                && let Some(h) = resp.hover_pos()
+            {
                 let cam = Camera { center: self.cam_center, scale: self.scale, rect };
                 let before = cam.to_world(h);
                 self.scale = (self.scale * factor).clamp(0.6, 40.0);
@@ -1576,7 +1698,10 @@ impl App {
         // Side by side: A on the left half, B on the right, same camera.
         let halves = if self.twin.is_some() {
             let mid = rect.center().x;
-            vec![egui::Rect::from_min_max(rect.min, egui::pos2(mid - 1.0, rect.max.y)), egui::Rect::from_min_max(egui::pos2(mid + 1.0, rect.min.y), rect.max)]
+            vec![
+                egui::Rect::from_min_max(rect.min, egui::pos2(mid - 1.0, rect.max.y)),
+                egui::Rect::from_min_max(egui::pos2(mid + 1.0, rect.min.y), rect.max),
+            ]
         } else {
             vec![rect]
         };
@@ -1586,7 +1711,12 @@ impl App {
             let (world, mode, ctrl, policy) = if k == 0 {
                 (&self.world, self.mode, self.ctrl, (self.coop_policy, self.coop_sched))
             } else {
-                (self.twin.as_ref().unwrap(), self.twin_mode, self.twin_ctrl, (self.twin_policy, self.twin_sched))
+                (
+                    self.twin.as_ref().unwrap(),
+                    self.twin_mode,
+                    self.twin_ctrl,
+                    (self.twin_policy, self.twin_sched),
+                )
             };
             let label = match (self.twin.is_some(), k) {
                 (false, _) => self.strategy_name(mode, ctrl, policy),
@@ -1601,7 +1731,9 @@ impl App {
         self.legend(&painter, halves[0]);
 
         // Clicks: select / spawn (spawns go to both sides so arrivals stay identical).
-        if resp.clicked() && let Some(p) = resp.interact_pointer_pos() {
+        if resp.clicked()
+            && let Some(p) = resp.interact_pointer_pos()
+        {
             let k = halves.iter().position(|h| h.contains(p)).unwrap_or(0);
             let cam = Camera { center: self.cam_center, scale: self.scale, rect: halves[k] };
             let w = cam.to_world(p);
@@ -1628,7 +1760,8 @@ impl App {
                             let l = &net.legs[li];
                             let r = local.dot(l.d);
                             let lat = local.dot(l.in_side());
-                            let ok = r > l.stop_dist * 0.6 && lat > -l.out_width - 12.0 && lat < l.in_width + 12.0;
+                            let ok =
+                                r > l.stop_dist * 0.6 && lat > -l.out_width - 12.0 && lat < l.in_width + 12.0;
                             (li, ok, (lat - l.in_width * 0.5).abs())
                         })
                         .filter(|x| x.1)
@@ -1643,7 +1776,12 @@ impl App {
                         if !ok {
                             self.notify(format!("{} has no {} movement", bound, self.spawn_turn.name()));
                         } else {
-                            self.notify(format!("{} {} queued on {} (enters 260 m upstream)", self.spawn_kind.name(), self.spawn_turn.name(), bound));
+                            self.notify(format!(
+                                "{} {} queued on {} (enters 260 m upstream)",
+                                self.spawn_kind.name(),
+                                self.spawn_turn.name(),
+                                bound
+                            ));
                         }
                     }
                 }
@@ -1654,7 +1792,9 @@ impl App {
                         .iter()
                         .flat_map(|c| [(c.id, false, c.a.dist(local)), (c.id, true, c.b.dist(local))])
                         .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap());
-                    if let Some((cw, b, d)) = best && d < 12.0 {
+                    if let Some((cw, b, d)) = best
+                        && d < 12.0
+                    {
                         self.world.sims[i].spawn_ped(cw, b);
                         if let Some(t) = self.twin.as_mut() {
                             t.sims[i].spawn_ped(cw, b);
@@ -1663,26 +1803,47 @@ impl App {
                 }
             }
         }
-        if self.tool != Tool::Select && let Some(h) = resp.hover_pos() {
+        if self.tool != Tool::Select
+            && let Some(h) = resp.hover_pos()
+        {
             let txt = match self.tool {
-                Tool::Vehicle => format!("click an approach: {} {}", self.spawn_kind.name(), self.spawn_turn.name()),
+                Tool::Vehicle => {
+                    format!("click an approach: {} {}", self.spawn_kind.name(), self.spawn_turn.name())
+                }
                 _ => "click a crosswalk corner".to_string(),
             };
-            painter.text(h + vec2(14.0, 10.0), egui::Align2::LEFT_TOP, txt, egui::FontId::proportional(12.0), Color32::WHITE);
+            painter.text(
+                h + vec2(14.0, 10.0),
+                egui::Align2::LEFT_TOP,
+                txt,
+                egui::FontId::proportional(12.0),
+                Color32::WHITE,
+            );
         }
     }
 
     /// Intersection nearest to world point `w`, and `w` in its local coordinates.
     fn locate(&self, w: crate::sim::geom::V2) -> (usize, crate::sim::geom::V2) {
         let i = (0..self.world.offsets.len())
-            .min_by(|&a, &b| w.dist(self.world.offsets[a]).partial_cmp(&w.dist(self.world.offsets[b])).unwrap())
+            .min_by(|&a, &b| {
+                w.dist(self.world.offsets[a]).partial_cmp(&w.dist(self.world.offsets[b])).unwrap()
+            })
             .unwrap_or(0);
         (i, w - self.world.offsets[i])
     }
 
-    fn paint_world(&self, painter: &egui::Painter, world: &World, rect: egui::Rect, label: &str, alpha: f64, main: bool) {
+    fn paint_world(
+        &self,
+        painter: &egui::Painter,
+        world: &World,
+        rect: egui::Rect,
+        label: &str,
+        alpha: f64,
+        main: bool,
+    ) {
         painter.rect_filled(rect, 0.0, render::GRASS);
-        let cam_for = |i: usize| Camera { center: self.cam_center - world.offsets[i], scale: self.scale, rect };
+        let cam_for =
+            |i: usize| Camera { center: self.cam_center - world.offsets[i], scale: self.scale, rect };
         let n = world.sims.len();
         for i in 0..n {
             // Each intersection's scenery covers its own block (half-way to each
@@ -1731,7 +1892,13 @@ impl App {
         for (c, t) in items {
             let p = egui::pos2(rect.left() + 14.0, y);
             painter.circle_filled(p, 4.5, c);
-            painter.text(p + vec2(10.0, 0.0), egui::Align2::LEFT_CENTER, t, egui::FontId::proportional(11.5), Color32::from_gray(230));
+            painter.text(
+                p + vec2(10.0, 0.0),
+                egui::Align2::LEFT_CENTER,
+                t,
+                egui::FontId::proportional(11.5),
+                Color32::from_gray(230),
+            );
             y += 16.0;
         }
     }
@@ -1777,7 +1944,9 @@ impl eframe::App for App {
         }
         self.bench_window(&ctx);
         self.about_window(&ctx);
-        if let Some((path, after)) = self.shot.clone() && self.world.sims[self.focus].t >= after {
+        if let Some((path, after)) = self.shot.clone()
+            && self.world.sims[self.focus].t >= after
+        {
             // Let the panels refresh at the stopped time before capturing.
             let since = *self.shot_since.get_or_insert_with(Instant::now);
             if since.elapsed().as_millis() > 600 {

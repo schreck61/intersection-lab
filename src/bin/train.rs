@@ -16,7 +16,6 @@
 //! Environment: `RESUME=1` fine-tunes the saved weights, `SEED=n` changes the random
 //! seed, and `HIDDEN=128,128` overrides the hidden layer sizes of a new network.
 
-use std::time::Instant;
 use intersection_lab::control::hybrid::{self, Hybrid};
 use intersection_lab::control::rl::{self, RlController};
 use intersection_lab::control::{Controller, CtrlKind, make};
@@ -25,6 +24,7 @@ use intersection_lab::sim::network::{LayoutKind, Network};
 use intersection_lab::sim::rng::Rng;
 use intersection_lab::sim::sensors::{Conditions, SensorConfig};
 use intersection_lab::sim::{ControlMode, Sim};
+use std::time::Instant;
 
 /// A checkpoint is accepted only if its mean pedestrian wait is within this many
 /// seconds of the predictive controller's on the same scenarios.
@@ -179,7 +179,8 @@ fn evaluate(net: &Network, agent: Agent, set: &[Scenario], secs: f64) -> ((f64, 
     let mut agent = agent;
     let saved = agent.schedule();
     agent.set(false, 0.0, 0.0);
-    let had_model = if let Agent::Hybrid(h) = &mut agent { std::mem::replace(&mut h.has_model, true) } else { false };
+    let had_model =
+        if let Agent::Hybrid(h) = &mut agent { std::mem::replace(&mut h.has_model, true) } else { false };
     let (mut pd, mut pw) = (0.0, 0.0);
     for sc in set {
         agent.new_episode(net);
@@ -237,8 +238,9 @@ fn train(kind: LayoutKind, episodes: u64, secs: f64, which: &str) {
     let mut base = (f64::INFINITY, hybrid::DEFAULT_ACTION);
     if hybrid {
         // The bar the agent must clear to add anything: the best single tuning.
-        let scores: Vec<((f64, f64), usize)> =
-            (0..hybrid::N_ACTIONS).map(|a| (evaluate(&net, static_hybrid(&net, a), &val, secs).0, a)).collect();
+        let scores: Vec<((f64, f64), usize)> = (0..hybrid::N_ACTIONS)
+            .map(|a| (evaluate(&net, static_hybrid(&net, a), &val, secs).0, a))
+            .collect();
         base = scores
             .iter()
             .filter(|(s, _)| s.1 <= ped_limit)
@@ -251,12 +253,15 @@ fn train(kind: LayoutKind, episodes: u64, secs: f64, which: &str) {
             scores[hybrid::DEFAULT_ACTION].0.0
         );
     }
-    let mut rng = Rng::new(kind as u64 * 7777 + 1 + resume_salt() + if hybrid { 31 } else { 0 } + seed() * 1000);
+    let mut rng =
+        Rng::new(kind as u64 * 7777 + 1 + resume_salt() + if hybrid { 31 } else { 0 } + seed() * 1000);
     let mut best = f64::INFINITY;
     let resume = std::env::var_os("RESUME").is_some();
     let hidden: Vec<usize> = std::env::var("HIDDEN")
         .ok()
-        .map(|h| h.split(',').map(|x| x.trim().parse().expect("HIDDEN: comma-separated layer sizes")).collect())
+        .map(|h| {
+            h.split(',').map(|x| x.trim().parse().expect("HIDDEN: comma-separated layer sizes")).collect()
+        })
         .unwrap_or_else(|| (if hybrid { hybrid::HIDDEN } else { rl::HIDDEN }).to_vec());
     let mut agent = match (hybrid, resume) {
         (false, true) => Agent::Dqn(Box::new(RlController::load_or_new(&net))),
@@ -362,7 +367,14 @@ fn train(kind: LayoutKind, episodes: u64, secs: f64, which: &str) {
 }
 
 /// Score the saved weights, and the baselines, on the held-out test set.
-fn report_test(kind: LayoutKind, net: &Network, hybrid: bool, base_action: usize, saved_any: bool, secs: f64) {
+fn report_test(
+    kind: LayoutKind,
+    net: &Network,
+    hybrid: bool,
+    base_action: usize,
+    saved_any: bool,
+    secs: f64,
+) {
     let test = test_set(net);
     let fmt = |r: (f64, f64)| format!("{:.1} / {:.1}", r.0, r.1);
     let mut line = format!(

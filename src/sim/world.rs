@@ -61,13 +61,27 @@ pub struct World {
 
 impl World {
     pub fn single(sim: Sim) -> World {
-        World { sims: vec![sim], offsets: vec![v2(0.0, 0.0)], journeys: vec![], coordinated: false, before_wave: vec![], rng: Rng::new(1) }
+        World {
+            sims: vec![sim],
+            offsets: vec![v2(0.0, 0.0)],
+            journeys: vec![],
+            coordinated: false,
+            before_wave: vec![],
+            rng: Rng::new(1),
+        }
     }
 
     /// `n` intersections of `kind` along the east-west main road. Interior approaches
     /// of the main road are fed by the neighboring intersection instead of random
     /// arrivals; each intersection draws its other arrivals from its own stream.
-    pub fn corridor(n: usize, kind: LayoutKind, mode: ControlMode, ctrl: CtrlKind, demand: &DemandConfig, seed: u64) -> World {
+    pub fn corridor(
+        n: usize,
+        kind: LayoutKind,
+        mode: ControlMode,
+        ctrl: CtrlKind,
+        demand: &DemandConfig,
+        seed: u64,
+    ) -> World {
         let n = n.max(1);
         let mut sims = Vec::with_capacity(n);
         for i in 0..n {
@@ -145,11 +159,14 @@ impl World {
     /// exiting traffic, and what the previous one is about to send.
     fn link_neighbors(&mut self) {
         let n = self.sims.len();
-        let mut rooms: Vec<Vec<Option<(f64, f64)>>> = self.sims.iter().map(|s| vec![None; s.net.legs.len()]).collect();
+        let mut rooms: Vec<Vec<Option<(f64, f64)>>> =
+            self.sims.iter().map(|s| vec![None; s.net.legs.len()]).collect();
         let mut ups: Vec<Vec<UpstreamObs>> = vec![vec![]; n];
         for (i, room_i) in rooms.iter_mut().enumerate() {
             for c in [Compass::E, Compass::W] {
-                let (Some(j), Some(out_leg)) = (self.neighbor(i, c), self.sims[i].net.leg_index(c)) else { continue };
+                let (Some(j), Some(out_leg)) = (self.neighbor(i, c), self.sims[i].net.leg_index(c)) else {
+                    continue;
+                };
                 let down = &self.sims[j];
                 let Some(in_leg) = down.net.leg_index(Self::opposite(c)) else { continue };
                 // Space on the downstream approach's entry lanes (bays excluded).
@@ -170,14 +187,22 @@ impl World {
                 let up = &self.sims[i];
                 for v in &up.vehicles {
                     let last = *v.route.last().unwrap();
-                    if v.ri == 0 || up.net.links[last].leg != out_leg || up.net.links[last].kind != super::network::LinkKind::Outbound {
+                    if v.ri == 0
+                        || up.net.links[last].leg != out_leg
+                        || up.net.links[last].kind != super::network::LinkKind::Outbound
+                    {
                         continue;
                     }
                     let mut d = up.net.links[v.link()].length() - v.s;
                     for &l in &v.route[v.ri + 1..] {
                         d += up.net.links[l].length();
                     }
-                    ups[j].push(UpstreamObs { leg: in_leg, dist: d + approach, speed: v.v.max(0.85 * v.v0), kind: v.kind });
+                    ups[j].push(UpstreamObs {
+                        leg: in_leg,
+                        dist: d + approach,
+                        speed: v.v.max(0.85 * v.v0),
+                        kind: v.kind,
+                    });
                 }
             }
         }
@@ -268,7 +293,11 @@ impl World {
     /// own measure, so side-street starvation still counts).
     pub fn mean_person_delay_all(&self, from_t: f64) -> f64 {
         let k = self.sims.len() as f64;
-        self.sims.iter().map(|s| s.stats.summary(from_t, s.t, &s.vehicles, &s.queues).person_delay_all).sum::<f64>() / k
+        self.sims
+            .iter()
+            .map(|s| s.stats.summary(from_t, s.t, &s.vehicles, &s.queues).person_delay_all)
+            .sum::<f64>()
+            / k
     }
 
     /// Turn the fixed-time green wave on or off. On, every signal runs fixed-time: a
@@ -305,9 +334,8 @@ impl World {
             let net = &s.net;
             let mt = |c: Compass| net.leg_index(c).and_then(|l| net.movement_for(l, Turn::T));
             let (e, w) = (mt(Compass::E), mt(Compass::W));
-            sync[i] = (0..net.stages.len()).find(|&st| {
-                [e, w].iter().flatten().all(|&m| net.stages[st].stat[m] == Some(MStat::G))
-            });
+            sync[i] = (0..net.stages.len())
+                .find(|&st| [e, w].iter().flatten().all(|&m| net.stages[st].stat[m] == Some(MStat::G)));
         }
         if cycle <= 0.0 {
             return;

@@ -76,7 +76,8 @@ impl Predictive {
                 let continuing = if bi == 0 {
                     ctx.sig.green_elapsed > 2.0
                 } else {
-                    stat(net, blocks[bi - 1].stage, m).is_some() && (blocks[bi - 1].end - b.start).abs() < 1e-6
+                    stat(net, blocks[bi - 1].stage, m).is_some()
+                        && (blocks[bi - 1].end - b.start).abs() < 1e-6
                 };
                 let start = b.start + if continuing { 0.0 } else { 2.0 };
                 let leaving = blocks.get(bi + 1).is_some_and(|n| stat(net, n.stage, m).is_none());
@@ -236,7 +237,11 @@ impl Controller for Predictive {
             }
         }
         let h_eff: Vec<Vec<f64>> = (0..ns)
-            .map(|k| (0..nm).map(|m| stat(net, k, m).map(|s| Self::headway(s) / lanes_for(net, m)).unwrap_or(2.0)).collect())
+            .map(|k| {
+                (0..nm)
+                    .map(|m| stat(net, k, m).map(|s| Self::headway(s) / lanes_for(net, m)).unwrap_or(2.0))
+                    .collect()
+            })
             .collect();
         let min_g = ctx.sig.min_green;
         let xs = [0.0, 2.0, 4.0, 7.0, 10.0, 15.0, 20.0, 30.0];

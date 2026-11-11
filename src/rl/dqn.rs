@@ -57,7 +57,8 @@ impl SavedModel {
 impl Dqn {
     pub fn new(n_in: usize, n_out: usize, hidden: &[usize], seed: u64) -> Dqn {
         let mut rng = Rng::new(seed);
-        let sizes: Vec<usize> = std::iter::once(n_in).chain(hidden.iter().copied()).chain(std::iter::once(n_out)).collect();
+        let sizes: Vec<usize> =
+            std::iter::once(n_in).chain(hidden.iter().copied()).chain(std::iter::once(n_out)).collect();
         let online = Mlp::new(&sizes, &mut rng);
         Self::from_net(online, rng)
     }

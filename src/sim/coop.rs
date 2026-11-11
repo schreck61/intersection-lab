@@ -136,7 +136,9 @@ impl GapPolicy {
         let base = 2.0 * LATENCY + ACTUATION;
         match self {
             GapPolicy::FailSafe => base + v / (2.0 * brake),
-            GapPolicy::Mitigated if v > IMPACT_OK => base + (v * v - IMPACT_OK * IMPACT_OK) / (2.0 * brake * v),
+            GapPolicy::Mitigated if v > IMPACT_OK => {
+                base + (v * v - IMPACT_OK * IMPACT_OK) / (2.0 * brake * v)
+            }
             GapPolicy::Mitigated | GapPolicy::Nominal => base,
         }
     }
@@ -299,8 +301,16 @@ fn fastest(d: f64, v: f64, ve: f64, vtop: f64, a: f64, b: f64) -> (f64, Prof, Op
 /// Speed `v` to cruise speed `u`, cruise, then `u` to `ve` at the line, over `d`.
 /// None if it does not fit.
 fn dca(d: f64, v: f64, u: f64, ve: f64, a: f64, b: f64) -> Option<(f64, Prof)> {
-    let (t1, d1, a1) = if u < v { ((v - u) / b, (v * v - u * u) / (2.0 * b), -b) } else { ((u - v) / a, (u * u - v * v) / (2.0 * a), a) };
-    let (t3, d3, a3) = if ve > u { ((ve - u) / a, (ve * ve - u * u) / (2.0 * a), a) } else { ((u - ve) / b, (u * u - ve * ve) / (2.0 * b), -b) };
+    let (t1, d1, a1) = if u < v {
+        ((v - u) / b, (v * v - u * u) / (2.0 * b), -b)
+    } else {
+        ((u - v) / a, (u * u - v * v) / (2.0 * a), a)
+    };
+    let (t3, d3, a3) = if ve > u {
+        ((ve - u) / a, (ve * ve - u * u) / (2.0 * a), a)
+    } else {
+        ((u - ve) / b, (u * u - ve * ve) / (2.0 * b), -b)
+    };
     let d2 = d - d1 - d3;
     if d2 < -1e-9 || (d2 > 1e-9 && u < 1e-9) {
         return None;
@@ -622,7 +632,19 @@ fn simulate(r: &Req, target: f64) -> Option<Plan> {
             need: r.policy.gap(w.2, av.brake),
         })
         .collect();
-    Some(Plan { k0: r.k, t0: r.t, x: xs, v: vs, a: acs, why, t_line, v_line, zones, movement: r.movement, lane: r.lane })
+    Some(Plan {
+        k0: r.k,
+        t0: r.t,
+        x: xs,
+        v: vs,
+        a: acs,
+        why,
+        t_line,
+        v_line,
+        zones,
+        movement: r.movement,
+        lane: r.lane,
+    })
 }
 
 // ---------------------------------------------------------------- manager
@@ -849,7 +871,9 @@ impl CoopManager {
                 chains.insert(*in_id, (VecDeque::new(), 0));
             }
         }
-        let conns = |m: usize| -> Vec<LinkId> { net.movements[m].routes.iter().filter_map(|r| r.1.first().copied()).collect() };
+        let conns = |m: usize| -> Vec<LinkId> {
+            net.movements[m].routes.iter().filter_map(|r| r.1.first().copied()).collect()
+        };
         let mut mconf = vec![vec![false; n_moves]; n_moves];
         for m in 0..n_moves {
             for n in 0..n_moves {
@@ -922,7 +946,9 @@ impl CoopManager {
     /// critical phases, as in Webster's split. Until there is any measured demand every
     /// phase may run the whole cycle less the lost time.
     pub fn max_green(&self, m: usize) -> f64 {
-        let y = |m: usize| self.arrivals[m] / self.arr_time.max(1.0) / self.n_lanes[m].max(1) as f64 * self.sat_h[m];
+        let y = |m: usize| {
+            self.arrivals[m] / self.arr_time.max(1.0) / self.n_lanes[m].max(1) as f64 * self.sat_h[m]
+        };
         let crit: f64 = (0..2)
             .map(|g| {
                 self.rings
@@ -1027,7 +1053,9 @@ impl CoopManager {
     /// Does a trajectory fit around every reservation?
     fn fits(&self, p: &Plan) -> bool {
         p.zones.iter().all(|z| {
-            self.res[z.cid][1 - z.side].iter().all(|r| z.t_in >= r.t_out + z.need || r.t_in >= z.t_out + r.need)
+            self.res[z.cid][1 - z.side]
+                .iter()
+                .all(|r| z.t_in >= r.t_out + z.need || r.t_in >= z.t_out + r.need)
         })
     }
 
@@ -1037,7 +1065,11 @@ impl CoopManager {
         let mut target = r.t;
         for n in 1..=12 {
             let Some(p) = simulate(r, target) else { return (None, n) };
-            let rel: Vec<_> = p.zones.iter().map(|z| (z.cid, z.side, z.t_in - p.t_line, z.t_out - p.t_line, z.need)).collect();
+            let rel: Vec<_> = p
+                .zones
+                .iter()
+                .map(|z| (z.cid, z.side, z.t_in - p.t_line, z.t_out - p.t_line, z.need))
+                .collect();
             let t_ok = self.earliest(&rel, p.t_line, r.opens_batch);
             if t_ok <= p.t_line + 1e-9 {
                 if self.fits(&p) {
@@ -1125,15 +1157,7 @@ impl CoopManager {
                 .collect();
             let t_est = self.earliest(&zones, t_lo, false);
             let h = Self::headway(&av, v.len(), info.v_box);
-            out[info.movement].push(Cand {
-                vid,
-                idx: i,
-                lane,
-                movement: info.movement,
-                leader,
-                t_est,
-                h,
-            });
+            out[info.movement].push(Cand { vid, idx: i, lane, movement: info.movement, leader, t_est, h });
         }
         for c in out.iter_mut() {
             c.sort_by(|a, b| a.t_est.total_cmp(&b.t_est));
@@ -1208,7 +1232,9 @@ impl CoopManager {
     /// the through movement within a fraction of a second.
     fn order_rings(&mut self) {
         let groups: Vec<Vec<Vec<usize>>> = (0..2)
-            .map(|g| self.rings.iter().map(|r| r.seq.iter().filter(|x| x.0 == g).map(|x| x.1).collect()).collect())
+            .map(|g| {
+                self.rings.iter().map(|r| r.seq.iter().filter(|x| x.0 == g).map(|x| x.1).collect()).collect()
+            })
             .collect();
         let n_rings = self.rings.len();
         // Bit (g * n_rings + r) set: ring r serves group g in reverse order.
@@ -1248,14 +1274,16 @@ impl CoopManager {
     /// longest clearance across each barrier.
     fn cycle_cost(&self, seqs: &[Vec<(usize, usize)>]) -> f64 {
         let d = |m: usize, n: usize| self.intergreen(m, n).unwrap_or(0.0);
-        let part = |r: usize, g: usize| -> Vec<usize> { seqs[r].iter().filter(|x| x.0 == g).map(|x| x.1).collect() };
+        let part =
+            |r: usize, g: usize| -> Vec<usize> { seqs[r].iter().filter(|x| x.0 == g).map(|x| x.1).collect() };
         let mut cost = 0.0;
         for g in 0..2 {
             for r in 0..seqs.len() {
                 cost += part(r, g).windows(2).map(|w| d(w[0], w[1])).sum::<f64>();
             }
             let lasts: Vec<usize> = (0..seqs.len()).filter_map(|r| part(r, g).last().copied()).collect();
-            let firsts: Vec<usize> = (0..seqs.len()).filter_map(|r| part(r, 1 - g).first().copied()).collect();
+            let firsts: Vec<usize> =
+                (0..seqs.len()).filter_map(|r| part(r, 1 - g).first().copied()).collect();
             cost += lasts.iter().flat_map(|&m| firsts.iter().map(move |&n| d(m, n))).fold(0.0, f64::max);
         }
         cost
@@ -1380,7 +1408,9 @@ impl CoopManager {
             (if st.granted > 0 { st.first_t } else { t }) + self.max_green(m)
         };
         let mut limit = own(m);
-        let Some(r) = self.rings.iter().position(|ring| !ring.at_barrier && ring.seq[ring.pos].1 == m) else { return limit };
+        let Some(r) = self.rings.iter().position(|ring| !ring.at_barrier && ring.seq[ring.pos].1 == m) else {
+            return limit;
+        };
         let ring = &self.rings[r];
         if ring.seq[(ring.pos + 1) % ring.seq.len()].0 == self.group {
             return limit;
@@ -1389,7 +1419,11 @@ impl CoopManager {
             if q == r || other.at_barrier {
                 continue;
             }
-            let rest: f64 = other.seq[other.pos + 1..].iter().take_while(|x| x.0 == self.group).map(|x| self.max_green(x.1)).sum();
+            let rest: f64 = other.seq[other.pos + 1..]
+                .iter()
+                .take_while(|x| x.0 == self.group)
+                .map(|x| self.max_green(x.1))
+                .sum();
             limit = limit.max(own(other.seq[other.pos].1) + rest);
         }
         limit
@@ -1397,7 +1431,16 @@ impl CoopManager {
 
     /// Grant the next vehicle of the open movement `m` that can continue its batch.
     #[allow(clippy::too_many_arguments)]
-    fn serve(&mut self, m: usize, cands: &[Vec<Cand>], veh: &[Vehicle], t: f64, k: u64, dt: f64, missed: &mut Vec<u64>) -> Served {
+    fn serve(
+        &mut self,
+        m: usize,
+        cands: &[Vec<Cand>],
+        veh: &[Vehicle],
+        t: f64,
+        k: u64,
+        dt: f64,
+        missed: &mut Vec<u64>,
+    ) -> Served {
         for c in &cands[m] {
             if missed.contains(&c.vid) {
                 continue;
@@ -1453,7 +1496,12 @@ impl CoopManager {
         let st = &mut self.moves[m];
         st.open = false;
         if st.granted > 0 {
-            self.history.push_back(Batch { movement: m, start: st.first_t, end: st.frontier, vehicles: st.granted });
+            self.history.push_back(Batch {
+                movement: m,
+                start: st.first_t,
+                end: st.frontier,
+                vehicles: st.granted,
+            });
         }
         if why == PhaseEnd::MaxOut {
             self.stats.maxed += 1;
@@ -1503,7 +1551,14 @@ impl CoopManager {
             }
             if self.scheduling == Scheduling::FirstCome {
                 // Whoever can reach the line first gets the earliest slot that fits.
-                let Some(c) = cands.iter().flatten().min_by(|a, b| a.t_est.total_cmp(&b.t_est).then(a.vid.cmp(&b.vid))).copied() else { break };
+                let Some(c) = cands
+                    .iter()
+                    .flatten()
+                    .min_by(|a, b| a.t_est.total_cmp(&b.t_est).then(a.vid.cmp(&b.vid)))
+                    .copied()
+                else {
+                    break;
+                };
                 let (plan, sims) = self.plan_search(&self.request(veh, &c, t, k, dt));
                 self.stats.sims += sims;
                 match plan {
@@ -1593,7 +1648,10 @@ impl CoopManager {
                     if xp < l_in && x >= l_in {
                         self.stats.unauthorized += 1;
                         if self.log.len() < 40 {
-                            self.log.push(format!("t={t:.1} vehicle #{} entered the box without a reservation", v.id));
+                            self.log.push(format!(
+                                "t={t:.1} vehicle #{} entered the box without a reservation",
+                                v.id
+                            ));
                         }
                     }
                 }
@@ -1605,7 +1663,11 @@ impl CoopManager {
                 if self.log.len() < 40 {
                     self.log.push(format!(
                         "t={t:.1} vehicle #{} off its trajectory: x {:.4} vs {:.4}, v {:.4} vs {:.4}",
-                        v.id, x, p.x[j + 1], v.v, p.v[j + 1]
+                        v.id,
+                        x,
+                        p.x[j + 1],
+                        v.v,
+                        p.v[j + 1]
                     ));
                 }
             }
@@ -1636,7 +1698,10 @@ impl CoopManager {
                     if self.inside[cid][other] > 0 {
                         self.stats.zone_violations += 1;
                         if self.log.len() < 40 {
-                            self.log.push(format!("t={t:.1} vehicle #{} entered zone {cid} while it was occupied", v.id));
+                            self.log.push(format!(
+                                "t={t:.1} vehicle #{} entered zone {cid} while it was occupied",
+                                v.id
+                            ));
                         }
                     }
                     let pet = time - self.last_out[cid][other];
@@ -1866,7 +1931,15 @@ mod tests {
         let mut min_gap = f64::INFINITY;
         for k in 0..1200 {
             let t = k as f64 * dt;
-            let al: f64 = if t < 5.0 { 0.0 } else if t < 9.4 { -2.5 } else if t < 20.0 { 0.0 } else { 1.5 };
+            let al: f64 = if t < 5.0 {
+                0.0
+            } else if t < 9.4 {
+                -2.5
+            } else if t < 20.0 {
+                0.0
+            } else {
+                1.5
+            };
             let al = if vl + al * dt > 11.1 && t > 20.0 { 0.0 } else { al };
             let gap = xl - 4.5 - x;
             min_gap = min_gap.min(gap);
@@ -1883,4 +1956,3 @@ mod tests {
         assert!((gap - (2.0 + 0.42 * v)).abs() < 0.3, "settled at {gap:.2} m at {v:.2} m/s");
     }
 }
-

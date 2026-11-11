@@ -202,7 +202,14 @@ impl DemandGen {
     }
 
     /// Draw arrivals in (t, t+dt] using thinning of a non-homogeneous Poisson process.
-    pub fn generate(&mut self, cfg: &DemandConfig, net: &Network, t: f64, dt: f64, out: &mut Vec<(usize, Pending)>) {
+    pub fn generate(
+        &mut self,
+        cfg: &DemandConfig,
+        net: &Network,
+        t: f64,
+        dt: f64,
+        out: &mut Vec<(usize, Pending)>,
+    ) {
         let mmax = Self::max_multiplier(cfg.pattern);
         for li in 0..net.legs.len() {
             let ci = compass_index(net.legs[li].compass);
@@ -232,9 +239,9 @@ impl DemandGen {
         let shares = cfg.valid_shares(net, leg);
         let ti = self.rng.weighted(&shares);
         let turn = Turn::ALL[ti];
-        let movement = net.movement_for(leg, turn).unwrap_or_else(|| {
-            net.movements.iter().position(|m| m.leg == leg).expect("leg has movements")
-        });
+        let movement = net
+            .movement_for(leg, turn)
+            .unwrap_or_else(|| net.movements.iter().position(|m| m.leg == leg).expect("leg has movements"));
         let mut mix = cfg.mix;
         if mix.iter().sum::<f64>() <= 0.0 {
             mix[0] = 1.0;

@@ -77,8 +77,14 @@ pub enum CtrlKind {
 }
 
 impl CtrlKind {
-    pub const ALL: [CtrlKind; 6] =
-        [CtrlKind::Fixed, CtrlKind::Actuated, CtrlKind::MaxPressure, CtrlKind::Predictive, CtrlKind::DeepRl, CtrlKind::Hybrid];
+    pub const ALL: [CtrlKind; 6] = [
+        CtrlKind::Fixed,
+        CtrlKind::Actuated,
+        CtrlKind::MaxPressure,
+        CtrlKind::Predictive,
+        CtrlKind::DeepRl,
+        CtrlKind::Hybrid,
+    ];
     pub fn name(self) -> &'static str {
         match self {
             CtrlKind::Fixed => "Fixed-time (Webster)",
@@ -104,12 +110,24 @@ impl CtrlKind {
     }
     pub fn description(self) -> &'static str {
         match self {
-            CtrlKind::Fixed => "Pre-timed cycle. Cycle length and splits from Webster's formula using historical demand. Uses no sensors.",
-            CtrlKind::Actuated => "Fully actuated: min green, extends on loop actuations within the passage time, gaps out or maxes out, skips stages with no calls. Bus priority extension when a camera/CV sees a bus.",
-            CtrlKind::MaxPressure => "Varaiya's throughput-optimal max-pressure: serves the stage with the largest upstream-minus-downstream queue pressure. Needs queue counts (camera).",
-            CtrlKind::Predictive => "Rolling-horizon, schedule-driven control in the spirit of SURTRAC: predicts every detected vehicle's arrival, simulates candidate signal schedules 90 s ahead and picks the one minimizing person-delay. Benefits most from long-range radar / connected vehicles.",
-            CtrlKind::DeepRl => "Double DQN neural network trained by reinforcement learning (reward = negative person delay) on randomized demand. Observes queues, predicted arrivals, waits and pedestrian calls. Can keep learning online.",
-            CtrlKind::Hybrid => "The predictive planner makes every signal decision; a reinforcement-learning agent re-tunes it every 10 s (fairness weight, hold/switch bias, max green) from the traffic it sees. Keeps the planner's safety; learns when to deviate from its defaults.",
+            CtrlKind::Fixed => {
+                "Pre-timed cycle. Cycle length and splits from Webster's formula using historical demand. Uses no sensors."
+            }
+            CtrlKind::Actuated => {
+                "Fully actuated: min green, extends on loop actuations within the passage time, gaps out or maxes out, skips stages with no calls. Bus priority extension when a camera/CV sees a bus."
+            }
+            CtrlKind::MaxPressure => {
+                "Varaiya's throughput-optimal max-pressure: serves the stage with the largest upstream-minus-downstream queue pressure. Needs queue counts (camera)."
+            }
+            CtrlKind::Predictive => {
+                "Rolling-horizon, schedule-driven control in the spirit of SURTRAC: predicts every detected vehicle's arrival, simulates candidate signal schedules 90 s ahead and picks the one minimizing person-delay. Benefits most from long-range radar / connected vehicles."
+            }
+            CtrlKind::DeepRl => {
+                "Double DQN neural network trained by reinforcement learning (reward = negative person delay) on randomized demand. Observes queues, predicted arrivals, waits and pedestrian calls. Can keep learning online."
+            }
+            CtrlKind::Hybrid => {
+                "The predictive planner makes every signal decision; a reinforcement-learning agent re-tunes it every 10 s (fairness weight, hold/switch bias, max green) from the traffic it sees. Keeps the planner's safety; learns when to deviate from its defaults."
+            }
         }
     }
 }
