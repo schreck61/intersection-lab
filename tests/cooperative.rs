@@ -101,11 +101,20 @@ fn geometry_has_only_crossings() {
         for (i, mv) in net.movements.iter().enumerate() {
             assert_eq!(mgr.managed(i), mv.turn != Turn::R, "{}", mv.name);
             let crossed = (0..net.movements.len()).filter(|&o| mgr.conflicts(i, o)).count();
-            assert_eq!(crossed, if mv.turn == Turn::R { 0 } else { 4 }, "{} crosses {crossed} movements", mv.name);
+            assert_eq!(
+                crossed,
+                if mv.turn == Turn::R { 0 } else { 4 },
+                "{} crosses {crossed} movements",
+                mv.name
+            );
         }
-        assert!(!mgr.conflicts(m("N_L"), m("S_L")) && !mgr.conflicts(m("E_L"), m("W_L")), "opposite lefts pass clear");
+        assert!(
+            !mgr.conflicts(m("N_L"), m("S_L")) && !mgr.conflicts(m("E_L"), m("W_L")),
+            "opposite lefts pass clear"
+        );
         // Every lane has its own path through the box and its own receiving lane.
-        let mut outs: Vec<usize> = net.movements.iter().flat_map(|mv| mv.routes.iter().map(|r| *r.1.last().unwrap())).collect();
+        let mut outs: Vec<usize> =
+            net.movements.iter().flat_map(|mv| mv.routes.iter().map(|r| *r.1.last().unwrap())).collect();
         let n = outs.len();
         outs.sort_unstable();
         outs.dedup();
@@ -117,7 +126,11 @@ fn geometry_has_only_crossings() {
 fn left_turns_lag_the_through_movements() {
     let net = Network::build(LayoutKind::Cooperative);
     let mgr = CoopManager::new(&net);
-    let names: Vec<Vec<&str>> = mgr.ring_order().iter().map(|r| r.iter().map(|&m| net.movements[m].name.as_str()).collect()).collect();
+    let names: Vec<Vec<&str>> = mgr
+        .ring_order()
+        .iter()
+        .map(|r| r.iter().map(|&m| net.movements[m].name.as_str()).collect())
+        .collect();
     assert_eq!(names, [["S_T", "N_L", "W_T", "E_L"], ["N_T", "S_L", "E_T", "W_L"]]);
     // A left turn crosses the opposing through lanes late in its arc, which those
     // vehicles reach early: it can follow them almost at once, but they must wait for it.
@@ -141,7 +154,13 @@ fn every_gap_policy_is_safe_under_heavy_demand() {
                         let mut sim = crossing(n_left, total, cars, policy, seed);
                         sim.run_for(1200.0);
                         let fleet = if cars { "cars" } else { "mixed" };
-                        safety_failures(&format!("{} / {n_left} left / {fleet} / {total} veh/h / seed {seed}", policy.short()), &sim)
+                        safety_failures(
+                            &format!(
+                                "{} / {n_left} left / {fleet} / {total} veh/h / seed {seed}",
+                                policy.short()
+                            ),
+                            &sim,
+                        )
                     }));
                 }
             }
@@ -164,7 +183,9 @@ fn bursts_heavy_vehicles_and_uneven_demand_are_served_safely() {
         d.rate = [4_500.0; 4];
         d
     };
-    for (pattern, limits) in [(Pattern::Platoons, Some((100.0, 300.0))), (Pattern::RushHour, None), (Pattern::Surges, None)] {
+    for (pattern, limits) in
+        [(Pattern::Platoons, Some((100.0, 300.0))), (Pattern::RushHour, None), (Pattern::Surges, None)]
+    {
         let mut d = base();
         d.pattern = pattern;
         cases.push((format!("{pattern:?} arrivals"), d, limits));
@@ -185,14 +206,18 @@ fn bursts_heavy_vehicles_and_uneven_demand_are_served_safely() {
         .into_iter()
         .map(|(name, d, limits)| {
             std::thread::spawn(move || {
-                let mut sim = Sim::with_demand(build_cooperative(2), ControlMode::Cooperative, CtrlKind::Fixed, d, 41);
+                let mut sim =
+                    Sim::with_demand(build_cooperative(2), ControlMode::Cooperative, CtrlKind::Fixed, d, 41);
                 sim.check_safety = true;
                 sim.run_for(1200.0);
                 let s = summary(&sim, 120.0);
                 let mut f = safety_failures(&name, &sim);
                 if let Some((p95, max)) = limits {
                     if s.p95_delay > p95 || s.max_delay > max {
-                        f.push(format!("{name}: delay {:.0} s at the 95th percentile, {:.0} s at most", s.p95_delay, s.max_delay));
+                        f.push(format!(
+                            "{name}: delay {:.0} s at the 95th percentile, {:.0} s at most",
+                            s.p95_delay, s.max_delay
+                        ));
                     }
                     if queued(&sim) > 60 {
                         f.push(format!("{name}: {} vehicles still waiting to enter", queued(&sim)));
@@ -219,7 +244,10 @@ fn switching_policy_or_scheduling_mid_run_stays_safe() {
     let batches = sim.coop.as_ref().unwrap().stats.batches;
     sim.set_scheduling(Scheduling::Batches);
     sim.run_for(150.0);
-    assert!(sim.coop.as_ref().unwrap().stats.batches > batches + 4, "batches resume after first come, first served");
+    assert!(
+        sim.coop.as_ref().unwrap().stats.batches > batches + 4,
+        "batches resume after first come, first served"
+    );
     let failures = safety_failures("policy and scheduling switched live", &sim);
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
@@ -247,11 +275,28 @@ fn weaving_one_at_a_time_carries_far_less() {
         run(Scheduling::Batches, 14_000.0, 62),
     ];
     let [light_zip, light_batch, heavy_zip, heavy_batch] = jobs.map(|j| j.join().unwrap());
-    let failures: Vec<String> = [&light_zip.3, &light_batch.3, &heavy_zip.3, &heavy_batch.3].into_iter().flatten().cloned().collect();
+    let failures: Vec<String> =
+        [&light_zip.3, &light_batch.3, &heavy_zip.3, &heavy_batch.3].into_iter().flatten().cloned().collect();
     assert!(failures.is_empty(), "{}", failures.join("\n"));
-    assert!(light_zip.0 < light_batch.0 && light_zip.0 < 3.0, "light traffic: {:.1} s weaving, {:.1} s in batches", light_zip.0, light_batch.0);
-    assert!(heavy_batch.1 > 13_300.0 && heavy_batch.2 < 50 && heavy_batch.0 < 30.0, "batches at 14,000 veh/h: served {:.0}, {} waiting, {:.1} s", heavy_batch.1, heavy_batch.2, heavy_batch.0);
-    assert!(heavy_zip.1 < 11_000.0 && heavy_zip.2 > 500, "weaving at 14,000 veh/h: served {:.0} veh/h, {} waiting", heavy_zip.1, heavy_zip.2);
+    assert!(
+        light_zip.0 < light_batch.0 && light_zip.0 < 3.0,
+        "light traffic: {:.1} s weaving, {:.1} s in batches",
+        light_zip.0,
+        light_batch.0
+    );
+    assert!(
+        heavy_batch.1 > 13_300.0 && heavy_batch.2 < 50 && heavy_batch.0 < 30.0,
+        "batches at 14,000 veh/h: served {:.0}, {} waiting, {:.1} s",
+        heavy_batch.1,
+        heavy_batch.2,
+        heavy_batch.0
+    );
+    assert!(
+        heavy_zip.1 < 11_000.0 && heavy_zip.2 > 500,
+        "weaving at 14,000 veh/h: served {:.0} veh/h, {} waiting",
+        heavy_zip.1,
+        heavy_zip.2
+    );
 }
 
 #[test]
@@ -275,7 +320,10 @@ fn dual_left_design_serves_18000_vehicles_per_hour() {
                     f.push(format!("seed {seed}: {q} vehicles still waiting to enter"));
                 }
                 if s.avg_delay > 40.0 || s.max_delay > 180.0 {
-                    f.push(format!("seed {seed}: delay {:.1} s on average, {:.0} s at most", s.avg_delay, s.max_delay));
+                    f.push(format!(
+                        "seed {seed}: delay {:.1} s on average, {:.0} s at most",
+                        s.avg_delay, s.max_delay
+                    ));
                 }
                 f
             })
@@ -309,7 +357,10 @@ fn single_left_lanes_fall_short_of_the_design_demand() {
     let (dual, single) = (run(2), run(1));
     let ((dual_vph, dual_q), (single_vph, single_q)) = (dual.join().unwrap(), single.join().unwrap());
     assert!(dual_q < 50, "dual lefts left {dual_q} waiting");
-    assert!(single_q > 300 && single_vph < dual_vph - 1_000.0, "single lefts served {single_vph:.0} veh/h, {single_q} waiting");
+    assert!(
+        single_q > 300 && single_vph < dual_vph - 1_000.0,
+        "single lefts served {single_vph:.0} veh/h, {single_q} waiting"
+    );
 }
 
 #[test]
@@ -323,7 +374,15 @@ fn runs_are_reproducible() {
             let c = sim.coop.as_ref().unwrap();
             let delay: f64 = sim.stats.done.iter().map(|d| d.delay).sum();
             let pos: f64 = sim.vehicles.iter().map(|v| v.s + v.v).sum();
-            (sim.stats.generated, sim.stats.done.len(), c.stats.plans, c.stats.batches, delay.to_bits(), pos.to_bits(), c.stats.pet_min.to_bits())
+            (
+                sim.stats.generated,
+                sim.stats.done.len(),
+                c.stats.plans,
+                c.stats.batches,
+                delay.to_bits(),
+                pos.to_bits(),
+                c.stats.pet_min.to_bits(),
+            )
         })
     };
     let (a, b) = (run(), run());
@@ -350,9 +409,16 @@ fn emergency_vehicles_go_first() {
         assert!(sim.spawn_manual(leg, VKind::Emergency, Turn::L));
     }
     sim.run_for(150.0);
-    let others: Vec<f64> = sim.stats.done.iter().filter(|d| d.t_exit > t0 && d.turn == Turn::L && d.kind != VKind::Emergency).map(|d| d.delay).collect();
+    let others: Vec<f64> = sim
+        .stats
+        .done
+        .iter()
+        .filter(|d| d.t_exit > t0 && d.turn == Turn::L && d.kind != VKind::Emergency)
+        .map(|d| d.delay)
+        .collect();
     let typical = others.iter().sum::<f64>() / others.len().max(1) as f64;
-    let em: Vec<f64> = sim.stats.done.iter().filter(|d| d.kind == VKind::Emergency).map(|d| d.delay).collect();
+    let em: Vec<f64> =
+        sim.stats.done.iter().filter(|d| d.kind == VKind::Emergency).map(|d| d.delay).collect();
     assert_eq!(em.len(), 4, "every emergency vehicle got through");
     assert!(em.iter().all(|&d| d < 15.0), "emergency delays {em:?} (other left turns {typical:.1} s)");
     assert!(sim.coop.as_ref().unwrap().stats.preempted >= 4);

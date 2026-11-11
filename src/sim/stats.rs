@@ -5,10 +5,10 @@
 //! person delay, level of service, per-approach/movement/class breakdowns and
 //! time series for charts.
 
-use super::network::{Network, Turn};
+use super::Vehicle;
 use super::demand::Pending;
+use super::network::{Network, Turn};
 use super::vtypes::{ALL_KINDS, VKind};
-use super::{Vehicle};
 use std::collections::VecDeque;
 
 #[derive(Clone, Debug)]
@@ -195,7 +195,8 @@ impl Stats {
             s.ped_avg_wait = pw.iter().sum::<f64>() / pw.len() as f64;
             s.ped_max_wait = pw.iter().cloned().fold(0.0, f64::max);
         }
-        s.ped_near_miss_ph = self.ped_near_miss.iter().filter(|&&t| t >= from_t).count() as f64 * 3600.0 / s.duration;
+        s.ped_near_miss_ph =
+            self.ped_near_miss.iter().filter(|&&t| t >= from_t).count() as f64 * 3600.0 / s.duration;
         // Vehicles still waiting: the upstream virtual queue and long-delayed vehicles.
         let mut unserved = 0;
         let mut uw = 0.0;
@@ -243,7 +244,8 @@ impl Stats {
 
 /// HCM level of service from average control delay.
 pub fn los(delay: f64, signalized: bool) -> &'static str {
-    let t: [f64; 5] = if signalized { [10.0, 20.0, 35.0, 55.0, 80.0] } else { [10.0, 15.0, 25.0, 35.0, 50.0] };
+    let t: [f64; 5] =
+        if signalized { [10.0, 20.0, 35.0, 55.0, 80.0] } else { [10.0, 15.0, 25.0, 35.0, 50.0] };
     let l = ["A", "B", "C", "D", "E"];
     for i in 0..5 {
         if delay <= t[i] {

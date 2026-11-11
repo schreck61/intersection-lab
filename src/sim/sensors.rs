@@ -46,7 +46,8 @@ pub enum Conditions {
 }
 
 impl Conditions {
-    pub const ALL: [Conditions; 5] = [Conditions::Clear, Conditions::Night, Conditions::Rain, Conditions::Fog, Conditions::Snow];
+    pub const ALL: [Conditions; 5] =
+        [Conditions::Clear, Conditions::Night, Conditions::Rain, Conditions::Fog, Conditions::Snow];
     pub fn name(self) -> &'static str {
         match self {
             Conditions::Clear => "Clear day",
@@ -127,7 +128,9 @@ impl SensorConfig {
 
 /// Deterministic hash to [0, 1).
 fn h01(a: u64, b: u64, c: u64) -> f64 {
-    let mut x = a.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ b.wrapping_mul(0xC2B2_AE3D_27D4_EB4F) ^ c.wrapping_mul(0x1656_67B1_9E37_79F9);
+    let mut x = a.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        ^ b.wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
+        ^ c.wrapping_mul(0x1656_67B1_9E37_79F9);
     x ^= x >> 33;
     x = x.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
     x ^= x >> 33;
@@ -279,7 +282,8 @@ impl Sim {
         let rich = cfg.camera || cfg.radar || cfg.cv;
 
         // Historical turning shares per movement for unknown-intent attribution.
-        let flows: Vec<f64> = (0..net.movements.len()).map(|m| self.demand.movement_flow(net, m).max(1.0)).collect();
+        let flows: Vec<f64> =
+            (0..net.movements.len()).map(|m| self.demand.movement_flow(net, m).max(1.0)).collect();
 
         for leg in &net.legs {
             for &lane in &leg.in_lanes {
@@ -298,7 +302,9 @@ impl Sim {
                     // Loops miss some vehicles (motorcycles especially) and faulty
                     // stations report nothing.
                     let loop_sees = fault == 0
-                        && (!cfg.realistic || h01(v.id, lane as u64, 0x10) >= if v.kind == VKind::Motorcycle { 0.35 } else { 0.01 });
+                        && (!cfg.realistic
+                            || h01(v.id, lane as u64, 0x10)
+                                >= if v.kind == VKind::Motorcycle { 0.35 } else { 0.01 });
                     if v.s > len - 9.0 && loop_sees {
                         occupied = true;
                     }
@@ -309,7 +315,9 @@ impl Sim {
                     }
                     let cam = cfg.camera && self.camera_sees(&cfg, v, d, lane, t);
                     let cvd = cfg.cv && v.connected;
-                    let rad = cfg.radar && d <= cfg.radar_range && (!cfg.realistic || h01(v.id, (t / 0.5) as u64, 0x30) < cfg.conditions.radar());
+                    let rad = cfg.radar
+                        && d <= cfg.radar_range
+                        && (!cfg.realistic || h01(v.id, (t / 0.5) as u64, 0x30) < cfg.conditions.radar());
                     if v.kind == VKind::Emergency && d < 300.0 {
                         view.emergency.push((v.movement, d / v.v.max(3.0)));
                     }
@@ -322,9 +330,15 @@ impl Sim {
                     let (d, speed) = if !cfg.realistic || cam {
                         (d, v.v)
                     } else if rad {
-                        (d + 1.5 * noise(v.id, 0x50, t, 1.0), (v.v + 0.5 * noise(v.id, 0x51, t, 1.0)).max(0.0))
+                        (
+                            d + 1.5 * noise(v.id, 0x50, t, 1.0),
+                            (v.v + 0.5 * noise(v.id, 0x51, t, 1.0)).max(0.0),
+                        )
                     } else {
-                        (d + 3.0 * noise(v.id, 0x40, t, 2.0), (v.v + 0.3 * noise(v.id, 0x41, t, 2.0)).max(0.0))
+                        (
+                            d + 3.0 * noise(v.id, 0x40, t, 2.0),
+                            (v.v + 0.3 * noise(v.id, 0x41, t, 2.0)).max(0.0),
+                        )
                     };
                     let d = d.max(0.0);
                     if d <= cfg.adv_dist {
@@ -340,18 +354,27 @@ impl Sim {
                     view.detections.push((v.id, src));
                     // A camera reads intent from turn signals; a driver who doesn't
                     // signal looks like through traffic.
-                    let signals = !cfg.realistic || v.turn == super::network::Turn::T || h01(v.id, 0x60, 0) < cfg.signal_use;
+                    let signals = !cfg.realistic
+                        || v.turn == super::network::Turn::T
+                        || h01(v.id, 0x60, 0) < cfg.signal_use;
                     let cam_move = if signals {
                         Some(v.movement)
                     } else {
                         moves.iter().copied().find(|&m| net.movements[m].turn == super::network::Turn::T)
                     };
                     let intent_known = cvd || (cam && cam_move.is_some()) || moves.len() == 1;
-                    let seen_move = if cvd || moves.len() == 1 { v.movement } else { cam_move.unwrap_or(v.movement) };
+                    let seen_move =
+                        if cvd || moves.len() == 1 { v.movement } else { cam_move.unwrap_or(v.movement) };
                     let class_known = cam || cvd;
                     let queued = speed < 2.0 && d < 150.0;
                     let wait = if cam || cvd { v.queue_since.map(|q| t - q).unwrap_or(0.0) } else { 0.0 };
-                    let persons = if class_known { v.persons() } else if v.len() > 10.0 { 8.0 } else { 1.4 };
+                    let persons = if class_known {
+                        v.persons()
+                    } else if v.len() > 10.0 {
+                        8.0
+                    } else {
+                        1.4
+                    };
                     let base = Obs {
                         eta: if queued { 0.0 } else { d / speed.max(3.0) },
                         dist: d,
@@ -405,7 +428,8 @@ impl Sim {
                     // of the approach is busy (stuck off).
                     // The no-activity timer scales with expected volume: ten expected
                     // headways, between 2 and 15 minutes.
-                    let lane_flow: f64 = moves.iter().map(|&m| flows[m] / net.movements[m].routes.len().max(1) as f64).sum();
+                    let lane_flow: f64 =
+                        moves.iter().map(|&m| flows[m] / net.movements[m].routes.len().max(1) as f64).sum();
                     let silent_limit = (10.0 * 3600.0 / lane_flow.max(1.0)).clamp(120.0, 900.0);
                     let stuck_on = lo.stopbar_since.is_some_and(|s0| t - s0 > 180.0);
                     lo.fault = stuck_on || t - lo.last_activity > silent_limit;
@@ -443,7 +467,10 @@ impl Sim {
                     if lo.fault {
                         // Failed detector: fall back to historical volume, i.e. the
                         // vehicles expected to have arrived since the lane last had green.
-                        let lane_flow: f64 = moves.iter().map(|&m| flows[m] / net.movements[m].routes.len().max(1) as f64).sum();
+                        let lane_flow: f64 = moves
+                            .iter()
+                            .map(|&m| flows[m] / net.movements[m].routes.len().max(1) as f64)
+                            .sum();
                         let since = t - lo.last_green;
                         est = (lane_flow / 3600.0 * since).clamp(1.0, 25.0);
                         occ_wait = since;
@@ -507,7 +534,8 @@ impl Sim {
                 if u.dist <= own {
                     continue;
                 }
-                let moves: Vec<usize> = (0..net.movements.len()).filter(|&m| net.movements[m].leg == u.leg).collect();
+                let moves: Vec<usize> =
+                    (0..net.movements.len()).filter(|&m| net.movements[m].leg == u.leg).collect();
                 let total: f64 = moves.iter().map(|&m| flows[m]).sum();
                 for &m in &moves {
                     view.moves[m].vehicles.push(Obs {

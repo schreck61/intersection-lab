@@ -39,8 +39,14 @@ pub fn stage_pressures(ctx: &Ctx) -> Vec<f64> {
             };
             let mo = &ctx.view.moves[m];
             // Queue plus vehicles arriving within ~8 s.
-            let up: f64 = mo.queue + mo.vehicles.iter().filter(|o| !o.queued && o.eta < 8.0).map(|o| o.weight * 0.5).sum::<f64>();
-            let down = ctx.view.out_queue[net.movements[m].to_leg] / net.legs[net.movements[m].to_leg].n_out as f64;
+            let up: f64 = mo.queue
+                + mo.vehicles
+                    .iter()
+                    .filter(|o| !o.queued && o.eta < 8.0)
+                    .map(|o| o.weight * 0.5)
+                    .sum::<f64>();
+            let down =
+                ctx.view.out_queue[net.movements[m].to_leg] / net.legs[net.movements[m].to_leg].n_out as f64;
             *pj += w * (up / lanes_for(net, m).sqrt() - down).max(0.0) * lanes_for(net, m).sqrt();
         }
         for &cw in &net.stages[j].walk {
@@ -78,7 +84,13 @@ impl Controller for MaxPressure {
     fn brain(&self) -> Brain {
         Brain {
             title: "Stage pressure (queue upstream − downstream)".into(),
-            bars: self.names.iter().zip(&self.pressures).enumerate().map(|(i, (n, p))| (n.clone(), *p, i == self.cur)).collect(),
+            bars: self
+                .names
+                .iter()
+                .zip(&self.pressures)
+                .enumerate()
+                .map(|(i, (n, p))| (n.clone(), *p, i == self.cur))
+                .collect(),
             lower_is_better: false,
             notes: vec![],
         }

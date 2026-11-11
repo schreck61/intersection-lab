@@ -8,7 +8,8 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
-    let icon = egui::IconData { rgba: include_bytes!("../assets/icon_128.rgba").to_vec(), width: 128, height: 128 };
+    let icon =
+        egui::IconData { rgba: include_bytes!("../assets/icon_128.rgba").to_vec(), width: 128, height: 128 };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1600.0, 1000.0])
@@ -18,7 +19,11 @@ fn main() -> eframe::Result {
             .with_icon(icon),
         ..Default::default()
     };
-    eframe::run_native("Intersection Lab", options, Box::new(|cc| Ok(Box::new(intersection_lab::gui::App::new(cc)))))
+    eframe::run_native(
+        "Intersection Lab",
+        options,
+        Box::new(|cc| Ok(Box::new(intersection_lab::gui::App::new(cc)))),
+    )
 }
 
 /// Browser entry point: draw into the page's canvas (see web/index.html).
@@ -32,7 +37,11 @@ fn main() {
             .and_then(|e| e.dyn_into::<eframe::web_sys::HtmlCanvasElement>().ok())
             .expect("no <canvas id=\"app\">");
         let result = eframe::WebRunner::new()
-            .start(canvas, eframe::WebOptions::default(), Box::new(|cc| Ok(Box::new(intersection_lab::gui::App::new(cc)))))
+            .start(
+                canvas,
+                eframe::WebOptions::default(),
+                Box::new(|cc| Ok(Box::new(intersection_lab::gui::App::new(cc)))),
+            )
             .await;
         // Replace the loading message with the outcome.
         if let Some(status) = document.get_element_by_id("status") {

@@ -5,7 +5,7 @@
 //! conflict points between paths through the intersection, all derived from a
 //! compact per-layout lane configuration.
 
-use super::geom::{V2, Path, arc, connector, v2};
+use super::geom::{Path, V2, arc, connector, v2};
 use serde::{Deserialize, Serialize};
 
 pub type LinkId = usize;
@@ -488,7 +488,9 @@ impl Network {
             .filter(|&cw| {
                 let leg = self.crosswalks[cw].leg;
                 !self.movements.iter().any(|m| {
-                    stat[m.id].is_some() && m.crosswalks.contains(&cw) && (stat[m.id] == Some(MStat::G) || m.leg == leg)
+                    stat[m.id].is_some()
+                        && m.crosswalks.contains(&cw)
+                        && (stat[m.id] == Some(MStat::G) || m.leg == leg)
                 })
             })
             .collect()
@@ -506,13 +508,17 @@ impl Network {
     }
 }
 
-fn new_link(links: &mut Vec<Link>, kind: LinkKind, pts: &[V2], speed: f64, leg: usize, lane: usize) -> LinkId {
+fn new_link(
+    links: &mut Vec<Link>,
+    kind: LinkKind,
+    pts: &[V2],
+    speed: f64,
+    leg: usize,
+    lane: usize,
+) -> LinkId {
     let path = Path::new(pts);
-    let curve_speed = if path.min_radius.is_finite() {
-        (A_LAT * path.min_radius).sqrt().clamp(3.5, speed)
-    } else {
-        speed
-    };
+    let curve_speed =
+        if path.min_radius.is_finite() { (A_LAT * path.min_radius).sqrt().clamp(3.5, speed) } else { speed };
     let id = links.len();
     links.push(Link {
         id,
@@ -545,7 +551,14 @@ type LegDef = (Compass, Vec<Vec<Turn>>, usize, bool);
 /// A stage by name, then the movements it serves as green, right-turn and permissive.
 type StageDef<'a> = (&'a str, &'a [&'a str], &'a [&'a str], &'a [&'a str]);
 
-fn build_signal(kind: LayoutKind, defs: Vec<LegDef>, lane_w: f64, speed: f64, yellow: f64, all_red: f64) -> Network {
+fn build_signal(
+    kind: LayoutKind,
+    defs: Vec<LegDef>,
+    lane_w: f64,
+    speed: f64,
+    yellow: f64,
+    all_red: f64,
+) -> Network {
     let mut legs: Vec<Leg> = defs
         .into_iter()
         .map(|(c, lm, n_out, minor)| Leg {
@@ -570,7 +583,9 @@ fn build_signal(kind: LayoutKind, defs: Vec<LegDef>, lane_w: f64, speed: f64, ye
     for i in 0..legs.len() {
         let opp = find(&legs, -legs[i].d);
         let med = opp
-            .map(|o| legs[o].lane_moves.iter().position(|lm| lm.contains(&Turn::T)).unwrap_or(0) as f64 * lane_w)
+            .map(|o| {
+                legs[o].lane_moves.iter().position(|lm| lm.contains(&Turn::T)).unwrap_or(0) as f64 * lane_w
+            })
             .unwrap_or(0.0);
         legs[i].med_out = med;
         legs[i].out_width = med + legs[i].n_out as f64 * lane_w;
@@ -597,7 +612,8 @@ fn build_signal(kind: LayoutKind, defs: Vec<LegDef>, lane_w: f64, speed: f64, ye
             leg.in_lanes.push(id);
         }
         // A left-only lane next to a through lane is a bay carved out of the median.
-        if leg.lane_moves.len() >= 2 && leg.lane_moves[0] == [Turn::L] && leg.lane_moves[1].contains(&Turn::T) {
+        if leg.lane_moves.len() >= 2 && leg.lane_moves[0] == [Turn::L] && leg.lane_moves[1].contains(&Turn::T)
+        {
             let l = &mut links[leg.in_lanes[0]];
             l.bay_start = (l.path.length - BAY_LEN).max(0.0);
         }
@@ -753,7 +769,8 @@ fn build_roundabout() -> Network {
         while th_j > th_i - delta {
             th_j -= std::f64::consts::TAU;
         }
-        seg_b[i] = new_link(&mut links, LinkKind::Ring, &arc(c0, ring_r, th_i - delta, th_j + delta), speed, i, 0);
+        seg_b[i] =
+            new_link(&mut links, LinkKind::Ring, &arc(c0, ring_r, th_i - delta, th_j + delta), speed, i, 0);
     }
     for i in 0..n {
         let j = (i + 1) % n;
@@ -869,13 +886,15 @@ pub fn build_cooperative(n_left: usize) -> Network {
         for k in 0..n_in {
             let lat = ins * g.lane_offset(k);
             let end = if k == g.right_lane() { g.slip_start } else { g.stop };
-            let id = new_link(&mut links, LinkKind::Inbound, &[d * IN_LEN + lat, d * end + lat], speed, li, k);
+            let id =
+                new_link(&mut links, LinkKind::Inbound, &[d * IN_LEN + lat, d * end + lat], speed, li, k);
             leg.in_lanes.push(id);
         }
         for k in 0..n_in {
             let lat = outs * g.lane_offset(k);
             let start = if k == g.right_lane() { g.slip_start } else { g.stop };
-            let id = new_link(&mut links, LinkKind::Outbound, &[d * start + lat, d * OUT_LEN + lat], speed, li, k);
+            let id =
+                new_link(&mut links, LinkKind::Outbound, &[d * start + lat, d * OUT_LEN + lat], speed, li, k);
             leg.out_lanes.push(id);
         }
     }
@@ -1048,9 +1067,8 @@ impl Network {
         }
         for l in self.links.iter_mut() {
             let id = l.id;
-            l.conflicts.sort_by(|&x, &y| {
-                conflicts[x].side(id).0.partial_cmp(&conflicts[y].side(id).0).unwrap()
-            });
+            l.conflicts
+                .sort_by(|&x, &y| conflicts[x].side(id).0.partial_cmp(&conflicts[y].side(id).0).unwrap());
         }
         self.conflicts = conflicts;
 
@@ -1065,7 +1083,9 @@ impl Network {
         }
         for (i, pc) in pcs.iter().enumerate() {
             self.links[pc.link].ped_conflicts.push(i);
-            if let Some(m) = self.links[pc.link].movement && !self.movements[m].crosswalks.contains(&pc.cw) {
+            if let Some(m) = self.links[pc.link].movement
+                && !self.movements[m].crosswalks.contains(&pc.cw)
+            {
                 self.movements[m].crosswalks.push(pc.cw);
             }
         }

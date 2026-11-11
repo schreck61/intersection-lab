@@ -12,7 +12,14 @@ use intersection_lab::sim::world::World;
 
 fn corridor(n: usize) -> World {
     let kind = LayoutKind::Arterial4;
-    let mut w = World::corridor(n, kind, ControlMode::Signal, CtrlKind::Predictive, &DemandConfig::default_for(&Network::build(kind)), 1);
+    let mut w = World::corridor(
+        n,
+        kind,
+        ControlMode::Signal,
+        CtrlKind::Predictive,
+        &DemandConfig::default_for(&Network::build(kind)),
+        1,
+    );
     for s in &mut w.sims {
         s.check_safety = true;
     }
@@ -39,7 +46,10 @@ fn the_green_wave_gives_back_the_controllers() {
     assert_eq!(w.controller_before_wave(2), None);
     w.run_for(30.0);
     w.set_coordination(false);
-    assert_eq!(controllers(&w), [CtrlKind::Predictive, CtrlKind::MaxPressure, CtrlKind::Fixed, CtrlKind::Fixed]);
+    assert_eq!(
+        controllers(&w),
+        [CtrlKind::Predictive, CtrlKind::MaxPressure, CtrlKind::Fixed, CtrlKind::Fixed]
+    );
     assert!(w.sims.iter().all(|s| s.coordination.is_none()));
     w.run_for(30.0);
     assert_eq!(w.sims.iter().map(|s| s.collisions).sum::<u64>(), 0);
@@ -47,7 +57,10 @@ fn the_green_wave_gives_back_the_controllers() {
     // A second wave starts from the controllers running now.
     w.set_coordination(true);
     w.set_coordination(false);
-    assert_eq!(controllers(&w), [CtrlKind::Predictive, CtrlKind::MaxPressure, CtrlKind::Fixed, CtrlKind::Fixed]);
+    assert_eq!(
+        controllers(&w),
+        [CtrlKind::Predictive, CtrlKind::MaxPressure, CtrlKind::Fixed, CtrlKind::Fixed]
+    );
 }
 
 #[test]

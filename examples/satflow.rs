@@ -10,7 +10,9 @@ use intersection_lab::sim::{ControlMode, Sim};
 use std::collections::HashMap;
 
 fn main() {
-    for (label, mix) in [("cars only", [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]), ("default mix", [0.62, 0.24, 0.05, 0.03, 0.04, 0.0])] {
+    for (label, mix) in
+        [("cars only", [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]), ("default mix", [0.62, 0.24, 0.05, 0.03, 0.04, 0.0])]
+    {
         let net = Network::build(LayoutKind::Arterial4);
         let mut d = DemandConfig::default_for(&net);
         // Saturate the eastbound through lanes; nothing else.
@@ -19,7 +21,10 @@ fn main() {
         d.mix = mix;
         d.ped_rate = 0.0;
         let mut sim = Sim::with_demand(net, ControlMode::Signal, CtrlKind::Fixed, d, 1);
-        let m = sim.net.movement_for(sim.net.leg_index(intersection_lab::sim::network::Compass::W).unwrap(), Turn::T).unwrap();
+        let m = sim
+            .net
+            .movement_for(sim.net.leg_index(intersection_lab::sim::network::Compass::W).unwrap(), Turn::T)
+            .unwrap();
         let mut prev_ri: HashMap<u64, usize> = HashMap::new();
         let mut green_start = None;
         // (lane, position in queue discharge, time since green)
@@ -40,13 +45,19 @@ fn main() {
             }
             for v in &sim.vehicles {
                 let p = prev_ri.insert(v.id, v.ri).unwrap_or(0);
-                if p == 0 && v.ri >= 1 && v.movement == m && let Some(g) = green_start {
+                if p == 0
+                    && v.ri >= 1
+                    && v.movement == m
+                    && let Some(g) = green_start
+                {
                     let lane = v.route[0];
                     let n = count.entry(lane).or_insert(0);
                     *n += 1;
                     let since = sim.t - g;
                     if *n > 4 {
-                        if let Some(&t0) = last_cross.get(&lane) && (v.queue_since.is_some() || v.stops > 0) {
+                        if let Some(&t0) = last_cross.get(&lane)
+                            && (v.queue_since.is_some() || v.stops > 0)
+                        {
                             headways.push(sim.t - t0);
                         }
                     } else if *n == 4 {
@@ -69,5 +80,7 @@ fn main() {
             headways.len()
         );
     }
-    println!("HCM reference: base saturation flow 1,900 pc/h/ln (headway 1.89 s), start-up lost time ~2 s; heavy vehicles reduce flow ~1-2% per 1% trucks.");
+    println!(
+        "HCM reference: base saturation flow 1,900 pc/h/ln (headway 1.89 s), start-up lost time ~2 s; heavy vehicles reduce flow ~1-2% per 1% trucks."
+    );
 }

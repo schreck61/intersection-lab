@@ -8,11 +8,11 @@
 
 use crate::control::CtrlKind;
 use crate::sim::coop::{GapPolicy, Scheduling};
-use crate::sim::{ControlMode, Sim};
 use crate::sim::demand::DemandConfig;
 use crate::sim::network::LayoutKind;
 use crate::sim::sensors::SensorConfig;
 use crate::sim::stats::Summary;
+use crate::sim::{ControlMode, Sim};
 
 /// Arrival streams (seeds) per strategy, and the length of each run.
 const SEEDS: u64 = 3;
@@ -150,7 +150,12 @@ impl Bench {
 
     pub fn start(title: String, kind: LayoutKind, demand: &DemandConfig, jobs: Vec<Job>) -> Self {
         let total = jobs.len();
-        let queue = web::Queue { kind, demand: demand.clone(), jobs: jobs.into_iter().enumerate().collect(), current: None };
+        let queue = web::Queue {
+            kind,
+            demand: demand.clone(),
+            jobs: jobs.into_iter().enumerate().collect(),
+            current: None,
+        };
         Bench { title, total, rows: (0..total).map(|_| None).collect(), queue }
     }
 

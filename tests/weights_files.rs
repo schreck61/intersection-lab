@@ -86,15 +86,21 @@ fn misshapen_networks_are_rejected() {
         ("a layer with no inputs", edited(|l| l[0]["n_in"] = json!(0))),
         ("too few weights", edited(|l| _ = l[0]["w"].as_array_mut().unwrap().pop())),
         ("too few biases", edited(|l| _ = l[1]["b"].as_array_mut().unwrap().pop())),
-        ("layers that don't connect", edited(|l| {
-            l[1]["n_in"] = json!(64);
-            l[1]["w"].as_array_mut().unwrap().truncate(64 * 4);
-        })),
-        ("three outputs", edited(|l| {
-            l[1]["n_out"] = json!(3);
-            l[1]["w"].as_array_mut().unwrap().truncate(128 * 3);
-            l[1]["b"].as_array_mut().unwrap().pop();
-        })),
+        (
+            "layers that don't connect",
+            edited(|l| {
+                l[1]["n_in"] = json!(64);
+                l[1]["w"].as_array_mut().unwrap().truncate(64 * 4);
+            }),
+        ),
+        (
+            "three outputs",
+            edited(|l| {
+                l[1]["n_out"] = json!(3);
+                l[1]["w"].as_array_mut().unwrap().truncate(128 * 3);
+                l[1]["b"].as_array_mut().unwrap().pop();
+            }),
+        ),
         ("a weight too large for f32", edited(|l| l[0]["w"][0] = json!(1e39))),
     ];
     for (what, txt) in &cases {
@@ -125,12 +131,15 @@ fn hybrid_files_with_a_non_finite_score_load() {
     let mut h = Hybrid::new(&net, 1);
     h.base_action = 7;
     // The app knows no score; training has none when no tuning meets its pedestrian limit.
-    for (i, score) in [None, Some(f64::NAN), Some(f64::INFINITY), Some(f64::NEG_INFINITY)].into_iter().enumerate() {
+    for (i, score) in
+        [None, Some(f64::NAN), Some(f64::INFINITY), Some(f64::NEG_INFINITY)].into_iter().enumerate()
+    {
         for with_model in [false, true] {
             let path = dir.join(format!("hybrid_{i}_{with_model}.json"));
             h.save(&path, score, with_model).unwrap();
             let saved = std::fs::read_to_string(&path).unwrap();
-            let back = Hybrid::from_saved(&net, &saved).unwrap_or_else(|| panic!("saved with score {score:?}, doesn't load: {saved:.80}"));
+            let back = Hybrid::from_saved(&net, &saved)
+                .unwrap_or_else(|| panic!("saved with score {score:?}, doesn't load: {saved:.80}"));
             assert_eq!((back.base_action, back.has_model), (7, with_model));
         }
     }
@@ -142,7 +151,9 @@ fn hybrid_files_with_a_non_finite_score_load() {
 #[test]
 fn a_weights_file_that_does_not_load_is_skipped() {
     let net = Network::build(LayoutKind::Tee);
-    let load = |dirs: &[PathBuf]| weights::load_from(dirs, "hybrid_tee.json", |txt| Hybrid::from_saved(&net, txt)).unwrap();
+    let load = |dirs: &[PathBuf]| {
+        weights::load_from(dirs, "hybrid_tee.json", |txt| Hybrid::from_saved(&net, txt)).unwrap()
+    };
     let (bad, good) = (scratch("skip_bad"), scratch("skip_good"));
     std::fs::write(bad.join("hybrid_tee.json"), r#"{"base_action": 3, "base_sc"#).unwrap();
     let mut h = Hybrid::new(&net, 1);

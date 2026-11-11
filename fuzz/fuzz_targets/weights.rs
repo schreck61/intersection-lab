@@ -36,7 +36,14 @@ fuzz_target!(|data: &[u8]| {
 /// One training update, as online learning makes once its replay memory fills.
 fn train(agent: &mut Dqn) {
     let (n_in, n_out) = (agent.online.n_in(), agent.online.n_out());
-    let t = Transition { s: vec![1.0; n_in], a: n_out - 1, r: -1.0, s2: vec![0.5; n_in], disc: 0.9, mask2: vec![true; n_out] };
+    let t = Transition {
+        s: vec![1.0; n_in],
+        a: n_out - 1,
+        r: -1.0,
+        s2: vec![0.5; n_in],
+        disc: 0.9,
+        mask2: vec![true; n_out],
+    };
     for _ in 0..1000 {
         agent.push(t.clone());
     }

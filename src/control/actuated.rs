@@ -76,7 +76,8 @@ impl Controller for Actuated {
         for leg in &ctx.net.legs {
             for &lane in &leg.in_lanes {
                 let moves = &ctx.net.links[lane].lane_moves;
-                let all = moves.iter().all(|&m| matches!(stat(ctx.net, cur, m), Some(MStat::G) | Some(MStat::Rt)));
+                let all =
+                    moves.iter().all(|&m| matches!(stat(ctx.net, cur, m), Some(MStat::G) | Some(MStat::Rt)));
                 if all {
                     // A faulty station is on max recall: it always extends.
                     let lp = if ctx.view.lanes[lane].fault { ctx.t } else { ctx.view.lanes[lane].last_pulse };
@@ -90,7 +91,9 @@ impl Controller for Actuated {
             return None;
         }
         let i = self.seq.iter().position(|&s| s == cur).unwrap_or(0);
-        let next = (1..=self.seq.len()).map(|k| self.seq[(i + k) % self.seq.len()]).find(|&j| j != cur && self.calls[j]);
+        let next = (1..=self.seq.len())
+            .map(|k| self.seq[(i + k) % self.seq.len()])
+            .find(|&j| j != cur && self.calls[j]);
         let Some(next) = next else {
             self.status = "resting (no conflicting calls)".into();
             return None;
@@ -99,7 +102,10 @@ impl Controller for Actuated {
         // Transit priority: hold green for an approaching bus.
         let bus_coming = (0..ctx.net.movements.len()).any(|m| {
             matches!(stat(ctx.net, cur, m), Some(MStat::G) | Some(MStat::Rt))
-                && ctx.view.moves[m].vehicles.iter().any(|o| o.kind == Some(VKind::Bus) && o.eta > 0.0 && o.eta < 8.0)
+                && ctx.view.moves[m]
+                    .vehicles
+                    .iter()
+                    .any(|o| o.kind == Some(VKind::Bus) && o.eta > 0.0 && o.eta < 8.0)
         });
         if bus_coming && ctx.sig.green_elapsed < maxg + 10.0 {
             self.status = "transit priority extension".into();
@@ -127,7 +133,13 @@ impl Controller for Actuated {
             lower_is_better: false,
             notes: vec![format!(
                 "stages with calls: {}",
-                self.calls.iter().enumerate().filter(|c| *c.1).map(|c| c.0.to_string()).collect::<Vec<_>>().join(", ")
+                self.calls
+                    .iter()
+                    .enumerate()
+                    .filter(|c| *c.1)
+                    .map(|c| c.0.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             )],
         }
     }

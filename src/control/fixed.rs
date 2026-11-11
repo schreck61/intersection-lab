@@ -93,8 +93,10 @@ pub fn webster(net: &Network, demand: &DemandConfig, seq: &[usize]) -> (f64, Vec
                 let moves = &net.links[lane].lane_moves;
                 // A shared lane only discharges when every movement in it is served.
                 let all_served = moves.iter().all(|&m| st.stat[m].is_some() || flows[m] <= 0.0);
-                let served_prot = moves.iter().any(|&m| matches!(st.stat[m], Some(MStat::G) | Some(MStat::Rt)));
-                let only_perm = moves.iter().all(|&m| st.stat[m] == Some(MStat::P) && !protected_somewhere(m));
+                let served_prot =
+                    moves.iter().any(|&m| matches!(st.stat[m], Some(MStat::G) | Some(MStat::Rt)));
+                let only_perm =
+                    moves.iter().all(|&m| st.stat[m] == Some(MStat::P) && !protected_somewhere(m));
                 let has_perm = moves.iter().any(|&m| st.stat[m] == Some(MStat::P) && flows[m] > 0.0);
                 if all_served && (served_prot || only_perm) {
                     let sat = if has_perm { SAT_FLOW * 0.7 } else { SAT_FLOW };

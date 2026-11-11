@@ -327,8 +327,18 @@ impl Sim {
         Self::with_demand(net, mode, ctrl, demand, seed)
     }
 
-    pub fn with_demand(net: Network, mode: ControlMode, ctrl: CtrlKind, demand: DemandConfig, seed: u64) -> Sim {
-        let mode = if ControlMode::options(net.kind).contains(&mode) { mode } else { ControlMode::options(net.kind)[0] };
+    pub fn with_demand(
+        net: Network,
+        mode: ControlMode,
+        ctrl: CtrlKind,
+        demand: DemandConfig,
+        seed: u64,
+    ) -> Sim {
+        let mode = if ControlMode::options(net.kind).contains(&mode) {
+            mode
+        } else {
+            ControlMode::options(net.kind)[0]
+        };
         let signal = SignalState::new(&net, 0.0);
         let sensors = SensorConfig::default();
         let controller = control::make(ctrl, &net, &demand);
@@ -518,12 +528,18 @@ impl Sim {
                     // Agency rule of thumb: protect the left when (left volume) x (opposing
                     // through volume) exceeds 50k / 90k / 110k for 1 / 2 / 3+ opposing lanes.
                     let mv = &self.net.movements[m];
-                    let opp_leg = self.net.legs.iter().position(|l| l.d.dist(-self.net.legs[mv.leg].d) < 1e-6);
+                    let opp_leg =
+                        self.net.legs.iter().position(|l| l.d.dist(-self.net.legs[mv.leg].d) < 1e-6);
                     let opp = opp_leg.and_then(|l| self.net.movement_for(l, Turn::T));
                     let window = 600.0_f64.min(self.t.max(60.0));
                     let vol = |k: usize| {
-                        self.stats.done.iter().rev().take_while(|d| d.t_exit > self.t - window).filter(|d| d.movement == k).count()
-                            as f64
+                        self.stats
+                            .done
+                            .iter()
+                            .rev()
+                            .take_while(|d| d.t_exit > self.t - window)
+                            .filter(|d| d.movement == k)
+                            .count() as f64
                             * 3600.0
                             / window
                     };
@@ -543,7 +559,10 @@ impl Sim {
                 }
                 LeftMode::Auto => self.left_protected[m],
             };
-            if want != self.left_protected[m] && self.signal.status(&self.net, m) == Sig::R && self.signal.next == self.signal.stage {
+            if want != self.left_protected[m]
+                && self.signal.status(&self.net, m) == Sig::R
+                && self.signal.next == self.signal.stage
+            {
                 self.left_protected[m] = want;
                 changed = true;
             }
@@ -554,7 +573,11 @@ impl Sim {
                     .stat
                     .iter()
                     .enumerate()
-                    .map(|(m, &x)| if self.left_protected[m] && x == Some(network::MStat::P) { None } else { x })
+                    .map(
+                        |(m, &x)| {
+                            if self.left_protected[m] && x == Some(network::MStat::P) { None } else { x }
+                        },
+                    )
                     .collect();
                 self.net.stages[st].walk = self.net.walk_for(&stat);
                 self.net.stages[st].stat = stat;
@@ -591,7 +614,9 @@ impl Sim {
                 let target = (0..self.net.stages.len())
                     .find(|&st| self.net.stages[st].stat[m] == Some(network::MStat::G))
                     .or_else(|| (0..self.net.stages.len()).find(|&st| serves(st)));
-                if let Some(j) = target && self.signal.green_elapsed > 2.0 {
+                if let Some(j) = target
+                    && self.signal.green_elapsed > 2.0
+                {
                     self.signal.request(&self.net, j, self.t);
                 }
             }
@@ -646,7 +671,10 @@ impl Sim {
             g.clear();
         }
         for (i, v) in self.vehicles.iter().enumerate() {
-            if let Some(l) = v.lc_from && v.ri == 0 && v.lc_t < GHOST_T {
+            if let Some(l) = v.lc_from
+                && v.ri == 0
+                && v.lc_t < GHOST_T
+            {
                 self.ghosts[l].push(i);
             }
         }
@@ -710,7 +738,11 @@ impl Sim {
             (true, _) => speed * spec.speed_factor.min(1.0),
             (false, _) => speed * spec.speed_factor * p.speed_factor,
         };
-        let v_safe = if room < 60.0 { lead_v.min(v0).max(((room - spec.min_gap) * 2.0 * spec.decel).sqrt().min(lead_v + 2.0)) } else { v0 };
+        let v_safe = if room < 60.0 {
+            lead_v.min(v0).max(((room - spec.min_gap) * 2.0 * spec.decel).sqrt().min(lead_v + 2.0))
+        } else {
+            v0
+        };
         let v = v_safe.min(v0).max(0.0);
         let ff = self.free_flow_time(p.movement, &route, p.kind, v0);
         let id = self.next_id;
@@ -911,7 +943,11 @@ impl Sim {
                             st.reason_stop = 1;
                         }
                         Sig::R => {
-                            if v.turn == Turn::R && self.rtor_ok(v.movement) && v.stop_done && self.t - v.stop_t > 1.0 {
+                            if v.turn == Turn::R
+                                && self.rtor_ok(v.movement)
+                                && v.stop_done
+                                && self.t - v.stop_t > 1.0
+                            {
                                 st.rank = 0.0;
                                 st.hold_line = true;
                             } else {
@@ -978,7 +1014,9 @@ impl Sim {
         self.rtor
             && !self.signal.lpi_held(m)
             && !(self.ntor_peds
-                && self.peds.iter().any(|p| p.state != PedState::Leaving && self.net.movements[m].crosswalks.contains(&p.cw)))
+                && self.peds.iter().any(|p| {
+                    p.state != PedState::Leaving && self.net.movements[m].crosswalks.contains(&p.cw)
+                }))
     }
 
     fn route_index(v: &Vehicle, link: LinkId) -> Option<usize> {
@@ -1121,11 +1159,12 @@ impl Sim {
             } else if sw.rank < sa.rank {
                 false
             } else {
-                let (ka, kw) = if sa.key < 1e8 && sw.key < 1e8 && sa.key < self.t + 1e2 && sw.key < self.t + 1e2 {
-                    (sa.key, sw.key)
-                } else {
-                    (self.t + ta_in, self.t + tv_in)
-                };
+                let (ka, kw) =
+                    if sa.key < 1e8 && sw.key < 1e8 && sa.key < self.t + 1e2 && sw.key < self.t + 1e2 {
+                        (sa.key, sw.key)
+                    } else {
+                        (self.t + ta_in, self.t + tv_in)
+                    };
                 kw < ka || (kw == ka && w.id < a.id)
             };
             if !w_priority {
@@ -1151,15 +1190,23 @@ impl Sim {
         let (_, other, s_other) = c.side(my_link);
         let (_, (zv0, zv1)) = c.zones(my_link);
         self.threats(other, s_other, zv1, i, buf);
-        buf.iter().find(|&&(j, d_v)| {
-            let w = &self.vehicles[j];
-            w.v < 0.5 && d_v - zv0 < 0.3 && d_v + zv1 + w.len() > 0.0
-        }).map(|x| x.0)
+        buf.iter()
+            .find(|&&(j, d_v)| {
+                let w = &self.vehicles[j];
+                w.v < 0.5 && d_v - zv0 < 0.3 && d_v + zv1 + w.len() > 0.0
+            })
+            .map(|x| x.0)
     }
 
     /// Another vehicle committed to crossing zone `cid` that can no longer stop before it
     /// and will get there while we would still be in it.
-    fn unstoppable_rival(&self, i: usize, cid: usize, d_a: f64, buf: &mut Vec<(usize, f64)>) -> Option<usize> {
+    fn unstoppable_rival(
+        &self,
+        i: usize,
+        cid: usize,
+        d_a: f64,
+        buf: &mut Vec<(usize, f64)>,
+    ) -> Option<usize> {
         let a = &self.vehicles[i];
         let c = &self.net.conflicts[cid];
         if c.merge {
@@ -1171,18 +1218,27 @@ impl Sim {
         let spec = a.spec();
         let ta_out = Self::eta(d_a + za1 + spec.length, a.v, spec.accel * 0.7, self.vmax_on(a, my_link));
         self.threats(other, s_other, zv1, i, buf);
-        buf.iter().find(|&&(j, d_v)| {
-            let w = &self.vehicles[j];
-            w.commits.contains(&cid)
-                && w.v > 1.0
-                && w.v * w.v / (2.0 * (d_v - zv0).max(0.1)) > 4.5
-                && Self::eta(d_v - zv0, w.v, w.spec().accel, self.vmax_on(w, other)) < ta_out + 0.8
-        }).map(|x| x.0)
+        buf.iter()
+            .find(|&&(j, d_v)| {
+                let w = &self.vehicles[j];
+                w.commits.contains(&cid)
+                    && w.v > 1.0
+                    && w.v * w.v / (2.0 * (d_v - zv0).max(0.1)) > 4.5
+                    && Self::eta(d_v - zv0, w.v, w.spec().accel, self.vmax_on(w, other)) < ta_out + 0.8
+            })
+            .map(|x| x.0)
     }
 
     /// The vehicle, if any, that a later conflict on link `lid` (beyond `s_from`) would
     /// make us yield to now.
-    fn rest_blocker(&self, i: usize, lid: LinkId, s_from: f64, base: f64, buf: &mut Vec<(usize, f64)>) -> Option<usize> {
+    fn rest_blocker(
+        &self,
+        i: usize,
+        lid: LinkId,
+        s_from: f64,
+        base: f64,
+        buf: &mut Vec<(usize, f64)>,
+    ) -> Option<usize> {
         let v = &self.vehicles[i];
         for &cid in &self.net.links[lid].conflicts {
             let (s_c, _, _) = self.net.conflicts[cid].side(lid);
@@ -1207,7 +1263,9 @@ impl Sim {
         buf.iter().any(|&(j, d_v)| {
             let w = &self.vehicles[j];
             let sj = self.vstat[j];
-            (!sj.excluded || sj.reason_stop == 1) && d_v > -1.0 && Self::eta(d_v, w.v, w.spec().accel, w.v0) < 12.0
+            (!sj.excluded || sj.reason_stop == 1)
+                && d_v > -1.0
+                && Self::eta(d_v, w.v, w.spec().accel, w.v0) < 12.0
         })
     }
 
@@ -1250,7 +1308,8 @@ impl Sim {
     // ---------------------------------------------------------------- driving
 
     fn idm(spec: &VSpec, v: f64, v0: f64, gap: f64, dv: f64) -> f64 {
-        let s_star = spec.min_gap + (v * spec.headway + v * dv / (2.0 * (spec.accel * spec.decel).sqrt())).max(0.0);
+        let s_star =
+            spec.min_gap + (v * spec.headway + v * dv / (2.0 * (spec.accel * spec.decel).sqrt())).max(0.0);
         spec.accel * (1.0 - (v / v0.max(0.1)).powi(4) - (s_star / gap.max(0.05)).powi(2))
     }
 
@@ -1303,7 +1362,14 @@ impl Sim {
 
     /// Leaders on links that branch from `from` alongside `mine` (diverges), where
     /// `base` is the distance from our front to the start of `mine`.
-    fn scan_siblings(&self, i: usize, from: LinkId, mine: LinkId, base: f64, best: &mut Option<(f64, f64, usize)>) {
+    fn scan_siblings(
+        &self,
+        i: usize,
+        from: LinkId,
+        mine: LinkId,
+        base: f64,
+        best: &mut Option<(f64, f64, usize)>,
+    ) {
         let v = &self.vehicles[i];
         for &sib in &self.net.links[from].succ {
             if sib == mine {
@@ -1342,7 +1408,8 @@ impl Sim {
     fn drive(&mut self, dt: f64) {
         let accs = if self.coop.is_some() { self.coop_accels() } else { self.decide_all() };
         // Speeds at the start of the step, for the cooperative monitors.
-        let v_start: Vec<f64> = if self.coop.is_some() { self.vehicles.iter().map(|v| v.v).collect() } else { Vec::new() };
+        let v_start: Vec<f64> =
+            if self.coop.is_some() { self.vehicles.iter().map(|v| v.v).collect() } else { Vec::new() };
         // Integrate.
         let mut done_idx = Vec::new();
         let mut person_delay = 0.0;
@@ -1456,7 +1523,10 @@ impl Sim {
                     fresh.push(c);
                 }
             }
-            if let Some(sd) = stop_done && sd && !v.stop_done {
+            if let Some(sd) = stop_done
+                && sd
+                && !v.stop_done
+            {
                 v.stop_done = true;
                 v.stop_t = self.t;
             }
@@ -1466,12 +1536,30 @@ impl Sim {
             if cfg!(debug_assertions) || std::env::var_os("TS_DEBUG").is_some() {
                 for c in fresh {
                     for w in &self.vehicles {
-                        if w.id != vid && w.commits.contains(&c) && !w.route.contains(&self.vehicles[i].route[self.vehicles[i].ri.min(self.vehicles[i].route.len()-1)]) && !self.vehicles[i].route.iter().any(|l| w.route[w.ri] == *l) {
+                        if w.id != vid
+                            && w.commits.contains(&c)
+                            && !w.route.contains(
+                                &self.vehicles[i].route
+                                    [self.vehicles[i].ri.min(self.vehicles[i].route.len() - 1)],
+                            )
+                            && !self.vehicles[i].route.iter().any(|l| w.route[w.ri] == *l)
+                        {
                             let me = &self.vehicles[i];
                             let msg = format!(
                                 "t={:.1} DOUBLE commit c{} by #{} {} v={:.1} s={:.1} st={:?} | holder #{} {} v={:.1} s={:.1} blocked={} reason={:?}",
-                                self.t, c, vid, self.net.movements[me.movement].name, me.v, me.s, self.vstat[i],
-                                w.id, self.net.movements[w.movement].name, w.v, w.s, w.blocked, w.reason
+                                self.t,
+                                c,
+                                vid,
+                                self.net.movements[me.movement].name,
+                                me.v,
+                                me.s,
+                                self.vstat[i],
+                                w.id,
+                                self.net.movements[w.movement].name,
+                                w.v,
+                                w.s,
+                                w.blocked,
+                                w.reason
                             );
                             if self.collision_log.len() < 30 {
                                 self.collision_log.push(msg);
@@ -1502,7 +1590,9 @@ impl Sim {
                     continue;
                 }
                 let close = self.peds.iter().any(|p| {
-                    p.cw == pc.cw && p.state == PedState::Crossing && ((p.u - pc.u).abs() - 1.0).max(0.0) / p.speed < 1.5
+                    p.cw == pc.cw
+                        && p.state == PedState::Crossing
+                        && ((p.u - pc.u).abs() - 1.0).max(0.0) / p.speed < 1.5
                 });
                 if close {
                     self.stats.ped_near_miss.push(self.t);
@@ -1564,7 +1654,11 @@ impl Sim {
 
     /// Returns (accel, reason, new commits, stop-done, yellow decision).
     #[allow(clippy::type_complexity)]
-    fn decide(&self, i: usize, buf: &mut Vec<(usize, f64)>) -> (f64, Reason, Vec<usize>, Option<bool>, Option<(u64, bool)>, (bool, Option<u64>), Vec<usize>) {
+    fn decide(
+        &self,
+        i: usize,
+        buf: &mut Vec<(usize, f64)>,
+    ) -> (f64, Reason, Vec<usize>, Option<bool>, Option<(u64, bool)>, (bool, Option<u64>), Vec<usize>) {
         let v = &self.vehicles[i];
         let spec = v.spec();
         let st = self.vstat[i];
@@ -1592,7 +1686,15 @@ impl Sim {
         let mut queue_gap = None;
         if let Some((gap, vl, j)) = self.leader(i) {
             let w = &self.vehicles[j];
-            let waiting = w.blocked || matches!(w.reason, Reason::Yielding | Reason::Pedestrian | Reason::Signal | Reason::StopSign | Reason::LaneChange);
+            let waiting = w.blocked
+                || matches!(
+                    w.reason,
+                    Reason::Yielding
+                        | Reason::Pedestrian
+                        | Reason::Signal
+                        | Reason::StopSign
+                        | Reason::LaneChange
+                );
             blocked = v.v < 0.5 && gap < 8.0 && w.v < 0.3 && waiting;
             if waiting || w.yield_to.is_some() {
                 queue_gap = Some(gap + vl * vl / (2.0 * 3.0) - spec.min_gap + 0.6);
@@ -1680,7 +1782,13 @@ impl Sim {
                     line_hold = true;
                     reason = Reason::Signal;
                 }
-                if sig == Sig::R && v.turn == Turn::R && self.rtor_ok(v.movement) && d_line < 2.5 && v.v < 0.3 && !v.stop_done {
+                if sig == Sig::R
+                    && v.turn == Turn::R
+                    && self.rtor_ok(v.movement)
+                    && d_line < 2.5
+                    && v.v < 0.3
+                    && !v.stop_done
+                {
                     stop_done = Some(true);
                 }
             } else if st.must_stop {
@@ -1692,7 +1800,11 @@ impl Sim {
             }
         }
         // Don't enter the intersection without room to clear it on the far side.
-        if on_approach && !line_hold && v.commits.is_empty() && (can_stop(d_line) || v.v < 1.0) && d_line < 30.0
+        if on_approach
+            && !line_hold
+            && v.commits.is_empty()
+            && (can_stop(d_line) || v.v < 1.0)
+            && d_line < 30.0
             && let Some(room) = self.exit_space(v)
             && room < spec.length + spec.min_gap + 1.0
         {
@@ -1740,7 +1852,9 @@ impl Sim {
                         // inside the zone since, or someone who committed in the same
                         // instant can no longer stop, stop short of it while we still can.
                         if d - zn > 0.3
-                            && let Some(j) = self.stalled_in_zone(i, cid, buf).or_else(|| self.unstoppable_rival(i, cid, d, buf))
+                            && let Some(j) = self
+                                .stalled_in_zone(i, cid, buf)
+                                .or_else(|| self.unstoppable_rival(i, cid, d, buf))
                         {
                             let gap = d - zn - 0.8;
                             if can_stop(gap) || v.v < 1.0 {
@@ -1776,7 +1890,10 @@ impl Sim {
                     let brake = v.v * v.v / (2.0 * 3.0) + 3.0;
                     if d - zn < brake || hold_line_mode {
                         // Permissive movers accept a gap only for the rest of the turn.
-                        if st.rank <= 1.0 && !hold_line_mode && let Some(j) = self.rest_blocker(i, lid, s_c, base, buf) {
+                        if st.rank <= 1.0
+                            && !hold_line_mode
+                            && let Some(j) = self.rest_blocker(i, lid, s_c, base, buf)
+                        {
                             let gap = d - zn - 0.8;
                             if can_stop(gap) || v.v < 1.0 {
                                 yield_to = Some(self.vehicles[j].id);
@@ -1815,7 +1932,11 @@ impl Sim {
         // Don't block the box: if stopping at `gap` would leave our body in a conflict
         // zone (or only a crossing) that live traffic needs, including zones we would
         // only creep into while waiting, stop before it instead.
-        let unblock = |mut gap: f64, crossings: bool, drop: &mut Vec<usize>, buf: &mut Vec<(usize, f64)>| -> f64 {
+        let unblock = |mut gap: f64,
+                       crossings: bool,
+                       drop: &mut Vec<usize>,
+                       buf: &mut Vec<(usize, f64)>|
+         -> f64 {
             let mut ahead = passing.clone();
             let mut base = -v.s;
             for &lid in &v.route[v.ri..] {
@@ -1837,7 +1958,10 @@ impl Sim {
             loop {
                 let mut changed = false;
                 for &(cid, d, zone, zn) in ahead.iter().rev() {
-                    if drop.contains(&cid) || (crossings && self.net.conflicts[cid].merge) || !(d - zn < gap && d + zone > gap - spec.length) {
+                    if drop.contains(&cid)
+                        || (crossings && self.net.conflicts[cid].merge)
+                        || !(d - zn < gap && d + zone > gap - spec.length)
+                    {
                         continue;
                     }
                     let g2 = d - zn - 0.8;
@@ -1883,7 +2007,15 @@ impl Sim {
                 }
             }
         }
-        (acc.clamp(-9.0, spec.accel), reason, commits, stop_done, ydec, (blocked, if stop_gap.is_some() { yield_to } else { None }), drop)
+        (
+            acc.clamp(-9.0, spec.accel),
+            reason,
+            commits,
+            stop_done,
+            ydec,
+            (blocked, if stop_gap.is_some() { yield_to } else { None }),
+            drop,
+        )
     }
 
     // ---------------------------------------------------------------- lane changes
@@ -1920,7 +2052,9 @@ impl Sim {
                 cands.extend(self.lane_target(v));
             } else {
                 for t in [k.wrapping_sub(1), k + 1] {
-                    if let Some(&l) = lanes.get(t) && serves(l) {
+                    if let Some(&l) = lanes.get(t)
+                        && serves(l)
+                    {
                         cands.push(l);
                     }
                 }
@@ -2037,7 +2171,8 @@ impl Sim {
         if self.net.links[out].kind != LinkKind::Outbound {
             return None;
         }
-        let tail = self.occ[out].iter().map(|&j| &self.vehicles[j]).min_by(|a, b| a.s.partial_cmp(&b.s).unwrap());
+        let tail =
+            self.occ[out].iter().map(|&j| &self.vehicles[j]).min_by(|a, b| a.s.partial_cmp(&b.s).unwrap());
         match tail {
             Some(w) if w.v < 1.0 => Some(w.s - w.len()),
             Some(_) => None,
@@ -2090,7 +2225,17 @@ impl Sim {
                     if self.collision_log.len() < 30 {
                         let msg = format!(
                             "t={:.1} same-lane overlap on link {l}: #{} {} s={:.1} v={:.1} lc_t={:.1} | #{} {} s={:.1} v={:.1} lc_t={:.1}",
-                            self.t, a.id, a.kind.name(), a.s, a.v, a.lc_t, b.id, b.kind.name(), b.s, b.v, b.lc_t
+                            self.t,
+                            a.id,
+                            a.kind.name(),
+                            a.s,
+                            a.v,
+                            a.lc_t,
+                            b.id,
+                            b.kind.name(),
+                            b.s,
+                            b.v,
+                            b.lc_t
                         );
                         self.collision_log.push(msg);
                     }
@@ -2127,7 +2272,11 @@ impl Sim {
                                 self.net.links[v.link()].length(),
                                 v.commits,
                                 v.reason,
-                                if self.signalized() { Some(self.signal.status(&self.net, v.movement)) } else { None }
+                                if self.signalized() {
+                                    Some(self.signal.status(&self.net, v.movement))
+                                } else {
+                                    None
+                                }
                             )
                         };
                         let msg = format!("t={:.1} | {} | {}", self.t, d(vi), d(vj));
@@ -2198,12 +2347,14 @@ impl Sim {
                 }
                 PedState::Crossing => {
                     let pos = self.ped_pos(&self.peds[pi]);
-                    let dirv = (self.net.crosswalks[cw].b - self.net.crosswalks[cw].a).norm() * self.peds[pi].dir;
+                    let dirv =
+                        (self.net.crosswalks[cw].b - self.net.crosswalks[cw].a).norm() * self.peds[pi].dir;
                     let blocked = self.vehicle_at(pos + dirv * 1.0, 0.9);
                     let p = &mut self.peds[pi];
                     if !blocked {
                         // Hurry up during flashing DON'T WALK.
-                        let hurry = if signal && self.signal.cw[cw].state != PedSig::Walk { 1.25 } else { 1.0 };
+                        let hurry =
+                            if signal && self.signal.cw[cw].state != PedSig::Walk { 1.25 } else { 1.0 };
                         p.u += p.dir * p.speed * hurry * dt;
                         p.anim += dt * p.speed * 4.0;
                     }
@@ -2281,7 +2432,8 @@ impl Sim {
                     let w = &self.vehicles[j];
                     let d = self.net.links[p].length() - w.s + pc.s;
                     let cant_stop = w.v * w.v / (2.0 * (d - 2.6).max(0.1)) > 2.5;
-                    let leaving = (w.v > 0.5 || w.a > 0.2) && (!w.commits.is_empty() || w.stop_done) && d < 35.0;
+                    let leaving =
+                        (w.v > 0.5 || w.a > 0.2) && (!w.commits.is_empty() || w.stop_done) && d < 35.0;
                     if w.route[w.ri..].contains(&pc.link) && (cant_stop || leaving) {
                         return true;
                     }

@@ -42,12 +42,17 @@ pub fn user_dir() -> Option<PathBuf> {
 /// Weights file `file` as `parse` loads it from the first copy it accepts, and where
 /// that copy came from.
 pub fn load<T>(file: &str, parse: impl FnMut(&str) -> Option<T>) -> Option<(T, String)> {
-    let dirs: Vec<PathBuf> = std::iter::once(PathBuf::from("weights")).chain(user_dir().map(|d| d.join("weights"))).collect();
+    let dirs: Vec<PathBuf> =
+        std::iter::once(PathBuf::from("weights")).chain(user_dir().map(|d| d.join("weights"))).collect();
     load_from(&dirs, file, parse)
 }
 
 /// Like [`load`], but looking in `dirs`, in order, before the built-in copy.
-pub fn load_from<T>(dirs: &[impl AsRef<Path>], file: &str, mut parse: impl FnMut(&str) -> Option<T>) -> Option<(T, String)> {
+pub fn load_from<T>(
+    dirs: &[impl AsRef<Path>],
+    file: &str,
+    mut parse: impl FnMut(&str) -> Option<T>,
+) -> Option<(T, String)> {
     for p in dirs.iter().map(|d| d.as_ref().join(file)) {
         if let Ok(txt) = std::fs::read_to_string(&p)
             && let Some(v) = parse(&txt)

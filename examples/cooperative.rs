@@ -56,7 +56,18 @@ fn main() {
     );
     println!(
         "{:>9} {:>9} {:>9} {:>8} {:>8} {:>8} {:>7} {:>8} {:>8} {:>6} {:>6} {:>6}",
-        "demand", "arrived", "served", "box/h", "delay", "p95", "maxwait", "queued", "PETmin", "viol", "dev", "overlap"
+        "demand",
+        "arrived",
+        "served",
+        "box/h",
+        "delay",
+        "p95",
+        "maxwait",
+        "queued",
+        "PETmin",
+        "viol",
+        "dev",
+        "overlap"
     );
     let demands: Vec<f64> = match arg(6) {
         a if !a.is_empty() => a.split(',').filter_map(|x| x.parse().ok()).collect(),
@@ -73,7 +84,8 @@ fn main() {
                     if cars {
                         demand.mix = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0];
                     }
-                    let mut sim = Sim::with_demand(net, ControlMode::Cooperative, CtrlKind::Fixed, demand, 7000 + seed);
+                    let mut sim =
+                        Sim::with_demand(net, ControlMode::Cooperative, CtrlKind::Fixed, demand, 7000 + seed);
                     sim.set_gap_policy(policy);
                     sim.set_scheduling(scheduling);
                     sim.check_safety = true;

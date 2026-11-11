@@ -38,7 +38,8 @@ fn shade(x: f32, y: f32) -> Rgba {
     let road_w = 0.115;
     let in_v = (x - 0.5).abs() < road_w;
     let in_h = (y - 0.5).abs() < road_w;
-    let curb = ((x - 0.5).abs() - road_w).abs() < 0.012 && !in_h || ((y - 0.5).abs() - road_w).abs() < 0.012 && !in_v;
+    let curb = ((x - 0.5).abs() - road_w).abs() < 0.012 && !in_h
+        || ((y - 0.5).abs() - road_w).abs() < 0.012 && !in_v;
     if curb {
         c = rgb(214, 214, 206);
     }

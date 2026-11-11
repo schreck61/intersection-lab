@@ -35,13 +35,26 @@ fn nice_max(v: f64) -> f64 {
 }
 
 /// Line chart of one or more series sharing the x axis.
-pub fn line_chart(ui: &mut Ui, title: &str, unit: &str, xs: &[f64], series: &[(&str, Vec<f64>, Color32)], height: f32) {
+pub fn line_chart(
+    ui: &mut Ui,
+    title: &str,
+    unit: &str,
+    xs: &[f64],
+    series: &[(&str, Vec<f64>, Color32)],
+    height: f32,
+) {
     ui.label(egui::RichText::new(title).strong().size(12.5));
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
     let p = ui.painter_at(rect);
     p.rect_filled(rect, 4.0, Color32::from_rgb(24, 26, 31));
     if xs.len() < 2 {
-        p.text(rect.center(), Align2::CENTER_CENTER, "collecting data…", FontId::proportional(11.0), AXIS_TXT);
+        p.text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            "collecting data…",
+            FontId::proportional(11.0),
+            AXIS_TXT,
+        );
         return;
     }
     let plot = Rect::from_min_max(rect.min + vec2(38.0, 6.0), rect.max - vec2(6.0, 17.0));
@@ -53,11 +66,29 @@ pub fn line_chart(ui: &mut Ui, title: &str, unit: &str, xs: &[f64], series: &[(&
         let y = ymax * k as f64 / 4.0;
         let yy = ty(y);
         p.line_segment([pos2(plot.left(), yy), pos2(plot.right(), yy)], Stroke::new(1.0, GRID));
-        p.text(pos2(plot.left() - 4.0, yy), Align2::RIGHT_CENTER, fmt_num(y), FontId::proportional(TXT), AXIS_TXT);
+        p.text(
+            pos2(plot.left() - 4.0, yy),
+            Align2::RIGHT_CENTER,
+            fmt_num(y),
+            FontId::proportional(TXT),
+            AXIS_TXT,
+        );
     }
     let mins = |x: f64| format!("{:.0}m", x / 60.0);
-    p.text(pos2(plot.left(), plot.bottom() + 2.0), Align2::LEFT_TOP, mins(x0), FontId::proportional(TXT), AXIS_TXT);
-    p.text(pos2(plot.right(), plot.bottom() + 2.0), Align2::RIGHT_TOP, mins(x1), FontId::proportional(TXT), AXIS_TXT);
+    p.text(
+        pos2(plot.left(), plot.bottom() + 2.0),
+        Align2::LEFT_TOP,
+        mins(x0),
+        FontId::proportional(TXT),
+        AXIS_TXT,
+    );
+    p.text(
+        pos2(plot.right(), plot.bottom() + 2.0),
+        Align2::RIGHT_TOP,
+        mins(x1),
+        FontId::proportional(TXT),
+        AXIS_TXT,
+    );
     for (_, ys, col) in series {
         let pts: Vec<Pos2> = xs.iter().zip(ys).map(|(x, y)| pos2(tx(*x), ty(*y))).collect();
         p.add(egui::Shape::line(pts, Stroke::new(1.6, *col)));
@@ -66,20 +97,35 @@ pub fn line_chart(ui: &mut Ui, title: &str, unit: &str, xs: &[f64], series: &[(&
     let mut lx = plot.left() + 4.0;
     for (name, ys, col) in series {
         let last = ys.last().copied().unwrap_or(0.0);
-        let r = p.text(pos2(lx, plot.top()), Align2::LEFT_TOP, format!("● {name} {}{unit}", fmt_num(last)), FontId::proportional(TXT), *col);
+        let r = p.text(
+            pos2(lx, plot.top()),
+            Align2::LEFT_TOP,
+            format!("● {name} {}{unit}", fmt_num(last)),
+            FontId::proportional(TXT),
+            *col,
+        );
         lx = r.right() + 10.0;
     }
-    if let Some(h) = resp.hover_pos() && plot.contains(h) {
+    if let Some(h) = resp.hover_pos()
+        && plot.contains(h)
+    {
         let xv = x0 + ((h.x - plot.left()) / plot.width()) as f64 * (x1 - x0);
         let i = xs.partition_point(|&x| x < xv).min(xs.len() - 1);
-        p.line_segment([pos2(tx(xs[i]), plot.top()), pos2(tx(xs[i]), plot.bottom())], Stroke::new(1.0, Color32::from_white_alpha(40)));
+        p.line_segment(
+            [pos2(tx(xs[i]), plot.top()), pos2(tx(xs[i]), plot.bottom())],
+            Stroke::new(1.0, Color32::from_white_alpha(40)),
+        );
         let mut txt = format!("t={:.1} min", xs[i] / 60.0);
         for (name, ys, _) in series {
             txt.push_str(&format!("\n{name}: {}{unit}", fmt_num(ys[i])));
         }
         let pos = pos2((tx(xs[i]) + 8.0).min(plot.right() - 90.0), plot.top() + 14.0);
         let g = p.layout_no_wrap(txt, FontId::proportional(TXT), Color32::WHITE);
-        p.rect_filled(Rect::from_min_size(pos - vec2(3.0, 2.0), g.size() + vec2(6.0, 4.0)), 3.0, Color32::from_black_alpha(200));
+        p.rect_filled(
+            Rect::from_min_size(pos - vec2(3.0, 2.0), g.size() + vec2(6.0, 4.0)),
+            3.0,
+            Color32::from_black_alpha(200),
+        );
         p.galley(pos, g, Color32::WHITE);
     }
 }
@@ -104,7 +150,8 @@ pub fn hbars(ui: &mut Ui, rows: &[(String, f64, bool)], unit: &str, lower_is_bet
     let vmin = finite.iter().cloned().fold(f64::INFINITY, f64::min);
     let neg = vmin < 0.0;
     let row_h = 17.0;
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), rows.len() as f32 * row_h + 2.0), Sense::hover());
+    let (rect, _) =
+        ui.allocate_exact_size(vec2(ui.available_width(), rows.len() as f32 * row_h + 2.0), Sense::hover());
     let p = ui.painter_at(rect);
     let label_w = (rect.width() * 0.42).min(170.0);
     let best = if lower_is_better {
@@ -114,15 +161,20 @@ pub fn hbars(ui: &mut Ui, rows: &[(String, f64, bool)], unit: &str, lower_is_bet
     };
     for (i, (name, v, hl)) in rows.iter().enumerate() {
         let y = rect.top() + i as f32 * row_h;
-        let bar_area = Rect::from_min_max(pos2(rect.left() + label_w, y + 2.0), pos2(rect.right() - 44.0, y + row_h - 2.0));
-        p.text(pos2(rect.left(), y + row_h / 2.0), Align2::LEFT_CENTER, name, FontId::proportional(TXT), if *hl { Color32::WHITE } else { AXIS_TXT });
+        let bar_area = Rect::from_min_max(
+            pos2(rect.left() + label_w, y + 2.0),
+            pos2(rect.right() - 44.0, y + row_h - 2.0),
+        );
+        p.text(
+            pos2(rect.left(), y + row_h / 2.0),
+            Align2::LEFT_CENTER,
+            name,
+            FontId::proportional(TXT),
+            if *hl { Color32::WHITE } else { AXIS_TXT },
+        );
         p.rect_filled(bar_area, 2.0, Color32::from_rgb(30, 33, 39));
         if v.is_finite() {
-            let frac = if neg {
-                ((v - vmin) / (vmax - vmin).max(1e-9)) as f32
-            } else {
-                (v / vmax) as f32
-            };
+            let frac = if neg { ((v - vmin) / (vmax - vmin).max(1e-9)) as f32 } else { (v / vmax) as f32 };
             let w = bar_area.width() * frac.clamp(0.0, 1.0);
             let col = if *hl {
                 Color32::from_rgb(255, 200, 70)
@@ -132,9 +184,21 @@ pub fn hbars(ui: &mut Ui, rows: &[(String, f64, bool)], unit: &str, lower_is_bet
                 Color32::from_rgb(90, 140, 220)
             };
             p.rect_filled(Rect::from_min_size(bar_area.min, vec2(w.max(1.0), bar_area.height())), 2.0, col);
-            p.text(pos2(rect.right(), y + row_h / 2.0), Align2::RIGHT_CENTER, format!("{}{unit}", fmt_num(*v)), FontId::proportional(TXT), Color32::WHITE);
+            p.text(
+                pos2(rect.right(), y + row_h / 2.0),
+                Align2::RIGHT_CENTER,
+                format!("{}{unit}", fmt_num(*v)),
+                FontId::proportional(TXT),
+                Color32::WHITE,
+            );
         } else {
-            p.text(pos2(rect.right(), y + row_h / 2.0), Align2::RIGHT_CENTER, "—", FontId::proportional(TXT), AXIS_TXT);
+            p.text(
+                pos2(rect.right(), y + row_h / 2.0),
+                Align2::RIGHT_CENTER,
+                "—",
+                FontId::proportional(TXT),
+                AXIS_TXT,
+            );
         }
     }
 }
@@ -151,16 +215,38 @@ pub fn histogram(ui: &mut Ui, bins: &[u32], bin_w: f64, height: f32) {
         let h = plot.height() * b as f32 / max.max(1.0);
         let x = plot.left() + i as f32 * bw;
         let col = super::render::delay_color(i as f64 * bin_w + bin_w / 2.0);
-        p.rect_filled(Rect::from_min_max(pos2(x + 1.0, plot.bottom() - h), pos2(x + bw - 1.0, plot.bottom())), 2.0, col);
+        p.rect_filled(
+            Rect::from_min_max(pos2(x + 1.0, plot.bottom() - h), pos2(x + bw - 1.0, plot.bottom())),
+            2.0,
+            col,
+        );
         if i % 2 == 0 {
-            let label = if i == bins.len() - 1 { format!("{:.0}+", i as f64 * bin_w) } else { format!("{:.0}", i as f64 * bin_w) };
-            p.text(pos2(x + bw / 2.0, plot.bottom() + 2.0), Align2::CENTER_TOP, label, FontId::proportional(TXT), AXIS_TXT);
+            let label = if i == bins.len() - 1 {
+                format!("{:.0}+", i as f64 * bin_w)
+            } else {
+                format!("{:.0}", i as f64 * bin_w)
+            };
+            p.text(
+                pos2(x + bw / 2.0, plot.bottom() + 2.0),
+                Align2::CENTER_TOP,
+                label,
+                FontId::proportional(TXT),
+                AXIS_TXT,
+            );
         }
     }
-    if let Some(h) = resp.hover_pos() && plot.contains(h) {
+    if let Some(h) = resp.hover_pos()
+        && plot.contains(h)
+    {
         let i = (((h.x - plot.left()) / bw) as usize).min(bins.len() - 1);
         let pct = if total > 0 { 100.0 * bins[i] as f32 / total as f32 } else { 0.0 };
-        p.text(pos2(plot.right(), plot.top()), Align2::RIGHT_TOP, format!("{:.0}–{:.0}s: {} veh ({:.0}%)", i as f64 * bin_w, (i + 1) as f64 * bin_w, bins[i], pct), FontId::proportional(TXT), Color32::WHITE);
+        p.text(
+            pos2(plot.right(), plot.top()),
+            Align2::RIGHT_TOP,
+            format!("{:.0}–{:.0}s: {} veh ({:.0}%)", i as f64 * bin_w, (i + 1) as f64 * bin_w, bins[i], pct),
+            FontId::proportional(TXT),
+            Color32::WHITE,
+        );
     }
 }
 
@@ -184,21 +270,49 @@ pub fn pet_histogram(ui: &mut Ui, bins: &[u32], bin_w: f64, height: f32) {
         let h = (plot.height() * b as f32 / max).min(plot.height());
         let x = plot.left() + i as f32 * bw;
         if i == last && b as f32 > max {
-            p.text(pos2(x + bw / 2.0, plot.top() + 2.0), Align2::CENTER_TOP, "▲", FontId::proportional(TXT), AXIS_TXT);
+            p.text(
+                pos2(x + bw / 2.0, plot.top() + 2.0),
+                Align2::CENTER_TOP,
+                "▲",
+                FontId::proportional(TXT),
+                AXIS_TXT,
+            );
         }
         let mid = (i as f64 + 0.5) * bin_w;
         let col = super::render::delay_color(90.0 * (1.0 - (mid / 2.0).min(1.0)));
-        p.rect_filled(Rect::from_min_max(pos2(x + 1.0, plot.bottom() - h), pos2(x + bw - 1.0, plot.bottom())), 2.0, col);
+        p.rect_filled(
+            Rect::from_min_max(pos2(x + 1.0, plot.bottom() - h), pos2(x + bw - 1.0, plot.bottom())),
+            2.0,
+            col,
+        );
         let at = i as f64 * bin_w;
         if (at - at.round()).abs() < 1e-9 {
-            p.text(pos2(x, plot.bottom() + 2.0), Align2::CENTER_TOP, format!("{at:.0} s"), FontId::proportional(TXT), AXIS_TXT);
+            p.text(
+                pos2(x, plot.bottom() + 2.0),
+                Align2::CENTER_TOP,
+                format!("{at:.0} s"),
+                FontId::proportional(TXT),
+                AXIS_TXT,
+            );
         }
     }
-    if let Some(h) = resp.hover_pos() && plot.contains(h) {
+    if let Some(h) = resp.hover_pos()
+        && plot.contains(h)
+    {
         let i = (((h.x - plot.left()) / bw) as usize).min(bins.len() - 1);
         let pct = 100.0 * bins[i] as f32 / total as f32;
-        let range = if i + 1 == bins.len() { format!("{:.2} s or more", i as f64 * bin_w) } else { format!("{:.2}–{:.2} s", i as f64 * bin_w, (i + 1) as f64 * bin_w) };
-        p.text(pos2(plot.right(), plot.top()), Align2::RIGHT_TOP, format!("{range}: {} ({pct:.1}%)", bins[i]), FontId::proportional(TXT), Color32::WHITE);
+        let range = if i + 1 == bins.len() {
+            format!("{:.2} s or more", i as f64 * bin_w)
+        } else {
+            format!("{:.2}–{:.2} s", i as f64 * bin_w, (i + 1) as f64 * bin_w)
+        };
+        p.text(
+            pos2(plot.right(), plot.top()),
+            Align2::RIGHT_TOP,
+            format!("{range}: {} ({pct:.1}%)", bins[i]),
+            FontId::proportional(TXT),
+            Color32::WHITE,
+        );
     }
 }
 
@@ -211,7 +325,10 @@ pub fn crossing_timeline(ui: &mut Ui, sim: &crate::sim::Sim, past: f64, ahead: f
     let net = &sim.net;
     let rows: Vec<usize> = c.ring_order().concat();
     let row_h = 14.0;
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), rows.len().max(1) as f32 * row_h + 21.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(
+        vec2(ui.available_width(), rows.len().max(1) as f32 * row_h + 21.0),
+        Sense::hover(),
+    );
     let p = ui.painter_at(rect);
     p.rect_filled(rect, 4.0, Color32::from_rgb(22, 24, 28));
     let label_w = 150.0;
@@ -220,21 +337,40 @@ pub fn crossing_timeline(ui: &mut Ui, sim: &crate::sim::Sim, past: f64, ahead: f
     let (t0, t1) = (now - past, now + ahead);
     let tx = |t: f64| plot.left() + ((t - t0) / (t1 - t0)) as f32 * plot.width();
     let row_of = |m: usize| rows.iter().position(|&x| x == m);
-    let color = |m: usize| if net.movements[m].turn == crate::sim::network::Turn::L { SERIES[1] } else { SERIES[0] };
+    let color =
+        |m: usize| if net.movements[m].turn == crate::sim::network::Turn::L { SERIES[1] } else { SERIES[0] };
     let open = c.open_movements();
     for (i, &m) in rows.iter().enumerate() {
         let y = plot.top() + i as f32 * row_h;
         let mv = &net.movements[m];
         let name = format!("{} {}", net.legs[mv.leg].compass.bound(), mv.turn.name().to_lowercase());
         let col = if open.contains(&m) { Color32::WHITE } else { AXIS_TXT };
-        p.text(pos2(rect.left() + 6.0, y + row_h / 2.0), Align2::LEFT_CENTER, name, FontId::proportional(TXT), col);
-        p.line_segment([pos2(plot.left(), y + row_h - 0.5), pos2(plot.right(), y + row_h - 0.5)], Stroke::new(1.0, Color32::from_rgb(34, 37, 43)));
+        p.text(
+            pos2(rect.left() + 6.0, y + row_h / 2.0),
+            Align2::LEFT_CENTER,
+            name,
+            FontId::proportional(TXT),
+            col,
+        );
+        p.line_segment(
+            [pos2(plot.left(), y + row_h - 0.5), pos2(plot.right(), y + row_h - 0.5)],
+            Stroke::new(1.0, Color32::from_rgb(34, 37, 43)),
+        );
     }
     let mut t = (t1 / 30.0).floor() * 30.0;
     while t >= t0 {
         if t >= 0.0 {
-            p.line_segment([pos2(tx(t), plot.top()), pos2(tx(t), plot.bottom())], Stroke::new(1.0, Color32::from_rgb(40, 44, 50)));
-            p.text(pos2(tx(t), plot.bottom() + 1.0), Align2::CENTER_TOP, format!("{:.0}:{:02.0}", (t / 60.0).floor(), t % 60.0), FontId::proportional(TXT), AXIS_TXT);
+            p.line_segment(
+                [pos2(tx(t), plot.top()), pos2(tx(t), plot.bottom())],
+                Stroke::new(1.0, Color32::from_rgb(40, 44, 50)),
+            );
+            p.text(
+                pos2(tx(t), plot.bottom() + 1.0),
+                Align2::CENTER_TOP,
+                format!("{:.0}:{:02.0}", (t / 60.0).floor(), t % 60.0),
+                FontId::proportional(TXT),
+                AXIS_TXT,
+            );
         }
         t -= 30.0;
     }
@@ -246,7 +382,11 @@ pub fn crossing_timeline(ui: &mut Ui, sim: &crate::sim::Sim, past: f64, ahead: f
         let Some(i) = row_of(b.movement) else { continue };
         let y = plot.top() + i as f32 * row_h;
         let (a, e) = (tx(b.start.max(t0)), tx(b.end.min(t1)));
-        p.rect_filled(Rect::from_min_max(pos2(a - 1.0, y + 1.5), pos2(e.max(a) + 1.0, y + row_h - 2.5)), 2.0, color(b.movement).gamma_multiply(0.45));
+        p.rect_filled(
+            Rect::from_min_max(pos2(a - 1.0, y + 1.5), pos2(e.max(a) + 1.0, y + row_h - 2.5)),
+            2.0,
+            color(b.movement).gamma_multiply(0.45),
+        );
     }
     for &(t, m) in &c.crossings {
         if t < t0 || t > t1 {
@@ -260,7 +400,13 @@ pub fn crossing_timeline(ui: &mut Ui, sim: &crate::sim::Sim, past: f64, ahead: f
     }
     let x = tx(now);
     p.line_segment([pos2(x, plot.top()), pos2(x, plot.bottom())], Stroke::new(1.5, super::render::SCHEDULED));
-    p.text(pos2(x + 3.0, plot.top()), Align2::LEFT_TOP, "now", FontId::proportional(TXT), super::render::SCHEDULED);
+    p.text(
+        pos2(x + 3.0, plot.top()),
+        Align2::LEFT_TOP,
+        "now",
+        FontId::proportional(TXT),
+        super::render::SCHEDULED,
+    );
 }
 
 /// Signal timing diagram: one row per stage over the last `window` seconds.
@@ -268,11 +414,18 @@ pub fn timeline(ui: &mut Ui, sim: &crate::sim::Sim, window: f64) {
     let net = &sim.net;
     let n = net.stages.len().max(1);
     let row_h = 14.0;
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), n as f32 * row_h + 21.0), Sense::hover());
+    let (rect, _) =
+        ui.allocate_exact_size(vec2(ui.available_width(), n as f32 * row_h + 21.0), Sense::hover());
     let p = ui.painter_at(rect);
     p.rect_filled(rect, 4.0, Color32::from_rgb(22, 24, 28));
     if !sim.signalized() {
-        p.text(rect.center(), Align2::CENTER_CENTER, format!("{} — no signal timing", sim.mode.name()), FontId::proportional(12.0), AXIS_TXT);
+        p.text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            format!("{} — no signal timing", sim.mode.name()),
+            FontId::proportional(12.0),
+            AXIS_TXT,
+        );
         return;
     }
     let label_w = 150.0;
@@ -283,15 +436,33 @@ pub fn timeline(ui: &mut Ui, sim: &crate::sim::Sim, window: f64) {
     for (i, st) in net.stages.iter().enumerate() {
         let y = plot.top() + i as f32 * row_h;
         let cur = i == sim.signal.stage;
-        p.text(pos2(rect.left() + 6.0, y + row_h / 2.0), Align2::LEFT_CENTER, &st.name, FontId::proportional(TXT), if cur { Color32::WHITE } else { AXIS_TXT });
-        p.line_segment([pos2(plot.left(), y + row_h - 0.5), pos2(plot.right(), y + row_h - 0.5)], Stroke::new(1.0, Color32::from_rgb(34, 37, 43)));
+        p.text(
+            pos2(rect.left() + 6.0, y + row_h / 2.0),
+            Align2::LEFT_CENTER,
+            &st.name,
+            FontId::proportional(TXT),
+            if cur { Color32::WHITE } else { AXIS_TXT },
+        );
+        p.line_segment(
+            [pos2(plot.left(), y + row_h - 0.5), pos2(plot.right(), y + row_h - 0.5)],
+            Stroke::new(1.0, Color32::from_rgb(34, 37, 43)),
+        );
     }
     let k = (window / 30.0) as i64;
     for j in 0..=k {
         let t = (t1 / 30.0).floor() * 30.0 - j as f64 * 30.0;
         if t >= t0 {
-            p.line_segment([pos2(tx(t), plot.top()), pos2(tx(t), plot.bottom())], Stroke::new(1.0, Color32::from_rgb(40, 44, 50)));
-            p.text(pos2(tx(t), plot.bottom() + 1.0), Align2::CENTER_TOP, format!("{:.0}:{:02.0}", (t / 60.0).floor(), t % 60.0), FontId::proportional(TXT), AXIS_TXT);
+            p.line_segment(
+                [pos2(tx(t), plot.top()), pos2(tx(t), plot.bottom())],
+                Stroke::new(1.0, Color32::from_rgb(40, 44, 50)),
+            );
+            p.text(
+                pos2(tx(t), plot.bottom() + 1.0),
+                Align2::CENTER_TOP,
+                format!("{:.0}:{:02.0}", (t / 60.0).floor(), t % 60.0),
+                FontId::proportional(TXT),
+                AXIS_TXT,
+            );
         }
     }
     // Each stage's green in its own color, then the yellow change and all-red clearance
@@ -308,7 +479,11 @@ pub fn timeline(ui: &mut Ui, sim: &crate::sim::Sim, window: f64) {
             Phase::Yellow => (Color32::from_rgb(230, 190, 40), 1.0),
             Phase::AllRed => (Color32::from_rgb(220, 60, 50), 1.0),
         };
-        p.rect_filled(Rect::from_min_max(pos2(a, y + 1.5), pos2(b.max(a + 1.0), y + row_h - 2.5)), round, col);
+        p.rect_filled(
+            Rect::from_min_max(pos2(a, y + 1.5), pos2(b.max(a + 1.0), y + row_h - 2.5)),
+            round,
+            col,
+        );
     }
 }
 
@@ -324,7 +499,12 @@ pub fn sparkline(ui: &mut Ui, ys: &[f32], height: f32, col: Color32) {
     let pts: Vec<Pos2> = ys
         .iter()
         .enumerate()
-        .map(|(i, y)| pos2(rect.left() + i as f32 / (ys.len() - 1) as f32 * rect.width(), rect.bottom() - y / max * (rect.height() - 4.0) - 2.0))
+        .map(|(i, y)| {
+            pos2(
+                rect.left() + i as f32 / (ys.len() - 1) as f32 * rect.width(),
+                rect.bottom() - y / max * (rect.height() - 4.0) - 2.0,
+            )
+        })
         .collect();
     p.add(egui::Shape::line(pts, Stroke::new(1.2, col)));
 }

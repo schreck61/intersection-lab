@@ -63,7 +63,12 @@ fn shield_serves_a_pedestrian_who_waited_too_long() {
             }
             let mut waits = vec![0.0; n];
             waits[cw] = PED_MAX_WAIT + 5.0;
-            assert_eq!(mask_with_waits(&sim, &waits), serve, "{:?}: crosswalk {cw} waited too long but was not served next", net.kind);
+            assert_eq!(
+                mask_with_waits(&sim, &waits),
+                serve,
+                "{:?}: crosswalk {cw} waited too long but was not served next",
+                net.kind
+            );
             checked += 1;
         }
     }
@@ -97,7 +102,13 @@ fn shield_serves_the_longest_wait_first() {
             for b in 0..n {
                 let (sa, sb) = (walking(net, a), walking(net, b));
                 // Two late crosswalks that no stage walks together, neither walked now.
-                if a == b || sa[cur] || sb[cur] || !sa.contains(&true) || !sb.contains(&true) || sa.iter().zip(&sb).any(|(&x, &y)| x && y) {
+                if a == b
+                    || sa[cur]
+                    || sb[cur]
+                    || !sa.contains(&true)
+                    || !sb.contains(&true)
+                    || sa.iter().zip(&sb).any(|(&x, &y)| x && y)
+                {
                     continue;
                 }
                 let mut waits = vec![0.0; n];
@@ -129,5 +140,8 @@ fn reward_counts_waiting_pedestrians() {
     // The reward is taken mid-step, so pedestrians who start or stop waiting in that step
     // can differ by one step from the end-of-step count.
     assert!(waiting > 1000.0, "too little pedestrian waiting to test: {waiting:.0} s");
-    assert!((reward - waiting).abs() < 0.02 * waiting, "reward {reward:.0} s, pedestrian waiting {waiting:.0} s");
+    assert!(
+        (reward - waiting).abs() < 0.02 * waiting,
+        "reward {reward:.0} s, pedestrian waiting {waiting:.0} s"
+    );
 }

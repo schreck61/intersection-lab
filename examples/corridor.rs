@@ -8,14 +8,17 @@
 //!
 //! usage: corridor [layout] [n] [minutes] [seeds] [demand-scale]
 use intersection_lab::control::CtrlKind;
+use intersection_lab::sim::ControlMode;
 use intersection_lab::sim::demand::DemandConfig;
 use intersection_lab::sim::network::{LayoutKind, Network};
 use intersection_lab::sim::world::World;
-use intersection_lab::sim::ControlMode;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let kind = args.get(1).and_then(|k| LayoutKind::ALL.into_iter().find(|x| x.key() == k)).unwrap_or(LayoutKind::Arterial4);
+    let kind = args
+        .get(1)
+        .and_then(|k| LayoutKind::ALL.into_iter().find(|x| x.key() == k))
+        .unwrap_or(LayoutKind::Arterial4);
     let n: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(3);
     let minutes: f64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(20.0);
     let seeds: u64 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(4);
@@ -33,7 +36,17 @@ fn main() {
     ];
     println!(
         "=== Corridor: {} x {} | {:.0} min x {} seeds ===\n{:<32} {:>10} {:>9} {:>10} {:>10} {:>10} {:>6}",
-        n, kind.name(), minutes, seeds, "control", "persDly*", "thru n", "thru time", "thru stops", "thru dly", "coll"
+        n,
+        kind.name(),
+        minutes,
+        seeds,
+        "control",
+        "persDly*",
+        "thru n",
+        "thru time",
+        "thru stops",
+        "thru dly",
+        "coll"
     );
     let handles: Vec<_> = runs
         .into_iter()
@@ -66,6 +79,9 @@ fn main() {
         .collect();
     for h in handles {
         let (name, a) = h.join().unwrap();
-        println!("{:<32} {:>9.1}s {:>9.0} {:>9.1}s {:>10.2} {:>9.1}s {:>6.0}", name, a[0], a[1], a[2], a[3], a[4], a[5]);
+        println!(
+            "{:<32} {:>9.1}s {:>9.0} {:>9.1}s {:>10.2} {:>9.1}s {:>6.0}",
+            name, a[0], a[1], a[2], a[3], a[4], a[5]
+        );
     }
 }

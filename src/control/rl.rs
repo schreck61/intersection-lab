@@ -105,7 +105,9 @@ impl RlController {
     }
 
     pub fn load_or_new(net: &Network) -> Self {
-        if let Some((mut c, source)) = super::weights::load(&weights_file(net.kind.key()), |txt| Self::from_saved(net, txt)) {
+        if let Some((mut c, source)) =
+            super::weights::load(&weights_file(net.kind.key()), |txt| Self::from_saved(net, txt))
+        {
             c.loaded_from = Some(source);
             return c;
         }
@@ -120,7 +122,9 @@ impl RlController {
     /// doesn't parse or its network doesn't fit this layout. Weights files can be
     /// damaged or edited by hand, so a network is checked before it runs.
     pub fn from_saved(net: &Network, txt: &str) -> Option<Self> {
-        let m = serde_json::from_str::<SavedModel>(txt).ok().filter(|m| m.fits(n_inputs(net), net.stages.len()))?;
+        let m = serde_json::from_str::<SavedModel>(txt)
+            .ok()
+            .filter(|m| m.fits(n_inputs(net), net.stages.len()))?;
         let mut c = Self::with_agent(net, Dqn::from_net(m.net, Rng::new(7)));
         c.episodes = m.episodes;
         Some(c)
@@ -178,7 +182,12 @@ impl RlController {
                 for m in 0..net.movements.len() {
                     if stat(net, j, m).is_some() {
                         let mo = &ctx.view.moves[m];
-                        d += mo.queue + mo.vehicles.iter().filter(|o| !o.queued && o.eta < 12.0).map(|o| o.weight).sum::<f64>();
+                        d += mo.queue
+                            + mo.vehicles
+                                .iter()
+                                .filter(|o| !o.queued && o.eta < 12.0)
+                                .map(|o| o.weight)
+                                .sum::<f64>();
                     }
                 }
                 d + net.stages[j].walk.iter().map(|&cw| ctx.view.ped_waiting[cw] as f64).sum::<f64>()
@@ -250,7 +259,9 @@ impl Controller for RlController {
 
     fn step(&mut self, ctx: &Ctx) -> Option<usize> {
         self.r_acc -= ctx.reward_delay / REWARD_SCALE;
-        if let Some(e) = self.expert.as_mut() && let Some(j) = e.step(ctx) {
+        if let Some(e) = self.expert.as_mut()
+            && let Some(j) = e.step(ctx)
+        {
             self.expert_wish = Some((j, ctx.t));
         }
         if ctx.sig.phase != Phase::Green || !ctx.can_switch || ctx.t < self.next_decision {
@@ -260,9 +271,18 @@ impl Controller for RlController {
         self.cur = ctx.sig.stage;
         let s = Self::features(ctx);
         let mask = Self::shield(ctx);
-        if let Some((ps, pa, pt)) = self.prev.take() && self.learning {
+        if let Some((ps, pa, pt)) = self.prev.take()
+            && self.learning
+        {
             let disc = GAMMA_PER_2S.powf((ctx.t - pt) / 2.0) as f32;
-            self.agent.push(Transition { s: ps, a: pa, r: self.r_acc as f32, s2: s.clone(), disc, mask2: mask.clone() });
+            self.agent.push(Transition {
+                s: ps,
+                a: pa,
+                r: self.r_acc as f32,
+                s2: s.clone(),
+                disc,
+                mask2: mask.clone(),
+            });
             self.since_train += 1;
             if self.since_train >= self.train_every {
                 self.since_train = 0;
@@ -282,7 +302,11 @@ impl Controller for RlController {
         } else if self.learning && self.rng.chance(self.epsilon) {
             // Exploration over shield-allowed actions, biased toward holding.
             let allowed: Vec<usize> = (0..mask.len()).filter(|&i| mask[i]).collect();
-            if mask[self.cur] && self.rng.chance(0.5) { self.cur } else { allowed[self.rng.below(allowed.len())] }
+            if mask[self.cur] && self.rng.chance(0.5) {
+                self.cur
+            } else {
+                allowed[self.rng.below(allowed.len())]
+            }
         } else {
             greedy
         };
@@ -293,7 +317,8 @@ impl Controller for RlController {
     }
 
     fn brain(&self) -> Brain {
-        let best = if self.last_q.is_empty() { usize::MAX } else { argmax_masked(&self.last_q, &self.last_mask) };
+        let best =
+            if self.last_q.is_empty() { usize::MAX } else { argmax_masked(&self.last_q, &self.last_mask) };
         let mut notes = vec![match &self.loaded_from {
             Some(p) => format!("pretrained weights: {} episodes ({})", self.episodes, short_path(p)),
             None => "no pretrained weights found: learning from scratch".into(),
@@ -315,7 +340,11 @@ impl Controller for RlController {
                 .iter()
                 .enumerate()
                 .map(|(i, q)| {
-                    let mut label = if i == self.cur { format!("hold {}", self.names[i]) } else { format!("→ {}", self.names[i]) };
+                    let mut label = if i == self.cur {
+                        format!("hold {}", self.names[i])
+                    } else {
+                        format!("→ {}", self.names[i])
+                    };
                     if self.last_mask.get(i) == Some(&false) {
                         label.push_str(" (shielded)");
                     }
