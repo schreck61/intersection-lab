@@ -261,6 +261,7 @@ impl App {
         // The view is centered on the middle of the corridor: start the panels there.
         self.focus = self.world.sims.len() / 2;
         self.rebuild_twin();
+        self.sync_ctrl();
         if self.scene.kind != self.layout {
             self.scene = Scene::build(&self.world.sims[0].net);
         }
@@ -284,6 +285,17 @@ impl App {
         let demand = src.demand.clone();
         self.twin = Some(self.make_world(self.twin_mode, self.twin_ctrl, (self.twin_policy, self.twin_sched), demand, &template));
         self.twin_summary = Summary::default();
+    }
+
+    /// Show the controllers the focused intersection runs, on both sides: the focus may
+    /// have moved, and the green wave changes controllers. Whether anything changed.
+    fn sync_ctrl(&mut self) -> bool {
+        let before = (self.ctrl, self.twin_ctrl);
+        self.ctrl = self.world.sims[self.focus].ctrl_kind;
+        if let Some(t) = &self.twin {
+            self.twin_ctrl = t.sims[self.focus.min(t.sims.len() - 1)].ctrl_kind;
+        }
+        (self.ctrl, self.twin_ctrl) != before
     }
 
     fn settings_of(s: &Sim) -> Sim {
@@ -1753,6 +1765,11 @@ impl eframe::App for App {
         egui::Panel::right("right").default_size(380.0).resizable(true).show(ui, |ui| self.right_panel(ui));
         egui::Panel::bottom("bottom").show(ui, |ui| self.bottom_panel(ui));
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| self.canvas(ui));
+        // Panels drawn before a change of focus or controller this frame showed the old
+        // controller: draw again.
+        if self.sync_ctrl() {
+            ctx.request_repaint();
+        }
         self.bench_window(&ctx);
         self.about_window(&ctx);
         if let Some((path, after)) = self.shot.clone() && self.world.sims[self.focus].t >= after {
