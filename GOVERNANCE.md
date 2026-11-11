@@ -19,8 +19,9 @@ This document describes how decisions are made and who does what.
   A change that lets vehicles collide isn't accepted, however much it helps delay.
 * **Through pull requests.** Every change to `main`, including the maintainer's own,
   goes through a pull request whose required checks pass: the tests on Linux, macOS and
-  Windows, the browser build, rustfmt and Clippy, the crate package, the license and
-  advisory checks, CodeQL, and DCO sign-off. Nobody can push to `main` directly.
+  Windows, test coverage of at least 80% of lines, the browser build, rustfmt and
+  Clippy, the crate package, the license and advisory checks, CodeQL, and DCO sign-off.
+  Nobody can push to `main` directly.
 * **With reasons.** The maintainer reviews contributions and decides whether to merge
   them, and explains the reasons when declining a change or asking for a different
   approach. If you disagree with a decision, say so in the issue or pull request.
