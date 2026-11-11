@@ -238,7 +238,7 @@ impl Scene {
             let x = &net.legs[order[k]];
             let y = &net.legs[order[(k + 1) % n]];
             if x.d.dot(y.d).abs() > 0.5 {
-                continue; // opposite legs (T-junction side): straight edge
+                continue; // opposite legs (T-intersection side): straight edge
             }
             // X's out edge and Y's in edge.
             let ex = x.out_side() * x.out_width;

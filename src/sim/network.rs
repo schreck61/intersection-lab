@@ -295,7 +295,7 @@ impl LayoutKind {
             LayoutKind::Arterial4 => "4-Way Arterial (left-turn bays)",
             LayoutKind::MajorMinor4 => "4-Way Major / Minor",
             LayoutKind::Town4 => "4-Way Single-Lane (town)",
-            LayoutKind::Tee => "T-Junction",
+            LayoutKind::Tee => "T-Intersection",
             LayoutKind::Roundabout => "Roundabout (single-lane)",
             LayoutKind::Cooperative => "Cooperative (signal-free, automated)",
         }

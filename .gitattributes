@@ -1,4 +1,4 @@
-# Normalise text to LF in the repository; shell scripts stay LF on every platform.
+# Normalize text to LF in the repository; shell scripts stay LF on every platform.
 * text=auto
 *.sh text eol=lf
 *.md text eol=lf
