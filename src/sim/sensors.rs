@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Jim Schreckengast
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Sensor models. Controllers never see the vehicles' ground truth: they see a
-//! `SensorView` assembled from whichever sensors are enabled.
+//! Sensor models. Controllers see a `SensorView` assembled from whichever sensors are
+//! enabled, not ground truth. Pedestrians and emergency vehicles are the exceptions.
 //!
 //! * Inductive loops: stop-bar presence zone + an advance point detector per lane.
 //!   Gives presence, actuation pulses, spot speeds and an input-output queue estimate,
@@ -13,12 +13,13 @@
 //!   no intent.
 //! * Connected vehicles (V2I): equipped vehicles broadcast position, speed, route and
 //!   class from any distance.
-//! * Emergency preemption receivers (optical/GPS), always fitted and exact; only the
-//!   simulation's own preemption reads them, never a controller.
 //!
-//! Pedestrians are the exception: how many wait at each crosswalk, the longest wait and
-//! the push-button calls reach the `SensorView` straight from ground truth, whichever
-//! sensors are enabled.
+//! Pedestrians and emergency vehicles reach the `SensorView` straight from ground
+//! truth, whichever sensors are enabled. Controllers use the pedestrian figures: how
+//! many wait at each crosswalk, the longest wait and the push-button calls. Emergency
+//! vehicles within 300 m of the stop line or in the box are listed exactly, as perfect
+//! preemption receivers (optical/GPS) would report them. Only `Sim`'s preemption reads
+//! that list; controllers see emergency vehicles only through the sensors above.
 //!
 //! With `realistic` on, every sensor errs the way field equipment does: cameras lose
 //! vehicles in bad weather, at night, at range and behind trucks and buses, and only

@@ -132,7 +132,8 @@ Arrivals come from a dedicated random stream, so every controller faces the *sam
 
 ## Signal controllers
 
-All controllers see only the `SensorView`, never the vehicles' ground truth.
+All controllers see only the `SensorView`, built from their sensors rather than ground
+truth. Pedestrians and emergency vehicles are the exceptions (below).
 
 1. **Fixed-time (Webster).** Cycle and splits from critical flow ratios of historical
    demand; every green covers its pedestrian interval. In a corridor it can be
@@ -167,9 +168,10 @@ delay 22.1 s → 4.0 s, `examples/preempt.rs`) and a **max-wait guard**.
 | Connected vehicles | Position, speed, route, class at any distance | GPS noise (latency compensated by timestamps) |
 | Upstream link (corridor) | Vehicles the upstream signal has released toward us | Intent unknown |
 
-Pedestrians are the exception: the push-button calls and the number of people waiting at
-each crosswalk, with the longest wait, come straight from the simulation, whichever
-sensors are on.
+Pedestrians and emergency vehicles reach the `SensorView` straight from ground truth,
+whichever sensors are on. Controllers use the push-button calls and the number of people
+waiting at each crosswalk, with the longest wait. Only preemption reads the emergency
+vehicles within 300 m of the stop line; controllers see them only through their sensors.
 
 ## The signal-free cooperative crossing
 
