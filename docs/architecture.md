@@ -3,7 +3,7 @@
 This document describes how Intersection Lab is put together. It covers what each Rust
 source file does, how the code is split into layers, and how those layers work together
 during a simulation step, a corridor run, a cooperative crossing, a benchmark and a
-training run. It describes the code on `main`: version 0.5.1 and the fixes made since.
+training run. It describes the code on `main`: version 0.6.0.
 Section 9.4 is an illustrated tour of the app's window, and Appendix A says how the
 screenshots were made.
 
@@ -1626,8 +1626,8 @@ trained to lower delay on every layout (§8.6). Version 0.4.0 changed training i
 ways: the reward counts every delayed person; checkpoints are chosen on a validation set
 and must pass a pedestrian check; a separate test set reports the result. Deep RL's
 shield also gained a maximum pedestrian wait, because the reward alone did not protect
-pedestrians. Both controllers were retrained this way, and version 0.5.1 ships those
-networks. Version 0.5.1 added the checks on weights files (§8.7).
+pedestrians. Both controllers were retrained this way, and every version since has
+shipped those networks. Version 0.5.1 added the checks on weights files (§8.7).
 
 ### 8.1 At a glance
 
@@ -2319,13 +2319,13 @@ arrivals, and hand-spawned vehicles and pedestrians are added to both.
 ### 9.4 A tour of the window
 
 This section goes through every part of the window: what it shows, how to read it and
-which code produces it. The screenshots come from the desktop app of version 0.5.1 in
-its default 1600 × 1000 window (the smallest it allows is 1100 × 700), except the
-close-up of the signal timing chart in part 5, which comes from `main` and shows the
-yellow and all-red drawn since. They were taken with the scripted-screenshot settings
-of Appendix A, two simulated minutes into the default scenario unless a caption says
-otherwise. The browser version looks the same, without the *Save weights* buttons and
-training commands of the learning panels.
+which code produces it. The screenshots come from the desktop app in its default
+1600 × 1000 window (the smallest it allows is 1100 × 700). Most show version 0.5.1;
+those of parts that changed since, such as the signal timing chart, which now draws
+yellow and all-red, were retaken with the code released as 0.6.0. They were taken with
+the scripted-screenshot settings of Appendix A, two simulated minutes into the default
+scenario unless a caption says otherwise. The browser version looks the same, without
+the *Save weights* buttons and training commands of the learning panels.
 
 #### The window at a glance
 
