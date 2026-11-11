@@ -69,6 +69,8 @@ pub struct Hybrid {
     pub base_action: usize,
     /// The network is trained (loaded or being trained) and may choose tunings.
     pub has_model: bool,
+    /// The weights file's network doesn't fit this layout, so it was left out.
+    pub model_rejected: bool,
     pub agent: Dqn,
     pub learning: bool,
     pub epsilon: f64,
@@ -102,6 +104,7 @@ impl Hybrid {
             planner: Predictive::new(net),
             base_action: DEFAULT_ACTION,
             has_model: false,
+            model_rejected: false,
             agent,
             learning: false,
             epsilon: 0.0,
@@ -133,7 +136,8 @@ impl Hybrid {
 
     /// The tuning and network saved as `txt` (a weights file's contents), or `None` if
     /// it doesn't parse. Weights files can be damaged or edited by hand, so a network
-    /// that doesn't fit this layout is left out and only the saved base tuning is kept.
+    /// that doesn't fit this layout is left out (`model_rejected`) and only the saved
+    /// base tuning is kept.
     pub fn from_saved(net: &Network, txt: &str) -> Option<Self> {
         let sv = serde_json::from_str::<SavedHybrid>(txt).ok()?;
         let mut h = match sv.model {
@@ -143,7 +147,7 @@ impl Hybrid {
                 h.has_model = true;
                 h
             }
-            _ => Self::new(net, 11),
+            other => Self { model_rejected: other.is_some(), ..Self::new(net, 11) },
         };
         h.base_action = sv.base_action.min(N_ACTIONS - 1);
         Some(h)
@@ -232,6 +236,7 @@ impl Controller for Hybrid {
         let mut notes = vec![format!("RL tuning now: {}", preset_name(self.action))];
         notes.push(match (&self.loaded_from, self.has_model) {
             (Some(_), true) => format!("trained network ({} episodes) over base tuning {}", self.episodes, preset_name(self.base_action)),
+            (Some(_), false) if self.model_rejected => format!("the saved network doesn't fit this layout; running {}", preset_name(self.base_action)),
             (Some(_), false) => format!("no network beat the best static tuning; running {}", preset_name(self.base_action)),
             (None, _) if self.learning => "learning online from scratch".into(),
             (None, _) => "no trained weights: running the planner's default tuning".into(),
