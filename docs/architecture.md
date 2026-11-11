@@ -3143,7 +3143,7 @@ date:
 |---|---|---|
 | Test (ubuntu-22.04), Test (macos-15), Test (windows-latest) | `ci.yml` | `cargo build --locked --release --all-targets`, then `cargo test --locked --release` |
 | Web (wasm32) | `ci.yml` | Builds the app for `wasm32-unknown-unknown` |
-| Clippy | `ci.yml` | `cargo clippy` with warnings as errors, for the native targets and the browser app |
+| Clippy | `ci.yml` | `cargo fmt --check` on the crate and the fuzz target, then `cargo clippy` with warnings as errors, for the native targets and the browser app |
 | Crate package | `ci.yml` | `cargo package --locked`, which builds the crate from the files crates.io would get |
 | Licenses and advisories | `ci.yml` | `cargo deny check` (licenses, advisories, bans and sources), and that `THIRD_PARTY_LICENSES.md` is up to date |
 | Analyze (rust), Analyze (actions) | `codeql.yml` | CodeQL on the Rust code and on the workflows; also every Monday |

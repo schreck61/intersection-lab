@@ -48,6 +48,7 @@ trunk serve --release --open
 CI runs these on every pull request. Running them locally first saves a round trip:
 
 ```bash
+cargo fmt --all --check
 cargo build --locked --release --all-targets
 cargo test --locked --release
 cargo clippy --locked --release --all-targets -- -D warnings
@@ -106,9 +107,14 @@ pass that file's path in place of the two folders.
 * **Few dependencies.** The project builds for desktop and the browser from one codebase
   and implements its own neural network and simulation, so new crates need a good reason.
   They must use a license allowed in [deny.toml](deny.toml).
-* **Style:** match the surrounding code; the project doesn't run `rustfmt`, so please
-  don't reformat code you aren't changing. New source files start with the same
-  copyright and `SPDX-License-Identifier: MIT OR Apache-2.0` header as the others.
+* **Style:** the code follows the
+  [Rust Style Guide](https://doc.rust-lang.org/style-guide/) as rustfmt applies it
+  (with the settings in [rustfmt.toml](rustfmt.toml)) and passes Clippy's default
+  lints. Run `cargo fmt --all` before you commit, and
+  `cargo fmt --manifest-path fuzz/Cargo.toml` if you changed the fuzz target. CI fails
+  a pull request that isn't formatted or that Clippy warns about. New source files
+  start with the same copyright and `SPDX-License-Identifier: MIT OR Apache-2.0` header
+  as the others.
 * **Spelling:** use American spelling in code, comments, documentation and UI text.
 * **Pull requests:** keep each one focused on a single change, explain what it does and
   why, and note anything you couldn't test (for example a platform you don't have).
