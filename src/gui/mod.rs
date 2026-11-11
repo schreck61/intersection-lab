@@ -1282,9 +1282,10 @@ impl App {
         let st = &c.stats;
         let ok = Color32::from_rgb(110, 220, 130);
         let flag = |n: u64| if n == 0 { ok } else { Color32::from_rgb(240, 90, 90) };
+        let (margin, margin_ok) = margin_kpi(st.margin_min);
         egui::Grid::new("coop_safety").num_columns(3).spacing(vec2(16.0, 6.0)).show(ui, |ui| {
             Self::kpi(ui, "closest crossing (PET)", if st.pet_min.is_finite() { format!("{:.2} s", st.pet_min) } else { "–".into() }, Color32::WHITE);
-            Self::kpi(ui, "margin over gap", if st.margin_min.is_finite() { format!("{:+.2} s", st.margin_min.max(0.0)) } else { "–".into() }, if st.margin_min > -1e-6 { ok } else { Color32::from_rgb(240, 90, 90) });
+            Self::kpi(ui, "margin over gap", margin, if margin_ok { ok } else { Color32::from_rgb(240, 90, 90) });
             Self::kpi(ui, "zone overlaps", st.zone_violations.to_string(), flag(st.zone_violations));
             ui.end_row();
             Self::kpi(ui, "entries without slot", st.unauthorized.to_string(), flag(st.unauthorized));
@@ -1713,6 +1714,16 @@ impl App {
     }
 }
 
+/// The safety monitors' smallest margin over the required gap, with its sign, and
+/// whether every crossing kept its gap. Rounding error just below zero counts as zero.
+fn margin_kpi(margin: f64) -> (String, bool) {
+    if !margin.is_finite() {
+        return ("–".into(), true);
+    }
+    let ok = margin > -1e-6;
+    (format!("{:+.2} s", if ok { margin.max(0.0) } else { margin }), ok)
+}
+
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
@@ -1746,5 +1757,18 @@ impl eframe::App for App {
                 shot::request(&ctx, path);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::margin_kpi;
+
+    #[test]
+    fn margin_over_gap_keeps_its_sign() {
+        assert_eq!(margin_kpi(0.437), ("+0.44 s".to_string(), true));
+        assert_eq!(margin_kpi(-1e-9), ("+0.00 s".to_string(), true));
+        assert_eq!(margin_kpi(-0.25), ("-0.25 s".to_string(), false));
+        assert_eq!(margin_kpi(f64::INFINITY), ("–".to_string(), true));
     }
 }
