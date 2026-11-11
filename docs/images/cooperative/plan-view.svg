@@ -220,6 +220,8 @@
 <line x1="90.0" y1="900.0" x2="90.0" y2="892.8" stroke="#222" stroke-width="2"/>
 <line x1="150.0" y1="900.0" x2="150.0" y2="892.8" stroke="#222" stroke-width="2"/>
 <text x="90.0" y="882.0" font-size="12" text-anchor="middle" font-weight="normal" fill="#222" dominant-baseline="middle">20 m</text>
+<text x="24.0" y="30.0" font-size="17" text-anchor="start" font-weight="bold" fill="#222" dominant-baseline="middle">Reference design (section 6)</text>
+<text x="24.0" y="52.2" font-size="13" text-anchor="start" font-weight="normal" fill="#444" dominant-baseline="middle">not the crossing Intersection Lab draws</text>
 <line x1="24" y1="958.0" x2="58" y2="958.0" stroke="#2b6cb0" stroke-width="3"/>
 <text x="68" y="958.0" font-size="14" dominant-baseline="middle" fill="#222">through paths (3 lanes per approach)</text>
 <line x1="474" y1="958.0" x2="508" y2="958.0" stroke="#d1631b" stroke-width="3"/>

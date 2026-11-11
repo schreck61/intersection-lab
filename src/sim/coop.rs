@@ -4,11 +4,13 @@
 //! Signal-free intersection management for automated, connected vehicles.
 //!
 //! On the cooperative layout every vehicle is automated and talks to an intersection
-//! manager; there are no signals and no roadside sensors. When a vehicle enters the
-//! approach it asks for a reservation. The manager answers with a complete trajectory,
-//! one acceleration per simulation step from now until the vehicle leaves the map, and
-//! the vehicle drives exactly that trajectory. The manager builds each trajectory with
-//! the integrator the simulator itself uses, so it knows to rounding error when every
+//! manager; there are no signals and no roadside sensors. A vehicle that will cross the
+//! box joins its lane's queue at the manager when it enters the map, and in each lane
+//! the manager considers only the first vehicle without a trajectory. Right turns leave
+//! on slip lanes before the box and never ask. A granted trajectory is complete, one
+//! acceleration per simulation step from now until the vehicle leaves the map, and the
+//! vehicle drives exactly that trajectory. The manager builds each trajectory with the
+//! integrator the simulator itself uses, so it knows to rounding error when every
 //! vehicle will be in every part of the box, and it grants a trajectory only after
 //! checking it against all the trajectories it has already granted. A granted
 //! trajectory is never changed.
@@ -20,8 +22,9 @@
 //! * **Safety gap.** A vehicle may enter a zone only some time after the last
 //!   conflicting vehicle left it ([`GapPolicy`]). The default, fail-safe policy leaves
 //!   the follower enough time to stop short of the zone if the vehicle ahead of it in
-//!   time stalls there: two message latencies, the actuation delay and the time to
-//!   brake from its own speed.
+//!   time stalls there: two message latencies, the actuation delay and v / 2b, the time
+//!   it takes at its zone entry speed v to cover its braking distance at its emergency
+//!   deceleration b.
 //! * **Same-lane following.** A trajectory is simulated behind the granted trajectory
 //!   of the vehicle ahead in its lane with a constant-time-gap cooperative adaptive
 //!   cruise control law, and is rejected if the gap ever drops below a meter.
@@ -110,7 +113,7 @@ impl GapPolicy {
         match self {
             GapPolicy::FailSafe => "Fail-safe: can stop for a stalled vehicle",
             GapPolicy::Mitigated => "Mitigated: can slow to 25 km/h",
-            GapPolicy::Nominal => "Nominal: latency only (no failures)",
+            GapPolicy::Nominal => "Nominal: latency and actuation (no failures)",
         }
     }
     /// One word for labels.

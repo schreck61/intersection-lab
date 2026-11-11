@@ -1295,7 +1295,7 @@ emergency deceleration is 6 m/s², or 4.5 m/s² for trucks and buses.
 |---|---|---|---:|
 | `FailSafe` (P2, the default) | Fail-safe: can stop for a stalled vehicle | 0.5 s + braking distance ÷ speed | 1.43 s / 1.73 s |
 | `Mitigated` (PH) | Mitigated: can slow to 25 km/h | 0.5 s + distance to slow to 25 km/h ÷ speed | 1.06 s / 1.25 s |
-| `Nominal` (P1) | Nominal: latency only (no failures) | 0.5 s | 0.50 s |
+| `Nominal` (P1) | Nominal: latency and actuation (no failures) | 0.5 s | 0.50 s |
 
 P2, PH and P1 are the names `docs/cooperative-intersections.md` gives these policies
 (stop-safe, harm-limited and brake-safe), and `TS_POLICY` takes them in lower case.
@@ -2885,8 +2885,8 @@ a 1.5 s batch join window">
 * **Scheduling:** *Batches: each movement in turn*, or *First come, first served: one
   at a time*.
 * **Safety gap:** *Fail-safe: can stop for a stalled vehicle*, *Mitigated: can slow to
-  25 km/h* or *Nominal: latency only (no failures)* (§6.11). The line below gives the
-  resulting gap at 40 km/h for a car and for a truck or bus.
+  25 km/h* or *Nominal: latency and actuation (no failures)* (§6.11). The line below
+  gives the resulting gap at 40 km/h for a car and for a truck or bus.
 * **max cycle** (40 to 200 s) and **batch join window** (0 to 5 s), grayed out under
   first come, first served.
 

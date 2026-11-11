@@ -279,6 +279,8 @@ for v_box in [11.1]:
 print()
 print("== 10. Failure policies at 40 km/h (11.1 m/s), a = 6: PET and zone capacity ==")
 v, a = 11.1, 6.0
+# At 11.1 m/s the P2 gap prints as 1.42 s. At exactly 40 km/h (11.11 m/s) it is 1.426 s,
+# which the notes and Intersection Lab give as 1.43 s.
 vs = 25 / 3.6  # survivable secondary impact speed for the harm-limited policy
 gaps = {
     "P0 occupancy only": 2 * DELTA,

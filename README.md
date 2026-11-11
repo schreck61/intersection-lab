@@ -132,7 +132,7 @@ Arrivals come from a dedicated random stream, so every controller faces the *sam
 
 ## Signal controllers
 
-All controllers see only the `SensorView`, never ground truth.
+All controllers see only the `SensorView`, never the vehicles' ground truth.
 
 1. **Fixed-time (Webster).** Cycle and splits from critical flow ratios of historical
    demand; every green covers its pedestrian interval. In a corridor it can be
@@ -162,19 +162,24 @@ delay 22.1 s → 4.0 s, `examples/preempt.rs`) and a **max-wait guard**.
 | Sensor | What controllers get | Realistic errors |
 |---|---|---|
 | Inductive loops | Stop-bar presence, advance pulses, spot speed, input-output queue estimate | Stations fail stuck-on/off; motorcycles missed ~35%. Diagnostics (max presence 3 min; no activity for 10 expected headways) flag failures, and the lane falls back to volume-based estimates / recall |
-| Intersection camera | Tracks within range with intent, class and individual waits; waiting pedestrians | Detection falls with distance and weather (night, rain, fog, snow shrink range and hit rate); trucks and buses hide vehicles behind them; intent only from drivers who signal (80%), others look like through traffic |
+| Intersection camera | Tracks within range with intent, class and individual waits | Detection falls with distance and weather (night, rain, fog, snow shrink range and hit rate); trucks and buses hide vehicles behind them; intent only from drivers who signal (80%), others look like through traffic |
 | Advance radar | Long-range position and speed | ±1.5 m / ±0.5 m/s noise, small miss rate in rain/snow |
 | Connected vehicles | Position, speed, route, class at any distance | GPS noise (latency compensated by timestamps) |
 | Upstream link (corridor) | Vehicles the upstream signal has released toward us | Intent unknown |
+
+Pedestrians are the exception: the push-button calls and the number of people waiting at
+each crosswalk, with the longest wait, come straight from the simulation, whichever
+sensors are on.
 
 ## The signal-free cooperative crossing
 
 The last intersection is a look at a possible future rather than at today's streets. It
 assumes every vehicle is automated, connected and fitted with crash avoidance. It has no
 signals and no roadside sensors, and pedestrians cross in underpasses, so they never
-stop traffic. Each vehicle asks an **intersection manager** for a slot when it enters
-the map; the manager answers with a complete trajectory, and the vehicle drives exactly
-that.
+stop traffic. An **intersection manager** schedules every vehicle that crosses the box.
+In each lane it considers only the first vehicle without a slot; when it grants one, it
+sends a complete trajectory, and the vehicle drives exactly that. Right turns leave on
+slip lanes before the box and never ask for a slot.
 
 The design notes in
 [docs/cooperative-intersections.md](docs/cooperative-intersections.md) work through the
@@ -189,8 +194,8 @@ measured.
 | Geometry | Each approach has two left-turn lanes, three through lanes and a right-turn slip lane around a corner island, so right turns never enter the box. Opposite left turns pass clear of each other and every lane has its own receiving lane: paths in the box only cross, never merge. Default demand: 4,500 veh/h per approach (18,000 in all), 20% turning left and 15% right |
 | Reservations | Each pair of crossing paths has a conflict zone on each path. The manager builds every trajectory with the simulator's own integrator, so it knows when each vehicle will be in each zone, and grants it only if it keeps the required gap to every trajectory already granted. A granted trajectory never changes |
 | Phases | By default the manager serves each movement in batches, in two rings with a barrier like an actuated signal, ending a batch when no vehicle can continue it (gap-out) or at its demand-weighted share of a 100 s maximum cycle (max-out). Left turns lag the through movements: a left turn can follow the opposing through traffic almost at once (0.3 s), while the reverse switch would cost about 6 s. The next batch starts as soon as its zones are free, with no yellow or all-red. Emergency vehicles are served out of turn |
-| First come, first served | The alternative schedule has no phases: in order of arrival, each vehicle gets the earliest trajectory that fits around those already granted. It is the familiar picture of vehicles weaving through one another, and it carries about half as much (below) |
-| Safety gaps | *Fail-safe* (default): enough time for a follower to stop short of the zone if the vehicle ahead stalls in it: two message latencies, the actuation delay, and the time its braking distance takes at crossing speed (1.43 s for a car at 40 km/h). *Mitigated*: it could still slow to 25 km/h. *Nominal*: message latency only |
+| First come, first served | The alternative schedule has no phases. Of the vehicles first in their lanes without a slot, the one that could cross the stop line soonest goes next, with the earliest trajectory that fits around those already granted. It is the familiar picture of vehicles weaving through one another, and it carries about half as much (below) |
+| Safety gaps | *Fail-safe* (default): enough time for a follower to stop short of the zone if the vehicle ahead stalls in it: two message latencies, the actuation delay and the time its braking distance takes at crossing speed (1.43 s for a car at 40 km/h). *Mitigated*: it could still slow to 25 km/h. *Nominal*: the two message latencies and the actuation delay only (0.5 s), assuming no vehicle ever fails |
 | Monitors | Independently of the plans, the simulator measures what vehicles actually did: the closest post-encroachment time (PET), zones entered while occupied, box entries without a reservation, and any step off the granted trajectory |
 
 ### Why weaving one at a time carries less
@@ -219,7 +224,7 @@ Three things cost the zipper its throughput:
 * **Every switch pays a safety gap; a follower doesn't.** A vehicle following another on
   the same path needs only its car-following gap, about 1.0 s at 40 km/h. A vehicle
   crossing behind one from a conflicting path must wait for the first to clear the
-  zone, about 0.7 s, and then for the fail-safe gap, 1.43 s for a car: about 2.2 s in
+  zone, about 0.7 s, and then for the fail-safe gap, 1.43 s for a car: about 2.1 s in
   all. Served one vehicle at a time, alternating between two paths, a single conflict
   zone carries about 1,700 veh/h; in batches of 8 it carries about 3,100.
 * **Each path crosses ten other lanes.** A weaving vehicle needs a free window at every
@@ -230,14 +235,14 @@ Three things cost the zipper its throughput:
   keeps every lane of a movement streaming together.
 
 Shorter gaps help the zipper more than batches, since they make switching cheap. With
-nominal gaps (message latency only) first come, first served reaches about 12,600 veh/h,
-25% more, while batches gain only 3.5%, to 19,700; the zipper still carries about a
-third less. So the schedule that carries the most looks like a signal without its yellow
-and all-red: each movement goes in a batch, and the next starts the moment its zones are
-free. To watch the difference, pick the cooperative crossing and turn on *Compare side
-by side*: B weaves the same arrivals through first come, first served, slows its
-vehicles far out on the approaches and, at the design demand, soon has a queue waiting
-to enter the map.
+nominal gaps (latency and actuation delay only) first come, first served reaches about
+12,600 veh/h, 25% more, while batches gain only 3.5%, to 19,700; the zipper still
+carries about a third less. So the schedule that carries the most looks like a signal
+without its yellow and all-red: each movement goes in a batch, and the next starts the
+moment its zones are free. To watch the difference, pick the cooperative crossing and
+turn on *Compare side by side*: B weaves the same arrivals through first come, first
+served, slows its vehicles far out on the approaches and, at the design demand, soon has
+a queue waiting to enter the map.
 
 ![Batches (A) and first come, first served (B) side by side at the design demand](docs/cooperative.png)
 
@@ -446,8 +451,8 @@ A fuller write-up of every finding, with the commands that reproduce it, is in
   excellent at moderate volumes, and a two-way stop fails once the major road is busy.
 * **Signal-free crossings still need phases.** With every vehicle automated, an
   intersection manager carries the design demand of 18,000 veh/h at 29 s average delay
-  and saturates near 19,000 veh/h with fail-safe gaps (19,700 with latency-only gaps,
-  about 21,700 if every vehicle were a car). The capacity comes from serving each
+  and saturates near 19,000 veh/h with fail-safe gaps (19,700 with nominal gaps, about
+  21,700 if every vehicle were a car). The capacity comes from serving each
   movement in batches, like a signal without its yellow and all-red, not from weaving
   vehicles through one at a time: every switch between conflicting movements costs a
   clearance gap, and a weaving vehicle must find one in up to ten crossing lanes at
