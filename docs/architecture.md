@@ -160,7 +160,8 @@ cannot:
 This rule is what makes sensor studies meaningful. If a controller does better with
 radar, it is because it saw more, not because it peeked. The exception is pedestrians
 and emergency vehicles, which reach the `SensorView` straight from ground truth,
-whatever sensors are fitted (§6.5).
+whatever sensors are fitted (§6.5). No controller reads the emergency vehicles, though:
+only `Sim`'s preemption does (§7.2), so controllers see them only through their sensors.
 
 `Ctx` carries the network, the `SensorView`, the signal state, the configured demand and
 sensor settings, the time, `can_switch` and `reward_delay`. Two of those deserve a note:
@@ -963,7 +964,9 @@ flowchart TB
   rain and snow.
 * **Pedestrians and emergency vehicles** come straight from ground truth, whatever
   sensors are fitted: the waiting pedestrians and push-button calls at each crosswalk,
-  and emergency vehicles within 300 m of the stop line or already in the box.
+  and emergency vehicles within 300 m of the stop line or already in the box. Only
+  `Sim`'s preemption reads the emergency vehicles (§7.2); controllers see them only
+  through the sensors above.
 * **The upstream link** (`upstream_link`, off by default; *Upstream signal shares its
   outflow* in the app) adds the vehicles the upstream intersection has released toward
   this one, but only beyond the reach of our own sensors. Their intent is unknown, so
