@@ -10,7 +10,7 @@ the end.
 
 ## 1. Signal control: model-based adaptive control is the strong default
 
-| Controller | Arterial | Major/minor | Town | T-junction |
+| Controller | Arterial | Major/minor | Town | T-intersection |
 |---|---|---|---|---|
 | Fixed-time (Webster) | 30.5 s | 38.1 s | 28.1 s | 21.2 s |
 | Actuated (NEMA) | 37.5 s | 57.5 s | 26.5 s | 18.3 s |
@@ -38,33 +38,34 @@ the end.
   nothing on the other two, where no network beat the fixed tuning.
 - **Pure Deep RL:** on the multi-lane layouts it cuts delay by about 30% against
   fixed-time but trails the best controller, the hybrid, by about 4.5 s (arterial 21.3 s,
-  major/minor 26.0 s). It has the lowest delay of any controller on the T-junction
+  major/minor 26.0 s). It has the lowest delay of any controller on the T-intersection
   (12.3 s), and on the single-lane town layout it trails fixed-time and actuated control
   (29.0 s).
 - **Network size:** for Deep RL, one hidden layer of 128 units beat two on every layout,
   by 1.8 to 4.5 s on held-out scenarios, and doubling the training didn't close the gap.
   Switching to it cut Deep RL's delay by 10–12 s on the four-way layouts. For the hybrid,
   one and two layers did the same within noise.
-- **Hidden cost:** Deep RL's best result, on the T-junction, used to come with pedestrian
-  waits twice as long as the other controllers' (46 s). Optimizing one number hid that.
+- **Hidden cost:** Deep RL's best result, on the T-intersection, used to come with
+  pedestrian waits twice as long as the other controllers' (46 s). Optimizing one number
+  hid that.
 - **Pedestrians need a hard rule:** adding waiting pedestrians to Deep RL's reward, each
   counted like one vehicle occupant, didn't fix it. Pedestrians are a small share of the
   people at an intersection, so the network still traded their waits for vehicle delay,
-  and only 2 of 9 runs on the arterial, major/minor and T-junction layouts met a check
-  that pedestrian waits stay within 5 s of predictive control's. Weighting pedestrians
-  three times as heavily didn't reliably fix it either. A shield rule that gives
-  the next walk to anyone who has waited 40 s did: every run passed, and the T-junction
-  wait fell to 21 s. The hybrid passed without any rule, because the planner serves
-  pedestrians itself.
+  and only 2 of 9 runs on the arterial, major/minor and T-intersection layouts met a
+  check that pedestrian waits stay within 5 s of predictive control's. Weighting
+  pedestrians three times as heavily didn't reliably fix it either. A shield rule that
+  gives the next walk to anyone who has waited 40 s did: every run passed, and the
+  T-intersection wait fell to 21 s. The hybrid passed without any rule, because the
+  planner serves pedestrians itself.
 - **The rule helps vehicles too, mostly:** trained the same way with and without it
   (three seeds each, held-out test set), the rule cut person delay by 1.4 s on the
   arterial and major/minor layouts and 2.0 s on the town layout, and cost 1.1 s only on
-  the T-junction. One guess, not tested, is that it forces a regular rotation through the
-  stages that the network otherwise has to learn. Against 0.3.0's Deep RL, person delay
-  is within 0.6 s on three layouts and 2.1 s lower on major/minor, and pedestrian waits
-  are 4 to 26 s shorter. The README's benchmark, which scores one network per layout,
-  first suggested the rule cost more; networks trained from different seeds differ by 1
-  to 3 s, so one network per layout can't settle a gap that small.
+  the T-intersection. One guess, not tested, is that it forces a regular rotation through
+  the stages that the network otherwise has to learn. Against 0.3.0's Deep RL, person
+  delay is within 0.6 s on three layouts and 2.1 s lower on major/minor, and pedestrian
+  waits are 4 to 26 s shorter. The README's benchmark, which scores one network per
+  layout, first suggested the rule cost more; networks trained from different seeds
+  differ by 1 to 3 s, so one network per layout can't settle a gap that small.
 
 ## 3. Sensors: coverage matters more than accuracy
 

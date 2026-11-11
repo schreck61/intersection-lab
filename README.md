@@ -78,8 +78,8 @@ weights can't be saved; everything else matches the desktop app.
 ## What you can do in the app
 
 * **Intersections:** 4-way arterial with left-turn bays, 4-way major/minor, 4-way
-  single-lane town intersection, T-junction, single-lane roundabout, and a signal-free
-  **cooperative crossing** for automated, connected vehicles.
+  single-lane town intersection, T-intersection, single-lane roundabout, and a
+  signal-free **cooperative crossing** for automated, connected vehicles.
 * **Corridors:** set *signals along main road* (1–5). Intersections sit one block (420 m)
   apart; traffic flows between them, queues spill back, and fixed-time signals can run a
   coordinated **green wave**. The panels show end-to-end trip time and stops, plus any
@@ -249,7 +249,7 @@ those still queued, so a policy can't look good by starving an approach. Lower i
 
 ### Controllers (`bench all 20 6`, 6 seeds)
 
-| Person delay\* (s) | Arterial | Major/minor | Town | T-junction |
+| Person delay\* (s) | Arterial | Major/minor | Town | T-intersection |
 |---|---|---|---|---|
 | Fixed-time (Webster) | 30.5 | 38.1 | 28.1 | 21.2 |
 | Actuated (NEMA) | 37.5 | 57.5 | 26.5 | 18.3 |
@@ -281,14 +281,14 @@ set, person delay / pedestrian wait (s):
 | Arterial | 18.2 / 13.2 | 17.7 / 12.9 | **17.5 / 12.2** (network kept) | 19.7 / 18.5 |
 | Major/minor | 22.4 / 11.8 | **21.1 / 10.1** | **21.1 / 10.1** (static tuning) | 23.0 / 16.3 |
 | Town | 25.6 / 9.5 | 25.8 / 9.6 | **24.3 / 8.6** (network kept) | 27.1 / 11.1 |
-| T-junction | 14.4 / 21.3 | 14.0 / 20.8 | 14.0 / 20.8 (static tuning) | **12.9 / 19.9** |
+| T-intersection | 14.4 / 21.3 | 14.0 / 20.8 | 14.0 / 20.8 (static tuning) | **12.9 / 19.9** |
 
 Counting each waiting pedestrian like one vehicle occupant wasn't enough to protect
 pedestrians, who are a small share of the people at an intersection: Deep RL trained that
 way found a checkpoint that passed the pedestrian check in only 2 of 9 runs on the
-arterial, major/minor and T-junction layouts. So Deep RL's safety shield now also gives
-the next walk to any pedestrian who has waited 40 s. With that rule every run passed,
-and the check never had to reject a checkpoint.
+arterial, major/minor and T-intersection layouts. So Deep RL's safety shield now also
+gives the next walk to any pedestrian who has waited 40 s. With that rule every run
+passed, and the check never had to reject a checkpoint.
 
 The rule costs people in vehicles little, and on most layouts it helps them. Deep RL
 trained three ways, held-out test set, mean of three training seeds, person delay /
@@ -299,13 +299,14 @@ pedestrian wait (s):
 | Arterial | 19.9 / 21.5 | 21.7 / 25.1 | 20.3 / 17.7 | 18.2 / 13.2 |
 | Major/minor | 25.5 / 28.3 | 24.8 / 27.7 | 23.4 / 16.0 | 22.4 / 11.8 |
 | Town | 27.3 / 14.8 | 28.7 / 11.8 | 26.7 / 10.7 | 25.6 / 9.6 |
-| T-junction | 12.0 / 45.6 | 11.5 / 36.8 | 12.6 / 19.7 | 14.4 / 21.3 |
+| T-intersection | 12.0 / 45.6 | 11.5 / 36.8 | 12.6 / 19.7 | 14.4 / 21.3 |
 
-With everything else the same, the rule cut person delay by 1.4 to 2.0 s on the
-four-way layouts as well as shortening pedestrian waits; only on the T-junction did it
-cost 1.1 s. Against 0.3.0, person delay is within 0.6 s on three layouts and 2.1 s lower
-on major/minor, and pedestrian waits are 4 to 26 s shorter. A single network's benchmark
-score can mislead here: Deep RL networks trained from different seeds differ by 1 to 3 s.
+With everything else the same, the rule cut person delay by 1.4 to 2.0 s on the four-way
+layouts as well as shortening pedestrian waits; only on the T-intersection did it cost
+1.1 s. Against 0.3.0, person delay is within 0.6 s on three layouts and 2.1 s lower on
+major/minor, and pedestrian waits are 4 to 26 s shorter. A single network's benchmark
+score can mislead here: Deep RL networks trained from different seeds differ by 1 to
+3 s.
 
 ### Sensors (`bench sensors all 20 4`)
 
@@ -418,8 +419,8 @@ A fuller write-up of every finding, with the commands that reproduce it, is in
   *static* tuning of the planner, which a one-off search finds. The state-dependent
   network adds 0.2 s on the arterial and 1.5 s on the town layout, and nothing on the other
   two. Pure Deep RL cuts person delay by about 30% against fixed-time on the multi-lane
-  layouts and has the lowest delay on the T-junction, but trails the best controller, the
-  hybrid, by about 4.5 s on the multi-lane layouts and trails fixed-time and actuated
+  layouts and has the lowest delay on the T-intersection, but trails the best controller,
+  the hybrid, by about 4.5 s on the multi-lane layouts and trails fixed-time and actuated
   control on the single-lane town layout.
 * **Pedestrians need a hard rule, not just a share of the reward.** Counting waiting
   pedestrians in Deep RL's reward left their waits long; a 40 s maximum wait in its
