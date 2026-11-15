@@ -5,14 +5,27 @@
 //!
 //! usage: bench [layout|all] [minutes] [seeds] [demand-scale] [pattern]
 //!        bench sensors <layout> [minutes] [seeds]   (sensor-package study)
+//!
+//! Each row of a strategy table gives means over the seeds, except in the `coll` column:
+//! the overlaps between vehicle bodies that the safety check counted, warm-up included,
+//! totaled over the seeds. It should always be 0.
 
 use intersection_lab::control::CtrlKind;
-use intersection_lab::sim::ControlMode;
 use intersection_lab::sim::demand::{DemandConfig, Pattern};
 use intersection_lab::sim::network::{LayoutKind, Network};
 use intersection_lab::sim::sensors::{Conditions, SensorConfig};
+use intersection_lab::sim::stats::Summary;
+use intersection_lab::sim::{ControlMode, Sim};
 use intersection_lab::{run_scenario, scenario};
 use std::time::Instant;
+
+/// [`run_scenario`] with the safety check on, so that the overlaps it returns were
+/// counted. The check is off in a new simulation, and a strategy table's `coll` column
+/// could then only be zero.
+fn run_checked(mut sim: Sim, warmup: f64, duration: f64) -> (Summary, u64) {
+    sim.check_safety = true;
+    run_scenario(sim, warmup, duration)
+}
 
 /// How much does each sensor package help each sensor-driven controller, with ideal
 /// and field-realistic sensors, across weather, and with failed loop detectors?
@@ -181,7 +194,7 @@ fn main() {
                             &sensors,
                             1000 + seed,
                         );
-                        let (s, coll) = run_scenario(sim, 300.0, minutes * 60.0);
+                        let (s, coll) = run_checked(sim, 300.0, minutes * 60.0);
                         acc[0] += s.avg_delay;
                         acc[1] += s.p95_delay;
                         acc[2] += s.throughput_vph;
@@ -191,7 +204,9 @@ fn main() {
                         acc[6] += s.unserved as f64;
                         acc[7] += coll as f64;
                     }
-                    for a in acc.iter_mut() {
+                    // Means over the seeds, except the overlaps: a total, so that one
+                    // overlap in one run can't round away.
+                    for a in acc.iter_mut().take(7) {
                         *a /= seeds as f64;
                     }
                     (name, acc, t0.elapsed().as_secs_f64())
@@ -205,5 +220,33 @@ fn main() {
                 name, a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], secs
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The T-intersection after a minute, with one vehicle moved on top of another in
+    /// its lane.
+    fn overlapping() -> Sim {
+        let kind = LayoutKind::Tee;
+        let demand = DemandConfig::default_for(&Network::build(kind));
+        let mut sim =
+            scenario(kind, ControlMode::Signal, CtrlKind::Fixed, &demand, &SensorConfig::default(), 1000);
+        sim.run_for(60.0);
+        let n = sim.vehicles.len();
+        let (one, other) = (0..n)
+            .flat_map(|i| (i + 1..n).map(move |j| (i, j)))
+            .find(|&(i, j)| sim.vehicles[i].link() == sim.vehicles[j].link())
+            .expect("two vehicles in one lane");
+        sim.vehicles[other].s = sim.vehicles[one].s;
+        sim
+    }
+
+    #[test]
+    fn a_strategy_run_counts_overlaps() {
+        let (_, coll) = run_checked(overlapping(), 0.0, 1.0);
+        assert!(coll > 0, "two vehicles overlap, and the `coll` column would show 0");
     }
 }
