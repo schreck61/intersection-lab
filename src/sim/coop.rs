@@ -13,7 +13,7 @@
 //! integrator the simulator itself uses, so it knows to rounding error when every
 //! vehicle will be in every part of the box, and it grants a trajectory only after
 //! checking it against all the trajectories it has already granted. A granted
-//! trajectory is never changed.
+//! trajectory is never changed, unless a vehicle fails (below).
 //!
 //! * **Reservation zones.** Each pair of crossing paths has a zone on each path where a
 //!   vehicle of the widest class could touch one on the other path
@@ -56,12 +56,23 @@
 //!   conflicting vehicles, any zone entered while a conflicting vehicle is still in it,
 //!   any vehicle entering the box without a reservation, and any difference between
 //!   where a vehicle is and where its trajectory says it should be.
+//! * **Failures.** A vehicle can be made to fail: it stops dead or brakes to a stop.
+//!   The manager then gives every vehicle that this endangers a new trajectory, which
+//!   starts after the reaction time every gap allows for, closes the zones that
+//!   vehicles at rest hold, serves the lanes that stay clear and routes the vehicles
+//!   that stopped in the box out again. The submodule `failures` holds all of it.
+
+mod failures;
+
+use failures::HALT_GAP;
+pub use failures::{Fault, Impact, Incident, Place, REACTION, Trap, Wreck};
 
 use super::network::{LinkId, LinkKind, Network};
+use super::rng::Rng;
 use super::vtypes::VKind;
 use super::{ControlMode, Reason, Sim, Vehicle, integrate};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 /// One-way message latency between a vehicle and the manager (s).
 pub const LATENCY: f64 = 0.1;
@@ -93,7 +104,6 @@ const RATE_TAU: f64 = 300.0;
 const MIN_MAX_GREEN: f64 = 6.0;
 /// How long the served phases and line crossings are kept for display (s).
 const HISTORY: f64 = 600.0;
-
 /// How long a vehicle must wait after a conflicting vehicle leaves a zone before it
 /// enters it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,7 +113,8 @@ pub enum GapPolicy {
     FailSafe,
     /// The follower can always slow to 25 km/h before reaching a stalled vehicle (PH).
     Mitigated,
-    /// Message latency and actuation delay only: assumes no vehicle ever fails (P1).
+    /// Message latency and actuation delay only: sized for a vehicle ahead that brakes
+    /// hard to a stop, not for one that stops dead (P1).
     Nominal,
 }
 
@@ -461,7 +472,28 @@ pub struct PlanZone {
     pub need: f64,
 }
 
-/// A granted trajectory: the state at every step from `k0` until the vehicle leaves.
+/// What a trajectory is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlanKind {
+    /// A crossing the manager granted: across the box and off the map.
+    Crossing,
+    /// A crossing withdrawn after a failure, before the vehicle was committed to the box:
+    /// what is left of it lasts the reaction time, and then the vehicle stops short of
+    /// the box like any vehicle without a trajectory.
+    Withdrawn,
+    /// The reaction to a failure of a vehicle that can no longer stop short of the box,
+    /// with a hazard on its path: it brakes as hard as it can until it is at rest.
+    EmergencyStop,
+    /// The reaction of a vehicle that can no longer stop short of the box when the one
+    /// ahead of it in its lane has left its trajectory: it follows that vehicle, never
+    /// faster than the trajectory it had, until it rests behind it or against it.
+    StopBehind,
+    /// What a disabled vehicle does: it is at rest, or brakes to rest.
+    Fault,
+}
+
+/// A granted trajectory: the state at every step from `k0` until the vehicle leaves the
+/// map or, for the trajectories that follow a failure, comes to rest.
 #[derive(Clone, Debug)]
 pub struct Plan {
     pub k0: u64,
@@ -473,19 +505,58 @@ pub struct Plan {
     /// Acceleration applied during each step, and why.
     pub a: Vec<f64>,
     pub why: Vec<Reason>,
-    /// When and how fast the front crosses the stop line.
+    /// When and how fast the front crosses the stop line (when the trajectory starts,
+    /// if the vehicle was already past the line).
     pub t_line: f64,
     pub v_line: f64,
     pub zones: Vec<PlanZone>,
     pub movement: usize,
     pub lane: LinkId,
+    pub kind: PlanKind,
+    /// It ends at rest on the map. The vehicle then holds the zones it stands in until
+    /// it is granted a way out or is cleared away.
+    pub rests: bool,
+    /// A way out of the box that passes vehicles at rest in zones it crosses, slowly
+    /// and with room to spare.
+    pub passes: bool,
+    /// The vehicle cannot stop behind the one ahead of it: the step of this trajectory,
+    /// counted from `k0`, at which the two are expected to touch, and where its front
+    /// then is (the rear of the vehicle ahead). From then on it counts as standing
+    /// there, for the vehicles behind it and for the zones it holds. The trajectory
+    /// itself goes on braking to rest, which is what the vehicle does should nothing
+    /// stop it; the zones it then leaves stay held until it is routed out.
+    pub contact: Option<(usize, f64)>,
 }
 
 impl Plan {
-    /// Position, speed and acceleration at step `k`, while the vehicle is on the map.
+    /// Position, speed and acceleration at step `k`: while the vehicle is on the map,
+    /// and after the end of a trajectory that ends at rest. A vehicle expected to run
+    /// into the one ahead is at rest where they touch from then on.
     fn state(&self, k: u64) -> Option<(f64, f64, f64)> {
         let j = usize::try_from(k.checked_sub(self.k0)?).ok()?;
-        (j < self.a.len()).then(|| (self.x[j], self.v[j], self.a[j]))
+        if let Some((_, x)) = self.contact.filter(|c| j >= c.0) {
+            return Some((x, 0.0, 0.0));
+        }
+        if j < self.a.len() {
+            Some((self.x[j], self.v[j], self.a[j]))
+        } else {
+            self.rests.then(|| (self.x[self.a.len()], 0.0, 0.0))
+        }
+    }
+
+    /// The step at which the trajectory ends.
+    fn end(&self) -> u64 {
+        self.k0 + self.a.len() as u64
+    }
+
+    /// A crossing in progress or ahead, as opposed to what follows a failure.
+    pub fn crossing(&self) -> bool {
+        self.kind == PlanKind::Crossing
+    }
+
+    /// Where the trajectory leaves the vehicle (route coordinate of its front).
+    pub fn last_x(&self) -> f64 {
+        self.x[self.a.len()]
     }
 }
 
@@ -517,6 +588,9 @@ struct Req<'a> {
 /// Simulate a vehicle aiming to cross the stop line at `target`, step by step with the
 /// simulator's own integrator, until it leaves the map. None if it would close within
 /// a meter of the vehicle ahead or never get anywhere.
+///
+/// A vehicle that came to rest past the line after a failure instead waits where it is
+/// until `target` and then drives on; it holds the zones it stands in from the start.
 fn simulate(r: &Req, target: f64) -> Option<Plan> {
     let (dt, av) = (r.dt, r.av);
     let (mut x, mut v, mut t) = (r.x, r.v, r.t);
@@ -528,9 +602,21 @@ fn simulate(r: &Req, target: f64) -> Option<Plan> {
     // Current profile: shape, speed at its start, time since its start, deliberately slow.
     let mut prof: Option<(Prof, f64, f64, bool)> = None;
     let mut dirty = true;
-    let mut t_line = f64::NAN;
-    let mut v_line = 0.0;
+    let past_line = r.x >= r.l_in;
+    let mut t_line = if past_line { r.t } else { f64::NAN };
+    let mut v_line = if past_line { r.v } else { 0.0 };
     let mut zt = vec![(f64::NAN, f64::NAN, 0.0); r.zones.len()];
+    if past_line {
+        for (z, w) in r.zones.iter().zip(zt.iter_mut()) {
+            if x >= z.x1 + av.len {
+                // Already behind it: not part of this trajectory.
+                *w = (f64::NEG_INFINITY, f64::NEG_INFINITY, 0.0);
+            } else if x >= z.x0 {
+                w.0 = r.t;
+                w.2 = v;
+            }
+        }
+    }
     let box_reason = if r.v_box < av.v0 - 0.5 { Reason::BoxSpeed } else { Reason::Free };
     let mut k = 0usize;
     while x < r.l_end {
@@ -572,6 +658,10 @@ fn simulate(r: &Req, target: f64) -> Option<Plan> {
                 reason = if prof.as_ref().unwrap().3 { Reason::Scheduled } else { box_reason };
             }
             prof.as_mut().unwrap().2 += dt;
+        } else if past_line && t + 1e-9 < target {
+            // Stopped past the line: wait there for the way out.
+            acc = (-v / dt).max(-av.b);
+            reason = Reason::Stranded;
         } else if x < r.l_box {
             acc = ((r.v_box - v) / dt).clamp(-av.b, av.a);
         } else {
@@ -621,6 +711,7 @@ fn simulate(r: &Req, target: f64) -> Option<Plan> {
         .zones
         .iter()
         .zip(&zt)
+        .filter(|(_, w)| w.0 > f64::NEG_INFINITY)
         .map(|(z, w)| PlanZone {
             cid: z.cid,
             side: z.side,
@@ -644,17 +735,22 @@ fn simulate(r: &Req, target: f64) -> Option<Plan> {
         zones,
         movement: r.movement,
         lane: r.lane,
+        kind: PlanKind::Crossing,
+        rests: false,
+        passes: false,
+        contact: None,
     })
 }
 
 // ---------------------------------------------------------------- manager
 
-/// A reservation of one zone.
+/// A reservation of one zone. A vehicle at rest in a zone holds it without end.
 #[derive(Clone, Copy, Debug)]
 struct Res {
     t_in: f64,
     t_out: f64,
     need: f64,
+    vid: u64,
 }
 
 /// Batch state of one movement.
@@ -754,6 +850,30 @@ pub struct CoopStats {
     pub deviations: u64,
     /// Largest difference between a reserved and an actual zone or line time (s).
     pub timing_err_max: f64,
+    /// Vehicles made to fail.
+    pub stalls: u64,
+    /// Vehicles that left their trajectories for an emergency stop, or to stop behind
+    /// one that did, and crossings withdrawn from vehicles that could stop short of
+    /// the box.
+    pub emergency_stops: u64,
+    pub withdrawn: u64,
+    /// Contacts between vehicles on crossing paths and between vehicles in one lane,
+    /// with the fastest of each (m/s).
+    pub crossing_impacts: u64,
+    pub lane_impacts: u64,
+    pub crossing_impact_max: f64,
+    pub lane_impact_max: f64,
+    /// How far short of the zone it braked for the closest emergency stop came to rest
+    /// (m); negative if a vehicle could not stop short of one.
+    pub stop_margin_min: f64,
+    /// Longest time from a failure until every vehicle that braked for it was at rest
+    /// (s).
+    pub settle_max: f64,
+    /// Vehicles that stopped in the box and were granted a way out, wrecks cleared
+    /// away, and vehicles towed out of a standoff in the box.
+    pub recovered: u64,
+    pub cleared: u64,
+    pub towed: u64,
 }
 
 impl Default for CoopStats {
@@ -774,6 +894,18 @@ impl Default for CoopStats {
             unauthorized: 0,
             deviations: 0,
             timing_err_max: 0.0,
+            stalls: 0,
+            emergency_stops: 0,
+            withdrawn: 0,
+            crossing_impacts: 0,
+            lane_impacts: 0,
+            crossing_impact_max: 0.0,
+            lane_impact_max: 0.0,
+            stop_margin_min: f64::INFINITY,
+            settle_max: 0.0,
+            recovered: 0,
+            cleared: 0,
+            towed: 0,
         }
     }
 }
@@ -823,6 +955,38 @@ pub struct CoopManager {
     /// Monitor state per conflict side: vehicles inside, last time one left.
     inside: Vec<[u32; 2]>,
     last_out: Vec<[f64; 2]>,
+    /// How long a disabled vehicle stays where it stopped before it is cleared away (s).
+    pub clear_time: f64,
+    /// Failures per hour to inject at random places in the box (0 for none), and how
+    /// the vehicles fail. Both sides of a comparison get the same failures.
+    pub stall_rate: f64,
+    pub stall_fault: Fault,
+    /// Places where the next vehicle to arrive fails.
+    pub traps: Vec<Trap>,
+    /// Armed: the next vehicle about to leave a zone with a crossing vehicle due right
+    /// behind it, at the smallest gap its policy allows, fails there. That is the
+    /// failure the gap policies are sized for, at the moment it leaves the least room.
+    pub armed: Option<Fault>,
+    /// Disabled vehicles still on the map.
+    pub wrecks: HashMap<u64, Wreck>,
+    /// The latest failures, oldest first, each with what followed from it.
+    pub incidents: VecDeque<Incident>,
+    /// Vehicles whose crossing was withdrawn: they stop short of the box, braking as
+    /// hard as they must.
+    halted: HashSet<u64>,
+    /// Vehicles that failed or were struck since the manager last ran.
+    pending: Vec<(u64, Fault, Option<u64>)>,
+    /// Vehicles the manager wants taken off the map: wrecks whose time is up, and a
+    /// vehicle towed out of a standoff.
+    remove: Vec<u64>,
+    /// Since when vehicles stopped in the box have blocked one another.
+    stuck_since: Option<f64>,
+    /// A disabled vehicle is on the map, or a vehicle is off its crossing because of one.
+    alarm: bool,
+    next_incident: u64,
+    /// Random failures: their own stream, and when the next one is due.
+    rng: Rng,
+    next_stall: Option<f64>,
 }
 
 #[derive(Clone, Debug)]
@@ -914,6 +1078,21 @@ impl CoopManager {
             lanes,
             inside: vec![[0, 0]; net.conflicts.len()],
             last_out: vec![[f64::NEG_INFINITY; 2]; net.conflicts.len()],
+            clear_time: 60.0,
+            stall_rate: 0.0,
+            stall_fault: Fault::Dead,
+            traps: Vec::new(),
+            armed: None,
+            wrecks: HashMap::new(),
+            incidents: VecDeque::new(),
+            halted: HashSet::new(),
+            pending: Vec::new(),
+            remove: Vec::new(),
+            stuck_since: None,
+            alarm: false,
+            next_incident: 0,
+            rng: Rng::new(0x57A1_1ED0),
+            next_stall: None,
         };
         // The mean over the movement's lanes (the two left-turn lanes have different
         // curve speeds), so the result does not depend on the map's iteration order.
@@ -994,6 +1173,9 @@ impl CoopManager {
 
     pub(crate) fn vehicle_done(&mut self, id: u64, lane: LinkId) {
         self.plans.remove(&id);
+        self.halted.remove(&id);
+        // A vehicle that failed so close to the edge of the map that it rolled off it.
+        self.wrecks.remove(&id);
         if let Some((q, n)) = self.chains.get_mut(&lane)
             && let Some(pos) = q.iter().position(|&x| x == id)
         {
@@ -1027,9 +1209,21 @@ impl CoopManager {
     /// given offsets from the line crossing fit around every reservation; with
     /// `after_all`, the earliest after every conflicting reservation.
     fn earliest(&self, zones: &[(usize, usize, f64, f64, f64)], t_line: f64, after_all: bool) -> f64 {
+        self.earliest_among(zones, t_line, after_all, true)
+    }
+
+    /// [`CoopManager::earliest`], counting the zones that vehicles at rest hold only
+    /// with `resting`.
+    fn earliest_among(
+        &self,
+        zones: &[(usize, usize, f64, f64, f64)],
+        t_line: f64,
+        after_all: bool,
+        resting: bool,
+    ) -> f64 {
         let mut iv: Vec<(f64, f64)> = Vec::new();
         for &(cid, side, a, b, need) in zones {
-            for r in &self.res[cid][1 - side] {
+            for r in self.res[cid][1 - side].iter().filter(|r| resting || r.t_out.is_finite()) {
                 let lo = r.t_in - r.need - b;
                 let hi = r.t_out + need - a;
                 if hi > lo {
@@ -1052,11 +1246,21 @@ impl CoopManager {
 
     /// Does a trajectory fit around every reservation?
     fn fits(&self, p: &Plan) -> bool {
-        p.zones.iter().all(|z| {
-            self.res[z.cid][1 - z.side]
-                .iter()
-                .all(|r| z.t_in >= r.t_out + z.need || r.t_in >= z.t_out + r.need)
-        })
+        p.zones.iter().all(|z| self.clear_of(z))
+    }
+
+    /// Does a zone of a trajectory keep its gaps to every reservation?
+    fn clear_of(&self, z: &PlanZone) -> bool {
+        self.clear_among(z, true)
+    }
+
+    /// [`CoopManager::clear_of`], counting the zones that vehicles at rest hold only
+    /// with `resting`.
+    fn clear_among(&self, z: &PlanZone, resting: bool) -> bool {
+        self.res[z.cid][1 - z.side]
+            .iter()
+            .filter(|r| resting || r.t_out.is_finite())
+            .all(|r| z.t_in >= r.t_out + z.need || r.t_in >= z.t_out + r.need)
     }
 
     /// Build the earliest trajectory for a request that fits the reservation table.
@@ -1084,8 +1288,11 @@ impl CoopManager {
     }
 
     fn grant(&mut self, c: &Cand, p: Plan) {
+        // A vehicle that stopped before the line after a failure gives up what it held.
+        self.drop_plan(c.vid);
+        self.halted.remove(&c.vid);
         for z in &p.zones {
-            self.res[z.cid][z.side].push(Res { t_in: z.t_in, t_out: z.t_out, need: z.need });
+            self.res[z.cid][z.side].push(Res { t_in: z.t_in, t_out: z.t_out, need: z.need, vid: c.vid });
         }
         let st = &mut self.moves[c.movement];
         if st.open {
@@ -1098,12 +1305,39 @@ impl CoopManager {
             }
             st.granted += 1;
         }
-        if let Some((_, n)) = self.chains.get_mut(&c.lane) {
-            *n += 1;
-        }
         self.crossings.push_back((p.t_line, c.movement));
         self.plans.insert(c.vid, p);
+        self.recount(c.lane);
         self.stats.plans += 1;
+    }
+
+    /// Count the vehicles at the front of a lane that have a crossing: the next one is
+    /// the lane's candidate for a trajectory.
+    fn recount(&mut self, lane: LinkId) {
+        let plans = &self.plans;
+        if let Some((q, n)) = self.chains.get_mut(&lane) {
+            *n = q.iter().take_while(|id| plans.get(id).is_some_and(|p| p.crossing())).count();
+        }
+    }
+
+    /// Take a vehicle's trajectory away, with the zones it holds.
+    fn drop_plan(&mut self, vid: u64) -> Option<Plan> {
+        let p = self.plans.remove(&vid)?;
+        for z in &p.zones {
+            self.res[z.cid][z.side].retain(|r| r.vid != vid);
+        }
+        Some(p)
+    }
+
+    /// Give a vehicle a trajectory in place of the one it has, with the zones it holds.
+    fn install(&mut self, vid: u64, p: Plan) {
+        self.drop_plan(vid);
+        for z in &p.zones {
+            self.res[z.cid][z.side].push(Res { t_in: z.t_in, t_out: z.t_out, need: z.need, vid });
+        }
+        let lane = p.lane;
+        self.plans.insert(vid, p);
+        self.recount(lane);
     }
 
     /// Vehicles of movement `m` on the map without a trajectory yet.
@@ -1122,7 +1356,13 @@ impl CoopManager {
         (lead_len + av.s0 + av.tg * v_box) / v_box.max(1.0)
     }
 
-    fn candidates(&self, veh: &[Vehicle], idx: &HashMap<u64, usize>, t: f64, skip: &[u64]) -> Vec<Vec<Cand>> {
+    fn candidates(
+        &self,
+        veh: &[Vehicle],
+        idx: &HashMap<u64, usize>,
+        (t, k): (f64, u64),
+        skip: &[u64],
+    ) -> Vec<Vec<Cand>> {
         let mut out = vec![Vec::new(); self.moves.len()];
         let mut lanes: Vec<_> = self.chains.iter().collect();
         lanes.sort_by_key(|x| *x.0);
@@ -1133,7 +1373,10 @@ impl CoopManager {
             }
             let Some(&i) = idx.get(&vid) else { continue };
             let v = &veh[i];
-            if v.ri != 0 {
+            // A disabled vehicle blocks its lane. One that stopped past the line after a
+            // failure is granted its way out separately (`recover`), and one still
+            // reacting to a failure must first come to rest.
+            if v.ri != 0 || v.disabled || self.plans.get(&vid).is_some_and(|p| !p.rests || k < p.end()) {
                 continue;
             }
             let info = &self.lanes[&lane];
@@ -1156,6 +1399,10 @@ impl CoopManager {
                 })
                 .collect();
             let t_est = self.earliest(&zones, t_lo, false);
+            if t_est.is_infinite() {
+                // A vehicle at rest holds a zone on its path: nothing to offer it yet.
+                continue;
+            }
             let h = Self::headway(&av, v.len(), info.v_box);
             out[info.movement].push(Cand { vid, idx: i, lane, movement: info.movement, leader, t_est, h });
         }
@@ -1513,7 +1760,7 @@ impl CoopManager {
     }
 
     /// One manager cycle: grant trajectories to the vehicles that can have one now.
-    pub(crate) fn step(&mut self, veh: &[Vehicle], t: f64, k: u64, dt: f64) {
+    pub(crate) fn step(&mut self, net: &Network, veh: &[Vehicle], t: f64, k: u64, dt: f64) {
         self.purge(t);
         while self.history.front().is_some_and(|b| b.end < t - HISTORY) {
             self.history.pop_front();
@@ -1527,11 +1774,23 @@ impl CoopManager {
         }
         self.arr_time = self.arr_time * decay + dt;
         let idx: HashMap<u64, usize> = veh.iter().enumerate().map(|(i, v)| (v.id, i)).collect();
+        self.alarm = !self.wrecks.is_empty()
+            || !self.halted.is_empty()
+            || !self.pending.is_empty()
+            || self.plans.values().any(|p| !p.crossing());
+        if self.alarm {
+            // What is left of a withdrawn crossing has run out: its vehicle is free. Once
+            // it has stopped short of the box, it waits there like any other.
+            self.plans.retain(|_, p| p.kind != PlanKind::Withdrawn || k < p.end());
+            let plans = &self.plans;
+            self.halted.retain(|id| plans.contains_key(id) || idx.get(id).is_some_and(|&i| veh[i].v > 0.1));
+            self.clear_box(net, veh, &idx, (t, k, dt));
+        }
         let mut failed: Vec<u64> = Vec::new();
         let mut missed: Vec<u64> = Vec::new();
         let mut crossings = 0;
         for _ in 0..5000 {
-            let cands = self.candidates(veh, &idx, t, &failed);
+            let cands = self.candidates(veh, &idx, (t, k), &failed);
             // An emergency vehicle, and those ahead of it in its lane, get the earliest
             // slots that fit, whatever the phase.
             if let Some(c) = self.urgent(&cands, veh, &idx) {
@@ -1641,6 +1900,15 @@ impl CoopManager {
             let base = off(v.ri);
             let (x, xp) = (base + v.s, base + v.prev_s);
             let vo = v_old[i];
+            // A vehicle that reaches a place set for a failure fails there.
+            if !self.traps.is_empty()
+                && !v.disabled
+                && let Some(pos) =
+                    self.traps.iter().position(|tr| tr.lane == v.route[0] && xp < tr.x && x >= tr.x)
+            {
+                let trap = self.traps.remove(pos);
+                self.pending.push((v.id, trap.fault, None));
+            }
             let Some(p) = self.plans.get(&v.id) else {
                 // Entering the box without a reservation.
                 if v.ri >= 1 && v.ri - 1 < v.route.len() && self.lanes.contains_key(&v.route[0]) {
@@ -1657,17 +1925,22 @@ impl CoopManager {
                 }
                 continue;
             };
+            // Where the trajectory puts the vehicle after this step: on it, or at rest
+            // where it ended. A disabled vehicle is no longer held to one.
             let j = (k - p.k0) as usize;
-            if j + 1 < p.x.len() && ((p.x[j + 1] - x).abs() > 1e-6 || (p.v[j + 1] - v.v).abs() > 1e-9) {
+            let planned = if j + 1 < p.x.len() {
+                Some((p.x[j + 1], p.v[j + 1]))
+            } else {
+                p.rests.then(|| (p.last_x(), 0.0))
+            };
+            if let Some((px, pv)) = planned.filter(|_| !v.disabled)
+                && ((px - x).abs() > 1e-6 || (pv - v.v).abs() > 1e-9)
+            {
                 self.stats.deviations += 1;
                 if self.log.len() < 40 {
                     self.log.push(format!(
                         "t={t:.1} vehicle #{} off its trajectory: x {:.4} vs {:.4}, v {:.4} vs {:.4}",
-                        v.id,
-                        x,
-                        p.x[j + 1],
-                        v.v,
-                        p.v[j + 1]
+                        v.id, x, px, v.v, pv
                     ));
                 }
             }
@@ -1687,15 +1960,21 @@ impl CoopManager {
                 let xr = z.x1 + len;
                 if xp < xr && x >= xr {
                     let to = t + cross_time(xp, vo, v.a, xr, dt);
-                    err = err.max((to - z.t_out).abs());
+                    // A zone held without end is left only by a vehicle that was
+                    // expected to be stopped in it (`Plan::contact`) and was not.
+                    if z.t_out.is_finite() {
+                        err = err.max((to - z.t_out).abs());
+                    }
                     events.push((z.cid, z.side, false, to, 0.0));
                 }
             }
-            self.stats.timing_err_max = self.stats.timing_err_max.max(err);
+            if !v.disabled {
+                self.stats.timing_err_max = self.stats.timing_err_max.max(err);
+            }
             for (cid, side, entering, time, need) in events {
                 if entering {
                     let other = 1 - side;
-                    if self.inside[cid][other] > 0 {
+                    if self.inside[cid][other] > 0 && !p.passes {
                         self.stats.zone_violations += 1;
                         if self.log.len() < 40 {
                             self.log.push(format!(
@@ -1734,14 +2013,35 @@ impl Sim {
         let leaders = coop.leaders();
         let mut out: Vec<(f64, Reason)> = Vec::with_capacity(self.vehicles.len());
         for (i, v) in self.vehicles.iter().enumerate() {
+            if v.disabled {
+                // A disabled vehicle brakes to rest, if it is not there already, and stays.
+                out.push((if v.v > 0.0 { -brake_decel(v.kind) } else { 0.0 }, Reason::Disabled));
+                continue;
+            }
             if let Some(p) = coop.plans.get(&v.id) {
                 let j = (self.steps - p.k0) as usize;
                 if j < p.a.len() {
                     out.push((p.a[j], p.why[j]));
                     continue;
                 }
+                if p.rests {
+                    // At rest where its reaction to a failure left it, until it is
+                    // granted a way out.
+                    out.push((0.0, Reason::Stranded));
+                    continue;
+                }
             }
-            out.push(self.free_av_acc(i, leaders.get(&v.id).and_then(|l| idx.get(l)).copied(), coop));
+            if self.t < v.blind_until {
+                // The vehicle ahead has just failed: for the reaction time it does not
+                // respond to that. It accelerates no harder than it was, and still stops
+                // where it would have had to anyway: at its holding point, or short of
+                // the line if its crossing was withdrawn.
+                let own = self.free_av_acc(i, None, coop, false);
+                out.push(if own.0 < v.a { own } else { (v.a, v.reason) });
+                continue;
+            }
+            let leader = leaders.get(&v.id).and_then(|l| idx.get(l)).copied();
+            out.push(self.free_av_acc(i, leader, coop, true));
         }
         let mut accs = Vec::with_capacity(out.len());
         for (v, (acc, why)) in self.vehicles.iter_mut().zip(out) {
@@ -1753,9 +2053,16 @@ impl Sim {
         accs
     }
 
-    /// An automated vehicle without a trajectory: cruise, follow the vehicle ahead, and
-    /// (in a managed lane) stop at the holding point; slow for any curve ahead.
-    fn free_av_acc(&self, i: usize, chain_leader: Option<usize>, coop: &CoopManager) -> (f64, Reason) {
+    /// An automated vehicle without a trajectory: cruise, follow the vehicle ahead
+    /// (unless it does not respond to that vehicle yet: `sees_leader`), and (in a managed
+    /// lane) stop at the holding point; slow for any curve ahead.
+    fn free_av_acc(
+        &self,
+        i: usize,
+        chain_leader: Option<usize>,
+        coop: &CoopManager,
+        sees_leader: bool,
+    ) -> (f64, Reason) {
         let v = &self.vehicles[i];
         let av = Av::of(v);
         let link = &self.net.links[v.link()];
@@ -1763,6 +2070,7 @@ impl Sim {
         let mut acc = av.a * (1.0 - (v.v / vlim.max(0.1)).powi(4));
         let mut why = Reason::Free;
         let lead = match chain_leader {
+            _ if !sees_leader => None,
             Some(j) => {
                 let w = &self.vehicles[j];
                 let gap = route_x(&self.net, w) - w.len() - route_x(&self.net, v);
@@ -1791,6 +2099,15 @@ impl Sim {
                 acc = a2;
                 why = Reason::Awaiting;
             }
+            if coop.halted(v.id) {
+                // Its crossing was withdrawn: it must stop short of the line, braking
+                // as hard as that takes.
+                let need = v.v * v.v / (2.0 * (l_in - HALT_GAP - v.s).max(0.05));
+                if need > 0.5 * av.b && -need < acc {
+                    acc = -need;
+                    why = Reason::Emergency;
+                }
+            }
         }
         // Curves ahead (slip lanes).
         let mut d = link.length() - v.s;
@@ -1808,13 +2125,20 @@ impl Sim {
                 break;
             }
         }
-        (acc.clamp(-6.0, av.a), why)
+        // While a failure is being dealt with, nobody brakes harder than its class can.
+        let floor = if coop.alarm() { -av.brake } else { -6.0 };
+        if coop.alarm() && acc < -PLAN_DECEL && why == Reason::Following {
+            why = Reason::Emergency;
+        }
+        (acc.clamp(floor, av.a), why)
     }
 
-    /// Run the intersection manager for this step.
+    /// Run the intersection manager for this step: first whatever failed since the last
+    /// one, then the trajectories it can grant.
     pub(super) fn coop_control(&mut self) {
         if let Some(mut c) = self.coop.take() {
-            c.step(&self.vehicles, self.t, self.steps, self.dt);
+            self.coop_failures(&mut c);
+            c.step(&self.net, &self.vehicles, self.t, self.steps, self.dt);
             self.coop = Some(c);
         }
     }

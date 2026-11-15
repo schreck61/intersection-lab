@@ -9,7 +9,7 @@ pub mod render;
 pub mod shot;
 
 use crate::control::CtrlKind;
-use crate::sim::coop::{CoopManager, GapPolicy, Scheduling};
+use crate::sim::coop::{CoopManager, Fault, GapPolicy, Incident, PlanKind, Scheduling};
 use crate::sim::demand::{DemandConfig, Pattern, compass_index};
 use crate::sim::geom::v2;
 use crate::sim::network::{LayoutKind, Network, Turn};
@@ -34,6 +34,8 @@ enum Tool {
     Select,
     Vehicle,
     Pedestrian,
+    /// Cooperative crossing: click a vehicle to make it fail.
+    Stall,
 }
 
 pub struct App {
@@ -53,6 +55,14 @@ pub struct App {
     twin_sched: Scheduling,
     coop_max_cycle: f64,
     coop_slack: f64,
+    /// Failures at the cooperative crossing: how a vehicle made to fail does, how long
+    /// a disabled vehicle stays before it is cleared away (s), and random failures per
+    /// hour. Both sides of a comparison share them.
+    stall_fault: Fault,
+    clear_time: f64,
+    stall_rate: f64,
+    /// Scripted runs: a failure to cause (`box` or `worst`) at a simulated time.
+    scripted_stall: Option<(String, f64)>,
     /// Intersections along the main road (1 = a single intersection).
     corridor_n: usize,
     /// Fixed-time intersections of a corridor run a coordinated green wave.
@@ -122,6 +132,10 @@ impl App {
             twin_sched: Scheduling::FirstCome,
             coop_max_cycle: 100.0,
             coop_slack: 1.5,
+            stall_fault: Fault::Dead,
+            clear_time: 60.0,
+            stall_rate: 0.0,
+            scripted_stall: None,
             corridor_n: 1,
             green_wave: false,
             corridor: CorridorSummary::default(),
@@ -163,9 +177,12 @@ impl App {
     /// TS_CORRIDOR (signals), TS_WAVE, TS_SPEED, TS_ZOOM, TS_COLOR, TS_NIGHT, TS_COND,
     /// TS_LOOP_FAULT, TS_ABOUT, TS_OVERLAYS (the overlays to show, comma-separated:
     /// sensors, detections, conflicts, paths, labels), TS_SELECT (a vehicle id to select),
-    /// TS_BENCH (controllers or sensors: start that benchmark), TS_SCROLL (right panel
-    /// offset), TS_SCROLL_LEFT (left panel offset), TS_SHOT (png path) + TS_SHOT_AFTER
-    /// (sim seconds).
+    /// TS_BENCH (controllers or sensors: start that benchmark), TS_STALL (a failure at
+    /// the cooperative crossing: `box` for the vehicle nearest the middle of the box,
+    /// `worst` for the worst moment) + TS_STALL_AT (sim seconds, 60 by default) +
+    /// TS_FAULT (`brake`: it brakes to a stop instead of stopping dead), TS_SCROLL (right
+    /// panel offset), TS_SCROLL_LEFT (left panel offset), TS_SHOT (png path) +
+    /// TS_SHOT_AFTER (sim seconds).
     fn with_env(mut self) -> Self {
         let var = |k: &str| std::env::var(k).ok();
         if let Some(l) = var("TS_LAYOUT").and_then(|v| LayoutKind::ALL.into_iter().find(|k| k.key() == v)) {
@@ -245,6 +262,14 @@ impl App {
             Some("sensors") => self.start_bench(true),
             _ => {}
         }
+        if var("TS_FAULT").as_deref() == Some("brake") {
+            self.stall_fault = Fault::Braking;
+            self.apply_coop_settings();
+        }
+        if let Some(what) = var("TS_STALL") {
+            let at = var("TS_STALL_AT").and_then(|v| v.parse().ok()).unwrap_or(60.0);
+            self.scripted_stall = Some((what, at));
+        }
         self.scroll_right = var("TS_SCROLL").and_then(|v| v.parse().ok());
         self.scroll_left = var("TS_SCROLL_LEFT").and_then(|v| v.parse().ok());
         if let Some(p) = var("TS_SHOT") {
@@ -280,6 +305,9 @@ impl App {
         self.selected = None;
         self.stats_from = 0.0;
         self.summary = Summary::default();
+        if !self.is_coop() && self.tool == Tool::Stall {
+            self.tool = Tool::Select;
+        }
     }
 
     /// The comparison world: identical layout, demand, seed and settings, but its own
@@ -349,6 +377,9 @@ impl App {
             if let Some(c) = sim.coop.as_mut() {
                 c.max_cycle = self.coop_max_cycle;
                 c.slack = self.coop_slack;
+                c.clear_time = self.clear_time;
+                c.stall_rate = self.stall_rate;
+                c.stall_fault = self.stall_fault;
             }
             sim.sensors = settings.sensors.clone();
             sim.rtor = settings.rtor;
@@ -372,10 +403,14 @@ impl App {
     /// Apply the shared intersection-manager settings to both worlds.
     fn apply_coop_settings(&mut self) {
         let (cycle, slack) = (self.coop_max_cycle, self.coop_slack);
+        let (clear, rate, fault) = (self.clear_time, self.stall_rate, self.stall_fault);
         for w in std::iter::once(&mut self.world).chain(self.twin.as_mut()) {
             for c in w.sims.iter_mut().filter_map(|s| s.coop.as_mut()) {
                 c.max_cycle = cycle;
                 c.slack = slack;
+                c.clear_time = clear;
+                c.stall_rate = rate;
+                c.stall_fault = fault;
             }
         }
     }
@@ -398,6 +433,15 @@ impl App {
         let real = now.duration_since(self.last).as_secs_f64().min(0.1);
         self.last = now;
         self.anim_t += real;
+        if let Some((what, at)) = self.scripted_stall.clone()
+            && self.world.t() >= at
+        {
+            self.scripted_stall = None;
+            match what.as_str() {
+                "worst" => self.stall_at_worst(),
+                _ => self.stall_in_box(),
+            }
+        }
         if self.paused {
             return;
         }
@@ -1038,6 +1082,135 @@ impl App {
         if changed {
             self.apply_coop_settings();
         }
+        self.failure_settings(ui);
+    }
+
+    /// Making vehicles of the cooperative crossing fail.
+    fn failure_settings(&mut self, ui: &mut Ui) {
+        ui.add_space(6.0);
+        ui.label(RichText::new("Failures").strong());
+        ui.label(
+            RichText::new(
+                "Make a vehicle fail to see what the safety gap is for. Half a second later the manager reacts: vehicles that can still stop short of the box lose their crossings, the others brake as hard as they can if the failed vehicle is in their way, and everyone else crosses as planned.",
+            )
+            .small()
+            .color(Color32::from_gray(170)),
+        );
+        let mut changed = false;
+        let mut fault = self.stall_fault;
+        let label = ui.label("Failure");
+        egui::ComboBox::from_id_salt("fault")
+            .selected_text(fault.name())
+            .width(270.0)
+            .show_ui(ui, |ui| {
+                for x in Fault::ALL {
+                    ui.selectable_value(&mut fault, x, x.name());
+                }
+            })
+            .response
+            .labelled_by(label.id)
+            .on_hover_text("Stops dead: at once, as after a collision, which is the failure the fail-safe and mitigated gaps are sized for. Brakes hard to a stop: the failure the nominal gap is sized for.");
+        if fault != self.stall_fault {
+            self.stall_fault = fault;
+            changed = true;
+        }
+        ui.horizontal_wrapped(|ui| {
+            let on = self.tool == Tool::Stall;
+            if ui
+                .selectable_label(on, "⚠ Stall a vehicle")
+                .on_hover_text("Then click a vehicle on the map")
+                .clicked()
+            {
+                self.tool = if on { Tool::Select } else { Tool::Stall };
+            }
+            if ui
+                .button("Stall one in the box")
+                .on_hover_text("The vehicle nearest the middle of its path through the box fails: now if it is in the box, and otherwise when it gets there")
+                .clicked()
+            {
+                self.stall_in_box();
+            }
+            if ui
+                .button("Stall one at the worst moment")
+                .on_hover_text("The next vehicle about to leave a conflict zone with a crossing vehicle due right behind it, at the smallest gap the policy allows, fails there: the case the gap is sized for")
+                .clicked()
+            {
+                self.stall_at_worst();
+            }
+        });
+        changed |= ui
+            .add(egui::Slider::new(&mut self.clear_time, 10.0..=300.0).step_by(5.0).text("clear after s"))
+            .on_hover_text("How long a disabled vehicle stays where it stopped before it is cleared away. Vehicles that touch are cleared away together.")
+            .changed();
+        changed |= ui
+            .add(egui::Slider::new(&mut self.stall_rate, 0.0..=120.0).step_by(2.0).text("random stalls / h"))
+            .on_hover_text("Failures at random places in the box, at random times. Both sides of a comparison get the same ones.")
+            .changed();
+        if changed {
+            self.apply_coop_settings();
+        }
+        let wrecks = self
+            .world
+            .sims
+            .iter()
+            .chain(self.twin.iter().flat_map(|t| &t.sims))
+            .any(|s| s.coop.as_ref().is_some_and(|c| !c.wrecks.is_empty()));
+        if ui.add_enabled(wrecks, egui::Button::new("Clear disabled vehicles")).clicked() {
+            for w in std::iter::once(&mut self.world).chain(self.twin.as_mut()) {
+                for s in &mut w.sims {
+                    s.clear_wrecks();
+                }
+            }
+            self.notify("Disabled vehicles cleared away");
+        }
+    }
+
+    /// Make the vehicle nearest the middle of the box fail, and on side B the next
+    /// vehicle to reach the same place.
+    fn stall_in_box(&mut self) {
+        let fault = self.stall_fault;
+        let Some((lane, x)) = self.world.sims[0].stall_in_box(fault) else {
+            let set = self.world.sims[0].coop.as_ref().is_some_and(|c| !c.traps.is_empty());
+            self.notify(if set {
+                "A failure is already set: the next vehicle to reach its place fails"
+            } else {
+                "No vehicle is on its way into the box"
+            });
+            return;
+        };
+        if let Some(t) = self.twin.as_mut() {
+            t.sims[0].stall_at(lane, x, fault);
+        }
+        self.notify(format!("A vehicle in the box: {}", fault.label()));
+    }
+
+    /// Make a vehicle fail at the worst moment for crossing traffic, on both sides.
+    fn stall_at_worst(&mut self) {
+        let fault = self.stall_fault;
+        for w in std::iter::once(&mut self.world).chain(self.twin.as_mut()) {
+            w.sims[0].stall_at_worst(fault);
+        }
+        self.notify("Set: the next vehicle with a crossing vehicle right behind it fails");
+    }
+
+    /// Make vehicle `id` of side `side` fail, and on the other side the next vehicle to
+    /// reach the same place.
+    fn stall_vehicle(&mut self, side: usize, id: u64) {
+        let fault = self.stall_fault;
+        let (here, there) = match (side, self.twin.as_mut()) {
+            (0, twin) => (&mut self.world, twin),
+            (_, Some(twin)) => (twin, Some(&mut self.world)),
+            (_, None) => return,
+        };
+        let sim = &mut here.sims[0];
+        let Some((lane, x)) = sim.place_of(id) else { return };
+        let Some(kind) = sim.vehicles.iter().find(|v| v.id == id).map(|v| v.kind) else { return };
+        if !sim.stall_vehicle(id, fault) {
+            return;
+        }
+        let mirrored = there.is_some_and(|w| w.sims[0].stall_at(lane, x, fault));
+        let also = if mirrored { "; so will the next one there on the other side" } else { "" };
+        self.notify(format!("{} #{id} {}{also}", kind.name(), fault.label()));
     }
 
     fn kpi(ui: &mut Ui, label: &str, value: String, color: Color32) {
@@ -1131,7 +1304,7 @@ impl App {
                     ui.label(RichText::new(format!("A: {a_name}")).strong());
                     ui.label(RichText::new(format!("B: {b_name}")).strong());
                     ui.end_row();
-                    let rows: [(&str, f64, f64, &str, bool); 7] = [
+                    let mut rows: Vec<(&str, f64, f64, &str, bool)> = vec![
                         ("person delay*", s.person_delay_all, b.person_delay_all, "s", true),
                         ("avg delay", s.avg_delay, b.avg_delay, "s", true),
                         ("95th pct delay", s.p95_delay, b.p95_delay, "s", true),
@@ -1140,6 +1313,24 @@ impl App {
                         ("CO₂ / veh", s.co2_per_veh, b.co2_per_veh, "g", true),
                         ("ped wait", s.ped_avg_wait, b.ped_avg_wait, "s", true),
                     ];
+                    // After a failure at the cooperative crossing: what each side's
+                    // vehicles ran into.
+                    let stats = |w: &World| w.sims[0].coop.as_ref().map(|c| c.stats.clone());
+                    if let (Some(x), Some(y)) = (stats(&self.world), self.twin.as_ref().and_then(stats))
+                        && x.stalls + y.stalls > 0
+                    {
+                        let n = |v: u64| v as f64;
+                        rows.push(("vehicles failed", n(x.stalls), n(y.stalls), "", true));
+                        rows.push(("crossing contacts", n(x.crossing_impacts), n(y.crossing_impacts), "", true));
+                        rows.push((
+                            "fastest of them",
+                            x.crossing_impact_max * 3.6,
+                            y.crossing_impact_max * 3.6,
+                            "km/h",
+                            true,
+                        ));
+                        rows.push(("same-lane contacts", n(x.lane_impacts), n(y.lane_impacts), "", true));
+                    }
                     for (k, a, bv, unit, lower) in rows {
                         let better = |x: f64, y: f64| if lower { x < y * 0.97 } else { x > y * 1.03 };
                         let col = |x: f64, y: f64| if better(x, y) { Color32::from_rgb(110, 220, 130) } else { Color32::from_gray(220) };
@@ -1302,6 +1493,70 @@ impl App {
         );
         ui.add_space(4.0);
         self.safety_monitors(ui, c);
+        ui.add_space(4.0);
+        self.failures(ui, c, sim);
+    }
+
+    /// What followed each failure: who stopped, who touched, and how fast.
+    fn failures(&self, ui: &mut Ui, c: &CoopManager, sim: &Sim) {
+        let gray = Color32::from_gray(150);
+        ui.label(RichText::new("Failures (what followed each one)").strong().size(12.5));
+        let st = &c.stats;
+        if st.stalls == 0 {
+            ui.label(
+                RichText::new("None yet. Make a vehicle fail under Intersection manager, on the left.")
+                    .small()
+                    .color(gray),
+            );
+            return;
+        }
+        let ok = Color32::from_rgb(110, 220, 130);
+        let bad = Color32::from_rgb(240, 90, 90);
+        let contacts = |n: u64, fastest: f64| {
+            if n == 0 { "0".to_string() } else { format!("{n} · {:.0} km/h", fastest * 3.6) }
+        };
+        egui::Grid::new("coop_failures").num_columns(3).spacing(vec2(16.0, 6.0)).show(ui, |ui| {
+            Self::kpi(ui, "vehicles failed", st.stalls.to_string(), Color32::WHITE);
+            Self::kpi(
+                ui,
+                "crossing contacts",
+                contacts(st.crossing_impacts, st.crossing_impact_max),
+                if st.crossing_impacts == 0 { ok } else { bad },
+            );
+            Self::kpi(
+                ui,
+                "same-lane contacts",
+                contacts(st.lane_impacts, st.lane_impact_max),
+                if st.lane_impacts == 0 { ok } else { bad },
+            );
+            ui.end_row();
+            Self::kpi(ui, "emergency stops", st.emergency_stops.to_string(), Color32::WHITE);
+            Self::kpi(ui, "crossings withdrawn", st.withdrawn.to_string(), Color32::WHITE);
+            let (margin, short) = stop_margin(st.stop_margin_min);
+            Self::kpi(ui, "closest stop", margin, if short { ok } else { bad });
+            ui.end_row();
+            Self::kpi(ui, "disabled now", c.wrecks.len().to_string(), Color32::WHITE);
+            Self::kpi(ui, "cleared away", st.cleared.to_string(), Color32::WHITE);
+            Self::kpi(
+                ui,
+                "routed out of the box",
+                if st.towed == 0 {
+                    st.recovered.to_string()
+                } else {
+                    format!("{} · {} towed", st.recovered, st.towed)
+                },
+                Color32::WHITE,
+            );
+            ui.end_row();
+        });
+        ui.label(
+            RichText::new("Closest stop: how far short of the zone it braked for an emergency stop came to rest. The latest failures:")
+                .small()
+                .color(gray),
+        );
+        for inc in c.incidents.iter().rev().take(3) {
+            ui.label(RichText::new(incident_line(inc, &sim.net)).small());
+        }
     }
 
     /// The batch phases: what is being served, cycle figures, and each movement's demand
@@ -1434,6 +1689,16 @@ impl App {
             match &sim.coop {
                 Some(c) => {
                     let slot = match c.plans.get(&v.id) {
+                        _ if v.disabled => "none: it is disabled".to_string(),
+                        Some(p) if p.kind == PlanKind::Withdrawn => {
+                            "withdrawn after a failure: it stops short of the box".to_string()
+                        }
+                        Some(p) if matches!(p.kind, PlanKind::EmergencyStop | PlanKind::StopBehind) => {
+                            "given up for an emergency stop".to_string()
+                        }
+                        Some(p) if c.box_span(p.lane).is_some_and(|(l_in, _)| p.x[0] >= l_in) => {
+                            "a way out of the box, after an emergency stop".to_string()
+                        }
                         Some(p) if p.t_line > sim.t => format!(
                             "crosses the line in {:.1} s at {:.0} km/h",
                             p.t_line - sim.t,
@@ -1753,6 +2018,20 @@ impl App {
                     }
                 }
                 Tool::Select => {}
+                Tool::Stall => {
+                    let world = if k == 0 { Some(&self.world) } else { self.twin.as_ref() };
+                    let hit = world.map(|w| &w.sims[i]).and_then(|sim| {
+                        sim.vehicles
+                            .iter()
+                            .filter(|v| !v.disabled)
+                            .map(|v| (v.id, sim.center(v).dist(local) - v.len() * 0.5))
+                            .filter(|(_, d)| *d < 2.5)
+                            .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+                    });
+                    if let Some((id, _)) = hit {
+                        self.stall_vehicle(k, id);
+                    }
+                }
                 Tool::Vehicle => {
                     let net = &self.world.sims[i].net;
                     let leg = (0..net.legs.len())
@@ -1810,6 +2089,7 @@ impl App {
                 Tool::Vehicle => {
                     format!("click an approach: {} {}", self.spawn_kind.name(), self.spawn_turn.name())
                 }
+                Tool::Stall => format!("click a vehicle: it {}", self.stall_fault.name().to_lowercase()),
                 _ => "click a crosswalk corner".to_string(),
             };
             painter.text(
@@ -1874,6 +2154,8 @@ impl App {
             items.push((render::WAITING, "waiting for a reservation"));
             items.push((render::ADMITTING, "movement being admitted"));
             items.push((render::PASSAGE, "pedestrian underpass"));
+            items.push((render::DISABLED, "disabled: failed or struck"));
+            items.push((render::EMERGENCY, "stopped for a disabled vehicle"));
         } else if self.ov.sensors && self.world.sims[self.focus].sensors.loops {
             items.push((Color32::from_rgb(255, 200, 60), "loop detector"));
         }
@@ -1902,6 +2184,52 @@ impl App {
             y += 16.0;
         }
     }
+}
+
+/// How far short of its zone the closest emergency stop came to rest, and whether every
+/// one stopped short.
+fn stop_margin(margin: f64) -> (String, bool) {
+    if !margin.is_finite() {
+        return ("–".into(), true);
+    }
+    (format!("{margin:+.1} m"), margin >= 0.0)
+}
+
+/// One failure in a sentence: what failed where, and what followed.
+fn incident_line(inc: &Incident, net: &Network) -> String {
+    let mv = &net.movements[inc.movement];
+    let mut line = format!(
+        "{}:{:02} · {} #{} ({} {}) {} {}, {} gaps: {} emergency stop{}, {} crossing{} withdrawn",
+        (inc.t / 60.0) as u32,
+        (inc.t as u32) % 60,
+        inc.kind.name(),
+        inc.vehicle,
+        net.legs[mv.leg].compass.bound().to_lowercase(),
+        mv.turn.name().to_lowercase(),
+        inc.fault.label(),
+        inc.place.label(),
+        inc.policy.label(),
+        inc.stops,
+        if inc.stops == 1 { "" } else { "s" },
+        inc.withdrawn,
+        if inc.withdrawn == 1 { "" } else { "s" },
+    );
+    if inc.margin.is_finite() {
+        line.push_str(&if inc.margin >= 0.0 {
+            format!(", the closest {:.1} m short of its zone", inc.margin)
+        } else {
+            format!(", one {:.1} m into its zone", -inc.margin)
+        });
+    }
+    line.push_str(&match inc.worst() {
+        (None, None) => "; no contact".to_string(),
+        (Some(c), None) => format!("; crossing contact at {:.0} km/h", c * 3.6),
+        (None, Some(l)) => format!("; struck from behind at {:.0} km/h", l * 3.6),
+        (Some(c), Some(l)) => {
+            format!("; crossing contact at {:.0} km/h, struck from behind at {:.0} km/h", c * 3.6, l * 3.6)
+        }
+    });
+    line
 }
 
 /// The safety monitors' smallest margin over the required gap, with its sign, and
@@ -1959,7 +2287,10 @@ impl eframe::App for App {
 
 #[cfg(test)]
 mod tests {
-    use super::margin_kpi;
+    use super::{incident_line, margin_kpi, stop_margin};
+    use crate::sim::coop::{Fault, GapPolicy, Impact, Incident, Place};
+    use crate::sim::network::{LayoutKind, Network};
+    use crate::sim::vtypes::VKind;
 
     #[test]
     fn margin_over_gap_keeps_its_sign() {
@@ -1967,5 +2298,64 @@ mod tests {
         assert_eq!(margin_kpi(-1e-9), ("+0.00 s".to_string(), true));
         assert_eq!(margin_kpi(-0.25), ("-0.25 s".to_string(), false));
         assert_eq!(margin_kpi(f64::INFINITY), ("–".to_string(), true));
+    }
+
+    /// A failure reads as a sentence: what failed where, who stopped, and what touched.
+    #[test]
+    fn a_failure_reads_as_a_sentence() {
+        let net = Network::build(LayoutKind::Cooperative);
+        let movement = net.movement_by_name("S_T").unwrap();
+        let hit = |crossing: bool, kmh: f64| Impact {
+            t: 0.0,
+            speed: kmh / 3.6,
+            crossing,
+            striker: 1,
+            struck: 2,
+            at: (0.0, 0.0),
+        };
+        let mut inc = Incident {
+            id: 0,
+            t: 125.0,
+            vehicle: 42,
+            kind: VKind::Bus,
+            fault: Fault::Dead,
+            movement,
+            lane: 0,
+            x: 250.0,
+            place: Place::Box,
+            policy: GapPolicy::Mitigated,
+            stops: 1,
+            withdrawn: 12,
+            impacts: vec![],
+            margin: f64::INFINITY,
+            settled: 127.0,
+            cleared: None,
+        };
+        assert_eq!(
+            incident_line(&inc, &net),
+            "2:05 · Bus #42 (northbound through) stopped dead in the box, mitigated gaps: 1 emergency stop, \
+             12 crossings withdrawn; no contact"
+        );
+        (inc.stops, inc.withdrawn, inc.margin) = (3, 1, 1.25);
+        inc.impacts = vec![hit(false, 30.0), hit(false, 12.0)];
+        let line = incident_line(&inc, &net);
+        assert!(
+            line.contains("3 emergency stops, 1 crossing withdrawn, the closest 1.2 m short of its zone"),
+            "{line}"
+        );
+        assert!(line.ends_with("; struck from behind at 30 km/h"), "{line}");
+        inc.margin = -2.0;
+        inc.impacts = vec![hit(true, 20.0)];
+        let line = incident_line(&inc, &net);
+        assert!(line.ends_with(", one 2.0 m into its zone; crossing contact at 20 km/h"), "{line}");
+        inc.impacts.push(hit(false, 9.0));
+        assert!(
+            incident_line(&inc, &net)
+                .ends_with("; crossing contact at 20 km/h, struck from behind at 9 km/h")
+        );
+        // The closest stop keeps its sign.
+        assert_eq!(stop_margin(f64::INFINITY), ("–".to_string(), true));
+        assert_eq!(stop_margin(1.94), ("+1.9 m".to_string(), true));
+        assert_eq!(stop_margin(-3.0), ("-3.0 m".to_string(), false));
     }
 }

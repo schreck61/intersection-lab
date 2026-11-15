@@ -140,6 +140,13 @@ pub struct Vehicle {
     pub lc_t: f64,
     lc_from: Option<LinkId>,
     pub trip: Trip,
+    /// Cooperative crossing: it has failed or was struck, and stays where it stops
+    /// until it is cleared away.
+    pub disabled: bool,
+    /// Cooperative crossing: the vehicle ahead has just failed, and until this time
+    /// this one, which finds its own way, does not respond to that: it accelerates no
+    /// harder than it was, and still stops where it had to anyway.
+    pub(crate) blind_until: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -158,6 +165,12 @@ pub enum Reason {
     Awaiting,
     /// Automated: slowing to the crossing speed.
     BoxSpeed,
+    /// Automated: braking hard because a vehicle has failed on its path or ahead of it.
+    Emergency,
+    /// Automated: at rest after an emergency stop, until it is granted a way out.
+    Stranded,
+    /// Automated: it has failed or was struck, and waits to be cleared away.
+    Disabled,
 }
 
 impl Reason {
@@ -174,6 +187,9 @@ impl Reason {
             Reason::Scheduled => "slowing to meet its reserved slot",
             Reason::Awaiting => "waiting for a reservation",
             Reason::BoxSpeed => "slowing to the crossing speed",
+            Reason::Emergency => "emergency braking for a failed vehicle",
+            Reason::Stranded => "stopped after an emergency, waiting for a way out",
+            Reason::Disabled => "disabled, waiting to be cleared away",
         }
     }
 }
@@ -347,7 +363,11 @@ impl Sim {
         let view = SensorView::new(&net);
         let base_stages = net.stages.clone();
         let n_moves = net.movements.len();
-        let coop = (mode == ControlMode::Cooperative).then(|| coop::CoopManager::new(&net));
+        let coop = (mode == ControlMode::Cooperative).then(|| {
+            let mut c = coop::CoopManager::new(&net);
+            c.seed_failures(seed);
+            c
+        });
         Sim {
             demand_gen: DemandGen::new(seed, n_legs),
             queues: vec![VecDeque::new(); n_legs],
@@ -793,6 +813,8 @@ impl Sim {
             lc_t: 1e9,
             lc_from: None,
             trip: p.trip,
+            disabled: false,
+            blind_until: f64::NEG_INFINITY,
         });
         let idx = self.vehicles.len() - 1;
         self.occ[self.vehicles[idx].route[0]].push(idx);
@@ -1599,6 +1621,9 @@ impl Sim {
             }
         }
         if let Some(mut c) = self.coop.take() {
+            if c.alarm() {
+                self.coop_contacts(&mut c);
+            }
             c.observe(&self.net, &self.vehicles, v_start, self.t, self.steps, dt);
             self.coop = Some(c);
         }
@@ -2201,17 +2226,7 @@ impl Sim {
 
     /// Body drawn `lag` meters back along the route (see [`Sim::lag`]).
     pub fn body_lagged(&self, v: &Vehicle, lag: f64) -> Vec<(V2, V2, f64, f64)> {
-        let len = v.len();
-        let n = (len / 4.5).ceil().max(1.0) as usize;
-        let seg = len / n as f64;
-        let mut out = Vec::with_capacity(n);
-        let mut f = self.point_behind(v, lag);
-        for k in 1..=n {
-            let r = self.point_behind(v, lag + seg * k as f64);
-            out.push((f.lerp(r, 0.5), (f - r).norm(), f.dist(r) * 0.5, v.spec().width * 0.5));
-            f = r;
-        }
-        out
+        body_on(&self.net, v, lag)
     }
 
     fn check_overlaps(&mut self) {
@@ -2257,6 +2272,10 @@ impl Sim {
                 if vi.link() == vj.link() || vi.route.contains(&vj.link()) && vj.route.contains(&vi.link()) {
                     continue;
                 }
+                // Wrecks rest where they touched; that contact is in the manager's log.
+                if vi.disabled && vj.disabled {
+                    continue;
+                }
                 if bodies[x].iter().any(|a| bodies[y].iter().any(|b| obb_overlap(*a, *b, 0.25))) {
                     self.collisions += 1;
                     if self.collision_log.len() < 30 {
@@ -2288,13 +2307,7 @@ impl Sim {
 
     /// Point at distance `back` behind the front of the vehicle, following its route.
     pub fn point_behind(&self, v: &Vehicle, back: f64) -> V2 {
-        let mut s = v.s - back;
-        let mut k = v.ri;
-        while s < 0.0 && k > 0 {
-            k -= 1;
-            s += self.net.links[v.route[k]].length();
-        }
-        self.net.links[v.route[k]].path.point(s)
+        point_on(&self.net, v, back)
     }
 
     pub fn front(&self, v: &Vehicle) -> V2 {
@@ -2446,6 +2459,33 @@ impl Sim {
     pub fn in_system(&self) -> (usize, usize) {
         (self.vehicles.len(), self.queues.iter().map(|q| q.len()).sum())
     }
+}
+
+/// Point at distance `back` behind the front of the vehicle, following its route.
+pub(crate) fn point_on(net: &Network, v: &Vehicle, back: f64) -> V2 {
+    let mut s = v.s - back;
+    let mut k = v.ri;
+    while s < 0.0 && k > 0 {
+        k -= 1;
+        s += net.links[v.route[k]].length();
+    }
+    net.links[v.route[k]].path.point(s)
+}
+
+/// A vehicle's body, drawn `lag` meters back along its route, as a chain of oriented
+/// rectangles (center, unit axis, half-length, half-width) that follows the path.
+pub(crate) fn body_on(net: &Network, v: &Vehicle, lag: f64) -> Vec<(V2, V2, f64, f64)> {
+    let len = v.len();
+    let n = (len / 4.5).ceil().max(1.0) as usize;
+    let seg = len / n as f64;
+    let mut out = Vec::with_capacity(n);
+    let mut f = point_on(net, v, lag);
+    for k in 1..=n {
+        let r = point_on(net, v, lag + seg * k as f64);
+        out.push((f.lerp(r, 0.5), (f - r).norm(), f.dist(r) * 0.5, v.spec().width * 0.5));
+        f = r;
+    }
+    out
 }
 
 fn route_dist_static(net: &Network, v: &Vehicle, k: usize, s_on: f64) -> f64 {
