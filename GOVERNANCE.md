@@ -16,7 +16,10 @@ This document describes how decisions are made and who does what.
 * **By evidence.** Questions about realism are settled by what real traffic does, citing
   sources such as the *Highway Capacity Manual*, the *MUTCD* or published studies where
   possible, and questions about performance by benchmark results across several seeds.
-  A change that lets vehicles collide isn't accepted, however much it helps delay.
+  A change that lets vehicles collide isn't accepted, however much it helps delay. The
+  one exception is made on purpose: when a vehicle of the cooperative crossing is made to
+  fail, vehicles that can't stop in time touch, and each contact is recorded with its
+  speed.
 * **Through pull requests.** Every change to `main`, including the maintainer's own,
   goes through a pull request whose required checks pass: the tests on Linux, macOS and
   Windows, test coverage of at least 80% of lines, the browser build, rustfmt and

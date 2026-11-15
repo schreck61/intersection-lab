@@ -157,6 +157,42 @@ the design and compare these results with their estimates.
 - **Safety:** no run had a zone overlap, a zone entered while occupied, a box entry
   without a reservation or a step off a granted trajectory.
 
+None of those runs has a failure in it, and the safety gaps are sized for one. So a
+vehicle was made to fail in the box, once per run, 400 runs per case, in batches at
+16,000 veh/h and first come, first served at 8,000 veh/h:
+
+- **Each gap survives what it is sized for, with little to spare:** the hardest case is
+  a vehicle that stops dead just as it is about to clear a zone, with a crossing vehicle
+  due right behind it at the smallest gap allowed. With fail-safe gaps that vehicle
+  never reached the failed one, and in batches its closest stop ended 0.6 m short of the
+  zone. With mitigated gaps it reached the failed vehicle in 54–85% of failures, at up
+  to 22 km/h (the gap allows 25), and with nominal gaps in 89–96%, at up to 35 km/h. A
+  vehicle that only braked to a stop, the failure the nominal gap is sized for, was
+  reached in 5 of 800 such failures with nominal gaps and never with the wider ones.
+- **Batches make most failures harmless to crossing traffic:** at a random place and
+  time the next vehicle to cross the failed one's path is usually a whole phase away,
+  so its crossing is withdrawn and it stops short of the box. Even with nominal gaps,
+  2 of 400 such failures led to a crossing contact, against 11% first come, first
+  served (3% with mitigated gaps, none with fail-safe ones). Batching is safer as well
+  as faster: it needs its gap only at a change of phase, where the zipper needs it at
+  almost every vehicle.
+- **No gap protects the vehicle behind:** in a lane cars follow about 0.6 s apart at the
+  crossing speed (2 m plus a 0.42 s time gap), which lets them survive the one ahead
+  braking, not stopping dead. Mid-batch, a vehicle that stopped dead was struck from
+  behind in 86–89% of failures, at up to 38 km/h, whatever the gap. One that braked to a
+  stop was struck 3 times in 4,800 failures, at 6 km/h at most, and never in batches.
+- **The fail-safe gap has a blind spot:** it is sized for the speed at which a vehicle
+  enters a zone, and a vehicle still slowing from the approach speed to the crossing
+  speed carries more than that when it has to react. First come, first served, an
+  emergency stop ended up to 0.4 m inside its zone in 4 of 400 failures at the worst
+  moment, clear of the failed vehicle. None did in batches, where the first vehicle of a
+  phase isn't slowing as it enters.
+- **A disabled vehicle costs about a sixth of the flow while it stands:** the manager
+  closes the zones it holds and serves the lanes that stay open, 83–88% of the usual
+  traffic until it is cleared away, 60 s later. The backlog takes longer to clear: about
+  3 minutes at 12,000 veh/h and 5 at 16,000 veh/h, and at the design demand of
+  18,000 veh/h 53 of 100 runs were not back to normal 13 minutes later.
+
 ## 9. Lessons about the model itself
 
 - **Realism changes conclusions:** adding driver reaction time, realistic yellow behavior
@@ -173,6 +209,10 @@ the design and compare these results with their estimates.
 - **Held-out testing matters:** the earlier hybrid scored 0.9 s better than predictive
   control on the 12 scenarios used to choose it, and 1.0 s worse in the benchmark. Models
   are now chosen on one scenario set and reported on another that no choice uses.
+- **Making things fail finds what normal running hides:** the cooperative crossing's
+  monitors read zero through every failure-free run, and so could not show that the
+  fail-safe gap falls a few decimeters short for a vehicle that is still slowing down.
+  The first failures made on purpose did.
 
 ## Caveats
 
@@ -181,7 +221,9 @@ the design and compare these results with their estimates.
 - **Corridors:** they run east–west only.
 - **Training data:** the RL agents were trained on simulated traffic only.
 - **Cooperative crossing:** every vehicle is automated and connected, and human drivers,
-  lost messages, a failed manager and vehicles stalling in the box are not modeled.
+  lost messages and a failed manager are not modeled. A vehicle that is made to fail
+  stops on its path and reports it at once; vehicles that touch stop where they touch,
+  and nothing more of a collision is simulated.
 
 ## Reproducing the results
 
@@ -200,6 +242,7 @@ cargo run --release --example cooperative p2 2 mix 1200 3 14000,16000,17000,1800
 cargo run --release --example cooperative p2 2 mix 1200 3 2000,4000,6000,8000,10000,12000,14000 random fcfs   # section 8 (first come, first served)
 cargo run --release --example cooperative p2 1 mix 1200 3 16000                     # section 8 (one left-turn lane)
 cargo run --release --example cooperative p2 2 mix 1200 8 18000 platoons            # section 8 (platoons)
+cargo run --release --example failures 400             # section 8 (failures)
 cargo run --release --example satflow                  # calibration
 cargo run --release --example sweep 4 1.35             # safety sweep
 ```

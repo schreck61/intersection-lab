@@ -6,7 +6,7 @@ one-maintainer project, and plans can change with what the experiments find, wha
 ask for and the time available. The maintainer reviews it at least once a year and
 whenever plans change.
 
-Last reviewed: November 2026, version 0.5.1.
+Last reviewed: November 2026, after version 0.6.0.
 
 ## Next
 
@@ -36,10 +36,11 @@ Last reviewed: November 2026, version 0.5.1.
   need coordinated plans. This will also test whether tuning the planner with
   reinforcement learning, which helps at a single intersection, helps along a corridor
   too.
-* **Mixed traffic and failures at the cooperative crossing.** Human drivers mixed in with
-  automated vehicles at different shares, and lost messages, a failed intersection
-  manager and a vehicle stalled in the box. These are the crossing's main untested
-  assumptions.
+* **Mixed traffic and more failures at the cooperative crossing.** Human drivers mixed
+  in with automated vehicles at different shares, lost messages and a failed
+  intersection manager: the crossing's main assumptions still untested. A vehicle that
+  fails in the box can be simulated now (it stops dead or brakes to a stop, and the
+  manager reacts, routes around it and recovers).
 * **Save, load and share scenarios.** A scenario's layout, demand, sensors and control
   settings saved to a file and loaded again, and in the browser version a link that
   carries the scenario itself. Scenario files and links are a new kind of untrusted
@@ -76,7 +77,9 @@ To keep the project focused, small and safe to run, it doesn't plan to take on:
 * **Plugins, scripting or loading code at run time.** Your own controller is compiled
   in, as described under *Next*.
 * **Driver errors and crashes.** Drivers stay law-abiding, and safety is measured with
-  surrogates.
+  surrogates. On the cooperative crossing a vehicle can be made to fail, and vehicles
+  that then touch stop where they touch, with the speed at which they closed recorded;
+  nothing more of a collision is simulated.
 * **Python bindings,** such as a Gymnasium environment. They would add a second
   language, package and supply chain to build, sign and publish.
 * **Translations and other countries' rules.** The interface stays in English, and the
