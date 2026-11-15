@@ -47,9 +47,9 @@ Last reviewed: November 2026, version 0.5.1.
   [SECURITY.md](SECURITY.md) and the [assurance case](docs/assurance-case.md) will be
   updated to match.
 * **Accessibility.** Work through the known limitations listed in
-  [ACCESSIBILITY.md](ACCESSIBILITY.md): keyboard ways to select a vehicle, place sensors
-  and choose a crosswalk corner, shortcuts between panels, map views that don't rely on
-  color alone, and a light or high-contrast theme.
+  [ACCESSIBILITY.md](ACCESSIBILITY.md): keyboard ways to select a vehicle and choose a
+  crosswalk corner, shortcuts between panels, map views that don't rely on color alone,
+  and a light or high-contrast theme.
 
 ## If time allows
 
