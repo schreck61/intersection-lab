@@ -3,14 +3,14 @@
 Intersection Lab is a visual simulator: its main content is an animated map of traffic
 and a set of live charts. That makes some of it hard or impossible to use without sight,
 and some of it hard to use without a mouse. This page says what works today, what
-doesn't, and how to get every result without the visual app.
+doesn't, and which results are available without the visual app.
 
 Last reviewed: November 2026, version 0.5.1.
 
-## Every result is available as text
+## Results available as text
 
-Everything the app measures can be produced from the command line as plain-text tables,
-which work with screen readers, braille displays and any terminal:
+The main results can be produced from the command line as plain-text tables, which work
+with screen readers, braille displays and any terminal:
 
 ```bash
 cargo run --release --bin bench all 20 6        # every controller on every layout
@@ -19,6 +19,13 @@ cargo run --release --example corridor           # corridor study
 cargo run --release --example lpi                # pedestrian safety treatments
 cargo run --release --example cooperative        # signal-free cooperative crossing
 ```
+
+These commands print the average and 95th-percentile delay, throughput, stops, person
+delay, pedestrian waits and near misses, a corridor's end-to-end trips and the safety
+counts. They don't print everything the app shows. Some numbers appear only in the app,
+such as CO₂ per vehicle, the level of service, the breakdowns by approach, movement and
+vehicle class, the charts and a selected vehicle's own figures, and only the
+`cooperative` example prints the maximum delay.
 
 The [README](README.md#results) and [docs/insights.md](docs/insights.md) report the
 findings as text and tables, and every image in them has a text description.

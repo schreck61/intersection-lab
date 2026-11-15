@@ -68,8 +68,12 @@ The design follows the principles set out by Saltzer and Schroeder:
   and four direct dependencies (eframe, egui, serde and serde_json, plus two small ones
   for the browser build). The simulation and the neural network are the project's own
   code.
-* **Fail-safe defaults.** A weights file that doesn't parse or doesn't fit its controller
-  is rejected, and the controller starts from a fresh network instead of running it.
+* **Fail-safe defaults.** A network that doesn't fit its controller is never run. A
+  weights file that doesn't load is skipped for the next copy, ending with the copy
+  built into the executable, and a Hybrid file whose network doesn't fit loads without
+  the network and runs only its saved base tuning. If no copy loads, Deep RL starts from
+  a fresh network and the Hybrid runs the planner's default tuning (see
+  [section 8.7 of the architecture document](architecture.md#87-controlweightsrs-loading-and-saving)).
   Every workflow's token is read-only unless a job needs more, and packages are signed
   only on version-tag builds.
 * **Complete mediation.** Every weights file goes through the same loader and the same
