@@ -11,7 +11,8 @@
 > intersection manager to run it. It doesn't build the rest of the reference design:
 > the approach zones A–E and the authority point (sections 3.4, 3.5 and 6.6), the
 > elevated walking and cycling ring (section 6.7; pedestrians use underpasses instead)
-> and the roadside equipment (section 6.8). Section 12 describes what was built and what
+> and the roadside equipment (section 6.8). It can also make a vehicle fail in the box,
+> to test the safety rules of section 2.2. Section 12 describes what was built and what
 > the simulator measured; figures marked *measured* come from it. November 2026.
 
 ## Contents
@@ -48,7 +49,10 @@ What these notes conclude:
 * **Measured since (section 12).** Built in Intersection Lab with two left-turn lanes per
   approach, the crossing carries 18,000 veh/h at 29 s average delay under the stop-safe
   rule below, and saturates near 19,000 veh/h. Weaving vehicles through one at a time,
-  first come, first served, saturates near 10,000 veh/h on the same crossing.
+  first come, first served, saturates near 10,000 veh/h on the same crossing. When a
+  vehicle is made to stop dead in the box at the worst moment, the stop-safe rule stops
+  crossing traffic short of it; the harm-limited rule lets it arrive at up to 22 km/h
+  and the brake-safe rule at up to 35 km/h.
 * **It can work, but the safety rule decides almost everything.** A conflict zone, where
   two paths cross, can hold one vehicle at a time. How soon the next conflicting vehicle
   may follow depends on which failures the design must survive. With no failure margin,
@@ -604,6 +608,13 @@ verifies the *set* of contingency plans as well as the set of normal plans. If e
 executes their contingency at once, nobody collides. Typically, vehicles not yet in the
 box stop short, and vehicles in the box continue and clear, unless the hazard is on their
 own path, in which case they brake. This is what the P2 gaps pay for.
+
+> *In Intersection Lab.* Its manager works the reactions out when a vehicle fails,
+> instead of sending them with each authority: it knows every trajectory exactly, so it
+> can find every vehicle a failure endangers at that moment, and it gives each a new
+> trajectory that starts after the reaction time. For the same reason it stops only
+> those vehicles. A vehicle not yet in the box whose path stays clear keeps its
+> crossing (section 12.1).
 
 ### 3.7 Time, position and the map
 
@@ -1192,7 +1203,7 @@ stateDiagram-v2
 | Normal | full cooperative operation |
 | Constrained | larger gaps, lower box speed, shorter batches if needed |
 | Mixed | backup signals run for everyone; automated vehicles arrive on green as an AV-aware signal's traffic would |
-| Emergency | vehicles not yet in the box stop short, vehicles in it clear unless the hazard is on their path, and the IM re-plans around the blocked zones |
+| Emergency | vehicles not yet in the box stop short, vehicles in it clear unless the hazard is on their path, and the IM re-plans around the blocked zones (built in Intersection Lab, where only the vehicles a failure endangers stop: section 12.1) |
 | Preemption | a clear corridor for the emergency vehicle, made by re-planning, not by stopping everyone |
 | Maintenance | a reduced path library; some movements closed or moved |
 | Fallback | everyone without an authority stops; backup signals or a vehicle-to-vehicle all-way stop take over |
@@ -1428,8 +1439,9 @@ Every figure in it is *measured*.
   leaves the map. The manager builds trajectories with the simulator's own integrator, so
   it knows to rounding error when each vehicle will be in each zone, and grants one only
   if it keeps the policy gap to every trajectory already granted. A granted trajectory
-  never changes, and the vehicle drives exactly that. Gaps follow section 2.2: P2 by
-  default (1.43 s for a car and 1.73 s for a truck or bus at 40 km/h), PH or P1.
+  never changes, unless a vehicle fails (see *Failures* below), and the vehicle drives
+  exactly that. Gaps follow section 2.2: P2 by default (1.43 s for a car and 1.73 s for
+  a truck or bus at 40 km/h), PH or P1.
 * **Two schedules.**
   * *Batches*, the default, serve each movement in turn, in two rings with a barrier
     like an actuated signal but without yellow or all-red. A batch ends when no vehicle
@@ -1454,12 +1466,35 @@ Every figure in it is *measured*.
   actually enters and leaves each zone: the post-encroachment time (PET) and its margin
   over the policy gap, zones entered while occupied, box entries without a reservation,
   and any step off the granted trajectory.
+* **Failures** ([`src/sim/coop/failures.rs`](../src/sim/coop/failures.rs)). A vehicle can
+  be made to fail where it is, at a chosen place, at random places in the box or at the
+  worst moment for crossing traffic: when it is about to clear a zone with a crossing
+  vehicle due right behind it at the smallest gap its policy allows. It stops dead, the
+  failure P2 and PH are sized for, or brakes as hard as it can to a stop, the failure P1
+  is sized for.
+  * *The reaction* comes 0.5 s later, the two message latencies and the actuation delay
+    that every policy's gap starts from. Until then every vehicle keeps to its
+    trajectory. A vehicle that can still stop short of the box loses its crossing and
+    stops there. One that can't brakes as hard as it can if the failed vehicle is in a
+    zone on its path, or follows the vehicle ahead of it until it rests behind it. A
+    reaction only holds a vehicle back: one at rest stays at rest, and one that can no
+    longer stop short of the box is never faster than the trajectory it had. Each
+    reaction is itself a trajectory, and may endanger further vehicles, so the manager
+    goes on until every trajectory fits the others again. Vehicles whose paths stay
+    clear cross as planned.
+  * *Contact.* Vehicles that can't stop in time touch. They stop where they touch and
+    are disabled too; the speed at which they closed is recorded, and nothing more of a
+    collision is simulated.
+  * *Recovery.* No new crossing is scheduled across a zone that a vehicle at rest holds,
+    and the other lanes are served as usual: the emergency mode of section 7.3. A
+    vehicle that stopped in the box is routed out as soon as its way is clear, and
+    disabled vehicles are cleared away after a set time, 60 s by default.
 * **In the app.** Settings for the schedule, the gap policy, the maximum cycle and the
-  batch join window, all switchable while traffic runs; a panel with the phases, the
-  safety monitors and a PET histogram; and a timeline of batches and stop-line
-  crossings. Side by side, B weaves the same arrivals through one at a time under the
-  same gaps, and *Compare schedules* benchmarks batches under each policy against the
-  zipper.
+  batch join window, all switchable while traffic runs; buttons and a tool that make a
+  vehicle fail; a panel with the phases, the safety monitors, a PET histogram and what
+  followed each failure; and a timeline of batches and stop-line crossings. Side by
+  side, B weaves the same arrivals through one at a time under the same gaps, and
+  *Compare schedules* benchmarks batches under each policy against the zipper.
 * **Not built.** The approach zones A–E and the authority point (sections 3.4 and 3.5),
   the elevated walking and cycling ring (section 6.7) and the roadside equipment
   (section 6.8). The crossing has no roadside sensors, radio units or backup signal
@@ -1468,7 +1503,8 @@ Every figure in it is *measured*.
 * **Reproducing the numbers.**
   `cargo run --release --example cooperative -- [policy] [left lanes] [fleet] [seconds] [seeds] [demands] [arrivals] [scheduling]`
   runs the sweeps below, and [`tests/cooperative.rs`](../tests/cooperative.rs) checks the
-  main results.
+  main results. `cargo run --release --example failures -- 400` runs the failures, and
+  [`tests/failures.rs`](../tests/failures.rs) checks them.
 
 ### 12.2 What it measured
 
@@ -1513,6 +1549,40 @@ its queues grow (9,834 at 22,000).
   buses only, and policies and schedules switched while traffic ran, no crossing came
   inside its required gap.
 
+None of those runs has a failure in it. The next ones do: one vehicle fails in the box in
+each run, 400 runs per row, in batches at 16,000 veh/h and first come, first served at
+8,000 veh/h. A contact is the share of failures in which a crossing vehicle reached the
+failed one, with the fastest closing speed; the closest stop is how far short of its zone
+the closest emergency stop of the 400 runs came to rest.
+
+![A car stopped dead in the box, under P2 on the left and P1 on the right](failure.png)
+
+| A vehicle stops dead | | Batches: contact | Closest stop | First come, first served: contact | Closest stop |
+|---|---|---|---|---|---|
+| At the worst moment | P2 | none | 0.6 m short | none | 0.4 m inside |
+| | PH | 85%, 21 km/h | 4.5 m inside | 54%, 22 km/h | 6.6 m inside |
+| | P1 | 96%, 35 km/h | 12.5 m inside | 89%, 35 km/h | 12.8 m inside |
+| At a random place and time | P2 | none | 1.3 m short | none | 0.3 m short |
+| | PH | none | 1.4 m short | 3%, 14 km/h | 4.1 m inside |
+| | P1 | 0.5%, 29 km/h | 6.9 m inside | 11%, 34 km/h | 9.9 m inside |
+
+* **A vehicle that brakes to a stop** was never reached with P2 or PH, at the worst
+  moment or at random, and with P1 in 5 of 1,600 failures, at up to 12 km/h.
+* **In its own lane** a vehicle that stopped dead mid-batch was struck from behind in
+  86–89% of failures, at up to 38 km/h, under every policy. One that braked to a stop
+  was struck 3 times in 4,800 failures, at 6 km/h at most, and never in batches.
+* **The reaction:** in batches a vehicle that stopped dead at the worst moment brought
+  about 6 vehicles to an emergency stop and withdrew 36 to 39 crossings, and one that
+  braked to a stop 1 to 2 and 17 to 19; at a random moment either failure brought about
+  2.5 and withdrew 21 to 22. The last emergency stop was at rest at most 5.1 s after the
+  failure.
+* **What it costs:** with a disabled vehicle in the box, cleared away after 60 s, the
+  crossing served 83–88% of its usual traffic meanwhile. The backlog was gone about
+  3 minutes after the vehicle was cleared at 12,000 veh/h and 5 at 16,000 veh/h; at
+  the design demand 53 of 100 runs had not recovered 13 minutes later.
+* **The monitors:** in all 9,600 runs no vehicle left the trajectory it held, entered
+  the box without one, or overlapped another outside a recorded contact.
+
 ### 12.3 How the estimates held up
 
 | | Estimate | Measured |
@@ -1522,6 +1592,10 @@ its queues grow (9,834 at 22,000).
 | Zipper against batches (section 2.4) | one zone: 1,678 against 2,800–3,100 veh/h, and first come, first served saturates near 2,300 | whole crossing: about 10,100 against 19,000 veh/h |
 | Light demand (section 2.7) | most vehicles pass untouched | 0.6 s average delay at 2,000 veh/h in batches, 0.4 s first come, first served |
 | P1 against P2 with batches (section 2.2) | 11–22% more per zone in batches of 8 to 4 | 3.5% more on the whole crossing |
+| P2: the next vehicle stops short of one that stops dead (section 2.2) | it stops short | no contact in 800 failures at the worst moment; the closest stop 0.6 m short in batches, and up to 0.4 m inside the zone first come, first served |
+| PH: it arrives at 25 km/h or less | 25 km/h at most | 22 km/h at most, in 54–85% of failures at the worst moment |
+| P1: survives the first vehicle braking, not stopping dead | safe if the next brakes as well as the first | braking: reached in 5 of 800 failures at the worst moment, at up to 12 km/h; stopping dead: in 89–96%, at up to 35 km/h |
+| Within a lane a follower survives its leader braking, not vanishing (section 2.2) | platoons stay efficient under P2 | braking: struck 3 times in 4,800 failures, at 6 km/h at most, and never in batches; stopping dead mid-batch: struck from behind in 86–89% of failures, at up to 38 km/h |
 
 * **Scheduling cost more than the bound allowed for** with one left-turn lane per
   approach, largely because the manager keeps the ring-and-barrier order: four movement
@@ -1532,11 +1606,28 @@ its queues grow (9,834 at 22,000).
 * **With long batches the safety rule costs little capacity.** Batches switch only a few
   times a minute, so P2's longer gap costs 3.5% against P1. It matters far more to the
   zipper, which switches at almost every vehicle: P1 adds 25% there.
+* **The same holds for what the rule buys.** In batches a failure endangers crossing
+  traffic only at a change of phase: at a random moment even P1 led to a contact in
+  2 of 400 failures. The zipper needs its gap at almost every vehicle, and P1 cost
+  it a contact in 11% of failures. Batching is the safer schedule as well as the faster
+  one.
+* **The gaps do what section 2.2 says, with one exception.** The simulator sizes a gap
+  for the speed at which a vehicle enters a zone. A vehicle still slowing from the
+  approach speed to the crossing speed carries more than that when it has to react, and
+  with P2 its emergency stop can end a few decimeters inside the zone (4 of 400 failures
+  at the worst moment, first come, first served). A gap sized for the speed at the
+  moment it must react would close this.
+* **P2 is for crossing traffic only,** as section 2.2 says. A vehicle that stops dead in
+  a platoon is struck by the one behind it under every policy; what P2 buys is that no
+  crossing vehicle joins them.
 
 ### 12.4 Not yet explored
 
-* **Failures.** The P2 gaps are sized for a vehicle stalling in the box, but no run
-  makes one stall, lose its radio, or lose the manager (sections 3.6 and 7).
+* **Failures.** A vehicle can be made to fail in the box (section 12.2), but none
+  loses its radio, and the manager never fails (sections 3.6 and 7). The manager learns
+  of a failure at once from the vehicle itself; one that couldn't report would have to
+  be seen by roadside sensors, which aren't built. A failed vehicle stops on its path:
+  none leaves it sideways, and vehicles that touch simply stop where they touch.
 * **Messages.** Latency is in the gaps; loss, bursts and range are not modeled.
 * **Mixed traffic.** Every vehicle is automated and connected (section 9).
 * **Corridors.** The crossing stands alone, so slot waves, and coordination zones that
@@ -1548,8 +1639,11 @@ its queues grow (9,834 at 22,000).
   speed that follows friction (section 2.3), and exit-space admission (section 5.7): the
   exits here never back up.
 * **Measures.** Of those proposed earlier, the PET distribution and the margin to the
-  policy gap are in the app; zone utilization, the share of vehicles that never change
-  speed, and message load are not.
+  policy gap are in the app, and so, for each failure, are the vehicles that left their
+  trajectories for an emergency stop (section 7.5). The time from the failure to the last
+  of them at rest is measured too, but only `examples/failures.rs` reports it. Zone
+  utilization, the share of vehicles that never change speed, exposure to secondary
+  collisions and message load are not measured.
 
 ---
 
@@ -1689,8 +1783,9 @@ P1, PH and P2, with these differences:
 * **t_gap.** Cars keep a 2 m standstill gap plus a 0.42 s time gap; trucks and buses
   keep 0.75 s. For a car at 40 km/h that comes to the same 0.6 s.
 * **a.** Cars count on 6 m/s² of emergency braking, trucks and buses on 4.5 m/s².
-* **P1** is its nominal gap, which assumes that no vehicle fails. It is the same 0.5 s
-  for every vehicle, including a truck crossing behind a car.
+* **P1** is its nominal gap, sized for a vehicle that brakes hard to a stop, not for one
+  that stops dead. It is the same 0.5 s for every vehicle, including a truck crossing
+  behind a car.
 * **W.** Its reservation zones are about 3.2 m long at a right angle: the stretch where
   a vehicle 2.55 m wide could touch one on the other path, plus 0.3 m on each side.
 

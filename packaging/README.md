@@ -73,7 +73,7 @@ minutes, so no crates.io token is stored in the repository. It needs this setup 
    cargo publish --locked
    cargo logout
    ```
-   Delete the token on crates.io afterwards.
+   Delete the token on crates.io afterward.
 2. On the crate's page on crates.io, open **Settings → Trusted Publishing**, choose
    **Add** and **GitHub**, and enter owner `schreck61`, repository `intersection-lab`,
    workflow `publish-crate.yml` and environment `crates-io`.

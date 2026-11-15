@@ -3,7 +3,8 @@
 This document describes how Intersection Lab is put together. It covers what each Rust
 source file does, how the code is split into layers, and how those layers work together
 during a simulation step, a corridor run, a cooperative crossing, a benchmark and a
-training run. It describes the code on `main`: version 0.6.0.
+training run. It describes the code on `main`: version 0.6.0, with the failures at the
+cooperative crossing added since.
 Section 9.4 is an illustrated tour of the app's window, and Appendix A says how the
 screenshots were made.
 
@@ -16,7 +17,7 @@ inline. Their colors mean the same thing throughout:
 | Green | The simulation core, `src/sim/` |
 | Blue | Signal control, `src/control/` |
 | Purple | Learning, `src/rl/` |
-| Teal | The cooperative crossing (`sim/coop.rs`) |
+| Teal | The cooperative crossing (`sim/coop.rs`, `sim/coop/failures.rs`) |
 | Red | Safety checks |
 | Gray | Shared code and data files |
 
@@ -52,7 +53,8 @@ What can be compared:
 * **A signal-free crossing for automated, connected vehicles,** where an intersection
   manager gives each vehicle an exact trajectory through the box. It schedules them
   either in batches that serve one movement per ring at a time or first come, first
-  served, under any of three safety margins.
+  served, under any of three safety margins. A vehicle can be made to fail there, to
+  see what each margin survives.
 * **Sensor packages:** loops, camera, radar and connected vehicles, with ideal or
   field-realistic errors, in five weather and light conditions.
 * **Pedestrian and turn treatments:** leading pedestrian interval, no turn on red while
@@ -142,7 +144,7 @@ Each front end uses only the library's public modules:
 | `sim` | Ground truth: geometry, vehicles, pedestrians, the signal state machine, sensors, demand, statistics, corridor hand-over and the cooperative crossing's intersection manager. Also the parts of signal control a controller must not override: minimum green, pedestrian clearance, emergency preemption and the max-wait guard. | Pick a controller's stages; draw anything; read files |
 | `control` | Signal decisions made from a `SensorView`; loading and saving trained weights | See ground truth, apart from pedestrians and emergency vehicles (§6.5) and the learning reward (§2.2); move vehicles; change clearance timing |
 | `rl` | A generic neural network, the Adam optimizer and the Double DQN algorithm | Know anything about traffic |
-| `gui` | Input, rendering, charts, the benchmark windows and screenshots. It steps the `World`, changes settings, swaps controllers and spawns vehicles by hand. | Move vehicles or decide anything itself |
+| `gui` | Input, rendering, charts, the benchmark windows and screenshots. It steps the `World`, changes settings, swaps controllers, spawns vehicles by hand and makes vehicles of the cooperative crossing fail. | Move vehicles or decide anything itself |
 | `bin`, `examples`, `tests`, `fuzz` | Experiment scripts and command-line output | Contain simulation logic |
 
 ### 2.2 The key boundary: controllers only see sensors
@@ -206,16 +208,17 @@ speeds directly, as their own reports would give them.
 src/
   lib.rs            library root: scenario() and run_scenario()
   main.rs           app entry point (native window or browser canvas)
-  sim/              simulation core, including the cooperative crossing (11 files)
+  sim/              simulation core, including the cooperative crossing (12 files)
   control/          signal controllers and weights files (8 files)
   rl/               neural network and Double DQN (3 files)
   gui/              egui front end (5 files)
   bin/bench.rs      headless controller and sensor benchmarks
   bin/train.rs      headless training of the Deep RL and Hybrid networks
-examples/           studies: cooperative, corridor, fya, lpi, preempt, satflow, sweep,
-                    plus make_icons
-tests/              safety, cooperative, pedestrian_rule, weights_files, green_wave,
-                    networks, gui, scripted, tools, and common/ (shared by the tests)
+examples/           studies: cooperative, corridor, failures, fya, lpi, preempt, satflow,
+                    sweep, plus make_icons
+tests/              safety, cooperative, failures, pedestrian_rule, weights_files,
+                    green_wave, networks, gui, scripted, tools, and common/ (shared by the
+                    tests)
 fuzz/               cargo-fuzz target for weights files (a workspace of its own)
 weights/            trained networks (JSON), also compiled into the binary
 web/index.html      page that hosts the browser build (Trunk)
@@ -229,15 +232,15 @@ docs/               this document, insights.md, cooperative-intersections.md (wi
 
 | Directory | Files | Lines |
 |---|---:|---:|
-| `src/sim/` | 11 | 7,678 |
-| `src/control/` | 8 | 1,489 |
-| `src/rl/` | 3 | 360 |
-| `src/gui/` | 5 | 3,694 |
-| `src/bin/` | 2 | 590 |
-| `src/lib.rs`, `src/main.rs` | 2 | 78 |
-| `examples/` | 8 | 575 |
-| `tests/` | 10 | 2,557 |
-| `fuzz/fuzz_targets/` | 1 | 54 |
+| `src/sim/` | 12 | 9,973 |
+| `src/control/` | 8 | 1,608 |
+| `src/rl/` | 3 | 361 |
+| `src/gui/` | 5 | 4,905 |
+| `src/bin/` | 2 | 693 |
+| `src/lib.rs`, `src/main.rs` | 2 | 96 |
+| `examples/` | 9 | 999 |
+| `tests/` | 11 | 4,187 |
+| `fuzz/fuzz_targets/` | 1 | 61 |
 
 | Target | Built from | Purpose |
 |---|---|---|
@@ -274,16 +277,16 @@ The rest of the code has no platform-specific parts.
 
 ## 4. Module dependencies
 
-Inside `sim`, four files share one type: `sim/mod.rs` defines `Sim`, and `sensors.rs`,
-`stats.rs` and `coop.rs` add `impl Sim` blocks or read its vehicles. That keeps each
-model next to its own data types while giving it the engine's private state. The graph
-below shows how the groups of files depend on each other; the table after it lists
-every dependency between files.
+Inside `sim`, five files share one type: `sim/mod.rs` defines `Sim`, and `sensors.rs`,
+`stats.rs`, `coop.rs` and its submodule `coop/failures.rs` add `impl Sim` blocks or read
+its vehicles. That keeps each model next to its own data types while giving it the
+engine's private state. The graph below shows how the groups of files depend on each
+other; the table after it lists every dependency between files.
 
 ```mermaid
 flowchart TB
     world["<b>world.rs</b><br/>one signal or a corridor"]
-    ENGINE["<b>The engine</b><br/>sim/mod.rs: Sim, Vehicle, Ped<br/>sensors.rs · stats.rs · coop.rs"]
+    ENGINE["<b>The engine</b><br/>sim/mod.rs: Sim, Vehicle, Ped<br/>sensors.rs · stats.rs<br/>coop.rs · coop/failures.rs"]
     CONTROL["<b>control/</b><br/>mod.rs: Controller, Ctx, make()<br/>fixed · actuated · maxpressure · predictive<br/>rl · hybrid · weights"]
     RLM["<b>rl/</b><br/>dqn.rs · nn.rs"]
     MODEL["<b>Road and demand</b><br/>network.rs · signal.rs · demand.rs"]
@@ -315,8 +318,9 @@ and fully qualified paths show them.
 
 | File | Uses |
 |---|---|
-| `sim/mod.rs` | `coop`, `demand`, `geom`, `network`, `rng`, `sensors`, `signal`, `stats`, `vtypes`; `control/mod.rs` |
-| `sim/coop.rs` | `sim/mod.rs`, `network`, `vtypes` |
+| `sim/mod.rs` | `coop`, `coop/failures`, `demand`, `geom`, `network`, `rng`, `sensors`, `signal`, `stats`, `vtypes`; `control/mod.rs` |
+| `sim/coop.rs` | `sim/mod.rs`, `coop/failures.rs`, `network`, `rng`, `vtypes` |
+| `sim/coop/failures.rs` | `sim/coop.rs`, `sim/mod.rs`, `network`, `rng`, `vtypes` |
 | `sim/sensors.rs` | `sim/mod.rs`, `network`, `signal`, `vtypes` |
 | `sim/stats.rs` | `sim/mod.rs`, `demand`, `network`, `vtypes` |
 | `sim/world.rs` | `sim/mod.rs`, `demand`, `geom`, `network`, `rng`; `control/mod.rs` |
@@ -361,11 +365,11 @@ flowchart TB
     B["<b>2. Spawn</b><br/>where an entry lane has room"]
     SEN["<b>3. Sense</b><br/>sense() builds the SensorView"]
     CTL["<b>4. Control</b><br/>update_left_phasing(),<br/>control_signal(), which<br/>calls Controller::step,<br/>then SignalState::step()"]
-    MGR["<b>4. Manage</b><br/>coop_control() plans and<br/>grants trajectories"]
+    MGR["<b>4. Manage</b><br/>coop_control() reacts to<br/>failures, then plans and<br/>grants trajectories"]
     VS["<b>5. Right of way</b><br/>compute_vstat()"]
     DR["<b>6. Drive</b><br/>decide() in turn, then integrate"]
     DRC["<b>6. Drive</b><br/>replay the granted plans"]
-    AI["<b>7. After moving</b><br/>reward, near misses, monitors,<br/>retire exits, overlap check"]
+    AI["<b>7. After moving</b><br/>reward, near misses, contacts<br/>after a failure, monitors,<br/>retire exits, overlap check"]
     LC["<b>8. Lane changes</b><br/>mandatory, then MOBIL"]
     PED["<b>9. Pedestrians</b><br/>step_peds()"]
     END["<b>10. Clock</b><br/>t += dt; sample statistics"]
@@ -405,15 +409,16 @@ Three things about this ordering matter:
 
 | File | Lines | What it holds |
 |---|---:|---|
-| `mod.rs` | 2,353 | `Sim`, `Vehicle` and `Ped`: spawning, car following, right of way, lane changes, pedestrians and the safety check |
-| `coop.rs` | 1,883 | The cooperative crossing's intersection manager |
-| `network.rs` | 1,074 | The layouts: legs, lanes, paths, movements, stages and conflict points |
-| `sensors.rs` | 572 | Sensor models and `Sim::sense` |
-| `world.rs` | 410 | One intersection or a corridor |
-| `signal.rs` | 339 | The signal state machine |
-| `demand.rs` | 273 | Arrivals |
+| `mod.rs` | 2,544 | `Sim`, `Vehicle` and `Ped`: spawning, car following, right of way, lane changes, pedestrians and the safety check |
+| `coop.rs` | 2,282 | The cooperative crossing's intersection manager |
+| `coop/failures.rs` | 1,607 | What happens when a vehicle of the cooperative crossing fails: the reaction, contacts and recovery |
+| `network.rs` | 1,094 | The layouts: legs, lanes, paths, movements, stages and conflict points |
+| `sensors.rs` | 605 | Sensor models and `Sim::sense` |
+| `world.rs` | 438 | One intersection or a corridor |
+| `signal.rs` | 347 | The signal state machine |
+| `demand.rs` | 280 | Arrivals |
 | `geom.rs` | 268 | Vectors, paths and curves |
-| `stats.rs` | 254 | Measurement |
+| `stats.rs` | 256 | Measurement |
 | `vtypes.rs` | 167 | Vehicle classes |
 | `rng.rs` | 85 | Random numbers |
 
@@ -470,8 +475,10 @@ The file also defines:
   movement is red, by rewriting the stages from a saved copy.
 * **`Reason`:** why a vehicle is braking: free flow, following, stopping for a signal,
   a stop sign, yielding right-of-way, yielding to a pedestrian, slowing for a turn or
-  waiting to change lanes, plus three for automated vehicles: slowing to meet its
-  reserved slot, waiting for a reservation and slowing to the crossing speed.
+  waiting to change lanes, plus six for automated vehicles: slowing to meet its
+  reserved slot, waiting for a reservation, slowing to the crossing speed and, after a
+  failure (§6.11), emergency braking for a failed vehicle, stopped after an emergency
+  and waiting for a way out, and disabled and waiting to be cleared away.
 * **`Exit` and `UpstreamObs`:** what a corridor passes between neighbors: a vehicle
   leaving toward the next intersection, and a vehicle reported to be on its way.
 
@@ -709,16 +716,17 @@ this step. A stopped driver waits out their reaction time before pulling away.
     queued at the edge of the map and pedestrians waiting.
   * It logs a near miss when a vehicle crosses a crosswalk within about 1.5 s of a
     walking pedestrian.
-  * On the cooperative crossing, it runs the manager's safety monitors (§6.11).
+  * On the cooperative crossing, it looks for contacts while a failure is being dealt
+    with, then runs the manager's safety monitors (§6.11).
   * It retires vehicles that have reached the end of their route. Each becomes a
     `stats::Done` record and, in a corridor, an `Exit` for `World` to hand over.
 * **Safety check (`check_overlaps`):** when `check_safety` is on, as it is in the app,
-  `bench`'s strategy tables, the safety, cooperative and green-wave tests, the sweeps and
-  the corridor and cooperative studies, every step looks for touching vehicles. Bodies
-  are chains of oriented rectangles that bend through turns (`body`, `obb_overlap`). It
-  flags vehicles on the same lane that overlap by more than 0.3 m, and runs the rectangle
-  test, with rectangles shrunk by 0.25 m, on pairs in or just past the box. Each pair
-  counts once per step in `collisions`.
+  `bench`'s strategy tables, the safety, cooperative, failures and green-wave tests, the
+  sweeps and the corridor, cooperative and failures studies, every step looks for
+  touching vehicles. Bodies are chains of oriented rectangles that bend through turns
+  (`body`, `obb_overlap`). It flags vehicles on the same lane that overlap by more than
+  0.3 m, and runs the rectangle test, with rectangles shrunk by 0.25 m, on pairs in or
+  just past the box. Each pair counts once per step in `collisions`.
 * **Drawing helpers (`body_lagged`, `lag`, `lc_offset`, `ped_pos_lerp`):** let the app
   draw positions *between* steps for smooth motion. The safety check and lane changes
   use the same functions with no lag.
@@ -1079,6 +1087,7 @@ consumer has its own stream:
 | Surges | the run's seed, approach and 2-minute block | each block's multiplier |
 | `Sim.misc` | the run's seed | vehicle colors and reaction times, pedestrian speeds and positions |
 | `World` | the run's seed (corridors) | turns of vehicles handed to the next intersection |
+| `CoopManager` | the run's seed | when the next random failure at the cooperative crossing is due, and its lane and place in the box (§6.11) |
 | `Dqn` | 7 for Deep RL and 11 for the Hybrid; 42 + `SEED` for a network `train` starts | network weights and replay sampling |
 | Deep RL, Hybrid | fixed, one each | exploration |
 | `gui/render.rs` | fixed | scenery |
@@ -1137,7 +1146,7 @@ flowchart TB
 * **`corridor_summary`:** reports end-to-end main-road journeys (`Journey`,
   `CorridorSummary`).
 
-### 6.11 `sim/coop.rs`: the cooperative crossing
+### 6.11 `sim/coop.rs` and `sim/coop/failures.rs`: the cooperative crossing
 
 On the cooperative layout every vehicle is automated and connected, and there are no
 signals, signs or roadside sensors. An intersection manager, `CoopManager`, gives each
@@ -1146,7 +1155,7 @@ leaves the map. The vehicle drives exactly that trajectory. The manager builds e
 one with the simulator's own integrator, so it knows, to rounding error, when every
 vehicle will be in every part of the box. It grants a trajectory only after checking
 it against every trajectory it has already granted, and it never changes one it has
-granted.
+granted, unless a vehicle fails ([Failures](#failures) below).
 
 `Sim::with_demand` creates the manager only in `ControlMode::Cooperative`, the one mode
 the cooperative layout allows. In that mode `Sim::step` (§5) skips sensing, the signal,
@@ -1343,11 +1352,145 @@ approaches, then both cross the barrier to the east–west ones:
 
 `coop_accels` gives every vehicle with a trajectory the acceleration it planned for this
 step; replaying it open-loop is exact because automated vehicles react instantly and the
-planner used the same integrator. A vehicle without a trajectory uses `free_av_acc`: it
-follows the vehicle ahead with the same following law, slows for the right-turn slip
-lane and stops far enough before the line to reach the crossing speed by the time it
-crosses, with the reason "waiting for a reservation". For a car on a through lane that
-is about 32 m back, and for a truck about 78 m.
+planner used the same integrator. A disabled vehicle brakes to rest and stays, and one
+whose reaction to a failure has ended at rest waits there. A vehicle without a
+trajectory uses `free_av_acc`: it follows the vehicle ahead with the same following
+law, slows for the right-turn slip lane and stops far enough before the line to reach
+the crossing speed by the time it crosses, with the reason "waiting for a reservation".
+For a car on a through lane that is about 32 m back, and for a truck about 78 m.
+
+#### Failures
+
+Normal running never shows what the safety gaps are for: a vehicle that fails in the
+box. `sim/coop/failures.rs` makes one fail and carries out what follows. It is a
+submodule of `coop.rs`, so it extends `CoopManager` and `Sim` with access to their
+private state. A run in which nothing fails is unchanged, to the last bit: the failure
+code runs only while `CoopManager::alarm()` is set.
+
+A vehicle fails in one of two ways (`Fault`):
+
+| `Fault` | Shown as | What the vehicle does | The gap sized for it |
+|---|---|---|---|
+| `Dead` | Stops dead | Stops where it is, at once, as after a collision or a seized driveline | Fail-safe (the next vehicle stops short) and mitigated (it arrives at 25 km/h or less) |
+| `Braking` | Brakes hard to a stop | Brakes at its emergency deceleration until it is at rest | Nominal |
+
+| Call | Which vehicle fails |
+|---|---|
+| `Sim::stall_vehicle(id, fault)` | That vehicle, where it is |
+| `Sim::stall_at(lane, x, fault)` | The next vehicle of an inbound lane whose front gets `x` meters along its route. With the same arrivals, another run gets a failure at the same place; the app's comparison uses it |
+| `Sim::stall_in_box(fault)` | The vehicle nearest the middle of its path through the box: at once if it is in the box, and otherwise when it gets to the middle |
+| `Sim::stall_at_worst(fault)` | The next vehicle within a quarter of a second of clearing a zone while a crossing vehicle is due behind it within 0.3 s of the smallest gap its policy allows: the case the gap is sized for, at the moment that leaves the least room |
+| `CoopManager::stall_rate` | Vehicles at random places in the box, on random lanes, this many times an hour. The places come from a random stream of their own, seeded like the arrivals, so both sides of a comparison get the same ones |
+
+A failed vehicle is *disabled*: `Vehicle::disabled` is set, it brakes to rest if it
+isn't there already, and it stays until it is cleared away `clear_time` later (60 s by
+default). Vehicles that touch are cleared away together, and a cleared vehicle doesn't
+count as served.
+
+<img src="failure.png" width="712" alt="The box, twice, 12 s after a southbound car
+stopped dead in it at the worst moment. With fail-safe gaps, on the left, eight
+left-turning vehicles have stopped in two lines along their arcs, the first just short
+of the disabled car. With nominal gaps, on the right, the first of them has run into it">
+
+*A southbound car, ringed in red, stopped dead as it was about to clear the path of a
+platoon of northbound left turns. Left, with fail-safe gaps, the platoon has stopped
+short of it. Right, with nominal gaps and the same arrivals, the first vehicle of the
+platoon reached it. The red dots are the reservation zones a vehicle is in, which a
+vehicle at rest holds; westbound traffic, whose lanes stay clear, keeps crossing.*
+
+```mermaid
+flowchart TB
+    F["<b>disable()</b><br/>the failed vehicle's trajectory is<br/>what its failure leaves it: at rest,<br/>or braking to rest. It holds the<br/>zones it rests in without end"]
+    Q["<b>respond()</b>: a queue of vehicles<br/>whose trajectories changed"]
+    B["<b>follow_on()</b>: the vehicles<br/>behind one in its lane"]
+    E["<b>endangered()</b>: vehicles due in a<br/>zone while one is in it, or within<br/>0.2 s of it, and not yet in that zone<br/>when the reaction time is up"]
+    R{{"<b>react()</b>: after 0.5 s more of<br/>its old trajectory, can it stop<br/>2 m short of the stop line,<br/>or does it stand before it?"}}
+    W["<b>Withdrawn</b><br/>its crossing is taken away,<br/>and it stops short of the box"]
+    H{{"What is it<br/>reacting to?"}}
+    S["<b>EmergencyStop</b><br/>it brakes as hard as<br/>it can until it is at rest"]
+    SB["<b>StopBehind</b><br/>it follows the vehicle ahead,<br/>never faster than it was going to,<br/>until it rests behind it"]
+    D["Done when the<br/>queue is empty"]
+    F --> Q --> B --> R
+    Q --> E --> R
+    R -->|yes| W
+    R -->|no| H
+    H -->|"a zone on its path"| S
+    H -->|"the vehicle ahead"| SB
+    W -->|"changed"| Q
+    S -->|"changed"| Q
+    SB -->|"changed"| Q
+    Q -.-> D
+    classDef coop fill:#e6fffa,stroke:#2c7a7b,color:#0b3b3c
+    classDef safe fill:#fdecec,stroke:#c53030,color:#4a0f0f
+    class Q,B,E,D coop
+    class F,R,W,H,S,SB safe
+```
+
+*The manager's reaction to a failure. Each new trajectory may endanger further
+vehicles, so it goes on until every trajectory fits the others again.*
+
+* **The reaction time.** The manager knows every trajectory, so it finds the vehicles a
+  failure endangers in the step it happens. No vehicle responds sooner than `REACTION`,
+  0.5 s: the failed vehicle's report, the manager's alert and the actuation delay, the
+  same half second every gap policy starts from. Every new trajectory therefore begins
+  with five more steps of the old one. A vehicle due in the failed vehicle's zone within
+  that half second can't respond at all.
+* **Withdrawn, or an emergency stop.** A vehicle that will still be short of the stop
+  line with its braking distance and 2 m to spare loses its crossing
+  (`PlanKind::Withdrawn`). So does one that stands before the line, however close. It
+  then stops like any vehicle without a trajectory: at its holding point or, if it is
+  already past that, short of the line, braking as hard as that takes. One that can't
+  stop short, with a hazard in a zone on its path, brakes at its emergency deceleration
+  until it is at rest (`EmergencyStop`). One behind a vehicle that has left its
+  trajectory follows it with the usual following law, braking up to its emergency
+  deceleration, until it rests behind it (`StopBehind`).
+* **A reaction only holds a vehicle back.** A vehicle at rest stays at rest: it isn't
+  set in motion to close up, and one stopped in the box waits there for its way out.
+  One that can no longer stop short of the box is never faster than the trajectory it
+  had, because the zones ahead of it are its own only from the times that trajectory
+  reaches them. (One whose crossing was withdrawn holds no zones: on its way to where
+  it stops it can be faster than the crossing it lost.)
+* **A vehicle that can't stop behind the one ahead** is expected to come to rest against
+  it (`Plan::contact`): the zones it will stand in are held from the failure on, not
+  from the contact on, and the vehicles behind it are planned as if it stood there
+  already. Its own trajectory still brakes on to rest, which is what it does if the
+  vehicle ahead has been cleared away by then. A vehicle that is already braking as
+  hard as it can, or has failed itself, keeps its trajectory when the vehicle ahead of
+  it stops short, and is expected against that vehicle from that step on.
+* **A vehicle without a trajectory** right behind a failed one doesn't respond to it for
+  the reaction time either. It accelerates no harder than it was, and still stops where
+  it had to anyway: at its holding point or, if its crossing was withdrawn, short of
+  the line.
+* **Each reaction is a trajectory,** built with `integrate` and replayed exactly like a
+  crossing, with its own zone windows (`zone_times`). One that ends at rest
+  (`Plan::rests`) holds the zones it stands in without end.
+* **Only what a failure endangers stops.** A vehicle whose trajectory still fits keeps
+  it and crosses as planned. The design notes' emergency mode stops every approach
+  first; here the manager can do less because its predictions are exact.
+* **The lanes that stay clear are served as usual.** `candidates` leaves out a lane
+  whose first vehicle is disabled, and a vehicle whose path crosses a zone that a
+  vehicle at rest holds. A phase with no candidates gaps out at once, so the phases
+  rotate past the blocked movements.
+
+**Contact** is physics, not planning: all the manager foresees is that a vehicle which
+can't stop behind the one ahead will come to rest against it. While the alarm is set,
+`Sim::coop_contacts` looks, after the vehicles have moved, for a vehicle that has
+reached the one ahead of it in its lane, and for bodies on crossing paths that overlap
+(the test `check_overlaps` uses). Each pair is backed up to where it first touches and
+stops there. Both are disabled from then on, the closing speed goes into the log as an
+`Impact`, and the manager reacts again a step later. Nothing more of a collision is
+simulated. Because `check_overlaps` skips pairs of disabled vehicles, `Sim::collisions`
+still counts only the overlaps that nothing explains, and the tests still require it to
+be zero.
+
+**Recovery.** A vehicle at rest before the line is a candidate like any other. One at
+rest past the line is granted a way out ahead of every phase (`clear_box`, `recover`):
+`simulate` has it wait where it stands until a departure time, then drive on, and the
+zones ahead of it must fit the reservations as usual. Zones are drawn for traffic at
+speed, so on its way out it may pass a vehicle at rest in a zone it crosses if their
+bodies stay 0.5 m apart, at no more than 20 km/h in the box (`Plan::passes`); a vehicle
+standing in a zone leaves it only when nobody is passing. If, with nothing disabled
+left, vehicles at rest only block one another for 15 s, one of them is towed.
 
 #### Monitors and statistics
 
@@ -1364,11 +1507,28 @@ leaves each zone, interpolating within the step:
 | Timing error | The largest difference between planned and actual line and zone times |
 
 `check_overlaps` (§6.1) runs as well. `CoopStats` keeps these counts with the manager's
-own: trajectories granted, simulations run, failures, batches, max-outs, vehicles served
-out of turn for an emergency vehicle (it and those ahead of it in its lane) and barrier
-crossings. The manager also keeps the measured arrival rates, the current maximum phase
-lengths, the time lost to switching, the reservations and 600 s of served batches and
-line crossings, which the app shows (§9.4).
+own: trajectories granted, simulations run, requests that found none, batches, max-outs,
+vehicles served out of turn for an emergency vehicle (it and those ahead of it in its
+lane) and barrier crossings. The manager also keeps the measured arrival rates, the
+current maximum phase lengths, the time lost to switching, the reservations and 600 s of
+served batches and line crossings, which the app shows (§9.4).
+
+A vehicle that has left its crossing for a reaction is held to that trajectory instead,
+so *off trajectory* and the timing error stay at zero through a failure. A disabled
+vehicle is held to none, and a vehicle that passes one at rest on its way out of the
+box doesn't count as a zone overlap. For failures, `CoopStats` adds:
+
+| Measure | What it counts |
+|---|---|
+| Vehicles failed | Failures caused, not counting vehicles disabled by a contact |
+| Emergency stops, crossings withdrawn | Vehicles that left their crossings for an `EmergencyStop` or a `StopBehind`, and crossings taken from vehicles that could stop short of the box |
+| Contacts | Between vehicles on crossing paths and between vehicles in one lane, with the fastest closing speed of each |
+| Closest stop | How far short of the zone it braked for the closest emergency stop came to rest; negative if a vehicle couldn't stop short of one |
+| Settling time | The longest time from a failure until every emergency stop it caused was at rest |
+| Recovered, cleared, towed | Vehicles granted a way out of the box, disabled vehicles cleared away, and vehicles towed out of a standoff |
+
+`CoopManager::incidents` logs the last 50 failures, each with where it happened, the gap
+policy in force and its own share of these counts and contacts.
 
 ---
 
@@ -1381,14 +1541,14 @@ but only as their reward (§8.3).
 
 | File | Lines | What it holds |
 |---|---:|---|
-| `rl.rs` | 333 | `RlController`, the Deep RL controller, with its input features and safety shield |
-| `predictive.rs` | 289 | `Predictive`, the rolling-horizon planner |
-| `hybrid.rs` | 254 | `Hybrid`, the planner re-tuned by a network |
-| `fixed.rs` | 183 | `FixedTime`: Webster's plan and corridor coordination |
-| `mod.rs` | 141 | The `Controller` trait, `Ctx`, `Brain`, `CtrlKind` and `make` |
-| `actuated.rs` | 134 | `Actuated`: gap-out and max-out control |
-| `maxpressure.rs` | 86 | `MaxPressure` |
-| `weights.rs` | 69 | Where trained networks are loaded from and saved to (§8.7) |
+| `rl.rs` | 360 | `RlController`, the Deep RL controller, with its input features and safety shield |
+| `predictive.rs` | 294 | `Predictive`, the rolling-horizon planner |
+| `hybrid.rs` | 292 | `Hybrid`, the planner re-tuned by a network |
+| `fixed.rs` | 185 | `FixedTime`: Webster's plan and corridor coordination |
+| `mod.rs` | 159 | The `Controller` trait, `Ctx`, `Brain`, `CtrlKind` and `make` |
+| `actuated.rs` | 146 | `Actuated`: gap-out and max-out control |
+| `maxpressure.rs` | 98 | `MaxPressure` |
+| `weights.rs` | 74 | Where trained networks are loaded from and saved to (§8.7) |
 
 ### 7.1 `control/mod.rs`: the contract
 
@@ -1616,9 +1776,9 @@ Hybrid's major/minor and T-intersection files hold only its best static tuning
 
 | File | Lines | What it holds |
 |---|---:|---|
-| `src/bin/train.rs` | 429 | Training, model selection and the test report |
+| `src/bin/train.rs` | 441 | Training, model selection and the test report |
 | `rl/nn.rs` | 190 | `Mlp`, `Grads` and `Adam` |
-| `rl/dqn.rs` | 165 | `Dqn`, `Transition`, `SavedModel` and `argmax_masked` |
+| `rl/dqn.rs` | 166 | `Dqn`, `Transition`, `SavedModel` and `argmax_masked` |
 | `rl/mod.rs` | 5 | The module list |
 
 Version 0.3.0 cut the Deep RL networks from two hidden layers to one, because one layer
@@ -1643,7 +1803,7 @@ shipped those networks. Version 0.5.1 added the checks on weights files (§8.7).
 | Decision interval | Every 2 s of green, once the minimum green has run | Every 10 s, whatever the signal is doing |
 | Learning algorithm | Double DQN, experience replay, Polyak-averaged target | Same |
 | Hardware | CPU only, one thread per agent | Same |
-| Code | 360 lines of Rust in `src/rl/`, with no machine-learning library | Same |
+| Code | 361 lines of Rust in `src/rl/`, with no machine-learning library | Same |
 
 The parameter count for the arterial Deep RL network is 85 × 128 + 128 = 11,008 for
 the hidden layer and 128 × 8 + 8 = 1,032 for the output layer: 12,040 in all. The
@@ -2238,8 +2398,8 @@ nothing itself: every vehicle, signal and measurement it shows comes from `sim` 
 
 | File | Role |
 |---|---|
-| `gui/mod.rs` | `App`: all UI state. It holds the main `World`, an optional comparison twin `World`, the focused intersection, the camera, overlays and tools, the selected vehicle, the benchmark state and the cooperative crossing's settings. It draws the top bar; the left panel (scenario, demand, then sensors, operations and the learning panels or the intersection manager's settings, then view); the right panel (measurements, charts, breakdowns, the manager panel and safety monitors, the controller brain, the selected vehicle and benchmarks); the bottom panel; the canvas, where clicks pan, zoom, select and spawn; the legend; and the About and results windows. `with_env` applies the `TS_*` settings of scripted screenshots (Appendix A) |
-| `gui/render.rs` | Drawing. `Scene` is a mesh of the static scene, built once per layout in world coordinates: terrain, roads, markings, buildings and trees, and on the cooperative crossing its slip lanes and underpass stairs (`build_coop_roads`). Each frame, `paint_dynamic` draws the moving parts: the sensors overlay, paths, signals (or, on the cooperative crossing, the admission lines of `paint_admission`), vehicles colored by `ColorBy`, reservation dots, pedestrians, the selected vehicle and conflict points or reservation zones. `paint_detections` draws the detection markers, `Camera` maps world to screen and `hud` draws the status overlay |
+| `gui/mod.rs` | `App`: all UI state. It holds the main `World`, an optional comparison twin `World`, the focused intersection, the camera, overlays and tools, the selected vehicle, the benchmark state and the cooperative crossing's settings. It draws the top bar; the left panel (scenario, demand, then sensors, operations and the learning panels or the intersection manager's settings and failure controls, then view); the right panel (measurements, charts, breakdowns, the manager panel, safety monitors and failures, the controller brain, the selected vehicle and benchmarks); the bottom panel; the canvas, where clicks pan, zoom, select, spawn and make a vehicle fail; the legend; and the About and results windows. `with_env` applies the `TS_*` settings of scripted screenshots (Appendix A) |
+| `gui/render.rs` | Drawing. `Scene` is a mesh of the static scene, built once per layout in world coordinates: terrain, roads, markings, buildings and trees, and on the cooperative crossing its slip lanes and underpass stairs (`build_coop_roads`). Each frame, `paint_dynamic` draws the moving parts: the sensors overlay, paths, signals (or, on the cooperative crossing, the admission lines of `paint_admission`), vehicles colored by `ColorBy`, reservation dots, pedestrians, disabled vehicles and contacts after a failure (`paint_failures`), the selected vehicle and conflict points or reservation zones. `paint_detections` draws the detection markers, `Camera` maps world to screen and `hud` draws the status overlay |
 | `gui/charts.rs` | Small hand-painted charts: `line_chart`, `hbars` (also used for the brain's bars), `histogram`, `sparkline`, the signal `timeline` (from `SignalState.history`) and the cooperative crossing's `crossing_timeline` and `pet_histogram` |
 | `gui/bench.rs` | The runs behind *Compare controllers*, *Sensor study* and *Compare schedules*: each strategy on three seeds, with a 300 s warm-up and 20 measured minutes, through `lib::scenario`. On the desktop each strategy runs on its own thread and reports over an `mpsc` channel. In the browser a queue runs 50-step chunks for 12 ms of each frame |
 | `gui/shot.rs` | A minimal PNG encoder (CRC32, stored zlib blocks) and `request`, which asks eframe for a screenshot, writes it and exits. Used for the documentation's images and for visual checks |
@@ -2296,6 +2456,10 @@ The app changes the simulation in only these ways:
   mode.
 * **Traffic by hand:** `spawn_manual` and `spawn_ped`, for clicks and the
   **+ N / + E / + S / + W** buttons.
+* **Failures by hand:** `stall_vehicle`, `stall_in_box`, `stall_at_worst` and
+  `clear_wrecks` on the cooperative crossing, with `stall_at` to repeat a failure on
+  the other side of a comparison, and the manager's `clear_time`, `stall_rate` and
+  `stall_fault`.
 * **Learning:** the `as_rl` and `as_hybrid` hooks, for the learning toggles and
   *Save weights* (§8.7).
 
@@ -2307,7 +2471,9 @@ When *Compare side by side* is on, `rebuild_twin` builds a second `World` with t
 same layout, corridor size, demand, seed and settings, but its own control strategy:
 a control mode and controller, or on the cooperative crossing a scheduling and gap
 policy. Because arrivals depend only on the seed (§6.9), both sides receive identical
-arrivals, and hand-spawned vehicles and pedestrians are added to both.
+arrivals, and hand-spawned vehicles and pedestrians are added to both. A failure made on
+one side of the cooperative crossing by a click or by *Stall one in the box* is repeated
+on the other at the same place, by the next vehicle to get there (§6.11).
 
 * Turning the comparison on or off restarts both worlds from time zero, and so does
   changing side B's control mode.
@@ -2322,10 +2488,11 @@ This section goes through every part of the window: what it shows, how to read i
 which code produces it. The screenshots come from the desktop app in its default
 1600 × 1000 window (the smallest it allows is 1100 × 700). Most show version 0.5.1;
 those of parts that changed since, such as the signal timing chart, which now draws
-yellow and all-red, were retaken with the code released as 0.6.0. They were taken with
-the scripted-screenshot settings of Appendix A, two simulated minutes into the default
-scenario unless a caption says otherwise. The browser version looks the same, without
-the *Save weights* buttons and training commands of the learning panels.
+yellow and all-red, were retaken with the code released as 0.6.0, and those of the
+failures at the cooperative crossing come from the code that added them. They were taken
+with the scripted-screenshot settings of Appendix A, two simulated minutes into the
+default scenario unless a caption says otherwise. The browser version looks the same,
+without the *Save weights* buttons and training commands of the learning panels.
 
 #### The window at a glance
 
@@ -2361,8 +2528,8 @@ through. Space pauses and resumes the simulation when no control has keyboard fo
 Escape closes an open dropdown, then the About window, then the results window. In the
 desktop app, dropdowns and number fields are named by their labels for screen readers.
 The smallest text is 11 pixels. Panning, zooming, selecting a vehicle, placing a
-pedestrian and the charts' hover readouts need a pointer. `ACCESSIBILITY.md` gives the
-details.
+pedestrian, choosing which vehicle of the cooperative crossing fails and the charts'
+hover readouts need a pointer. `ACCESSIBILITY.md` gives the details.
 
 #### 1. Top bar
 
@@ -2544,7 +2711,9 @@ the northbound approach">
 * scroll or pinch to zoom, around the pointer, from 0.6 to 40 pixels per meter;
 * click a vehicle to select it; clicking one at another intersection of a corridor
   also moves the focus there;
-* with a spawn tool, click an approach road, or near a crosswalk corner.
+* with a spawn tool, click an approach road, or near a crosswalk corner;
+* with the *Stall a vehicle* tool on the cooperative crossing, click a vehicle to make
+  it fail.
 
 **What is drawn**
 
@@ -2621,7 +2790,9 @@ that affects the sensors is the *Night* condition under *Sensors*.
 
 #### 4. Status overlay
 
-The text at the top left of the canvas (region 4 in the overview) has up to two lines:
+The text at the top left of the canvas (region 4 in the overview) has up to two lines,
+and a third on the cooperative crossing while a failure is set for the worst moment or
+being dealt with:
 
 * **First line:** the simulated clock, the speed, *paused* when paused and the strategy:
   the controller's short name, the control mode or, on the cooperative crossing,
@@ -2629,8 +2800,8 @@ The text at the top left of the canvas (region 4 in the overview) has up to two 
   policy.
 * **Second line, for signals:** the current stage and its phase (*GREEN* with the
   seconds of green so far, *YELLOW* or *ALL-RED*), with *EMERGENCY PREEMPTION* while a
-  preemption runs. The cooperative crossing has its own second line (see [The
-  cooperative crossing](#the-cooperative-crossing)).
+  preemption runs. The cooperative crossing has its own second line, and a third for
+  failures (see [The cooperative crossing](#the-cooperative-crossing)).
 
 In a comparison each half has its own overlay, labeled *A ·* or *B ·*. In a corridor
 it describes the focused intersection.
@@ -2688,7 +2859,8 @@ The small line below the table gives:
 * pedestrians present;
 * pedestrian near misses per hour (a vehicle passing within about 1.5 s of a walking
   pedestrian's path);
-* safety overlaps, which should always be 0.
+* safety overlaps, which should always be 0. Contacts after a failure at the cooperative
+  crossing are counted with the failures instead (§6.11).
 
 *reset stats* measures from the current moment, for example after changing a setting.
 It resets these numbers, the breakdowns and the comparison table; the charts, the
@@ -2903,6 +3075,11 @@ parts of the window change:
 | 4 | Bottom panel | Stop-line crossings by movement replace the signal timing |
 | 5 | Right panel | The manager panel and safety monitors replace the controller brain |
 
+This picture and the others of this section, except those under *Failures* below, were
+taken before a vehicle could be made to fail: the left panel now has a *Failures* group
+under the manager's settings, the legend two more entries and the right panel a
+*Failures* block under the safety monitors.
+
 **Intersection manager settings**
 
 <img src="images/architecture/coop-manager.png" width="300" alt="Intersection manager
@@ -3009,6 +3186,81 @@ vehicle will cross its stop line and how fast, that it is still waiting for one,
 that a right turn needs none. Its *doing* row can also read *slowing to meet its
 reserved slot*, *waiting for a reservation* or *slowing to the crossing speed*.
 
+**Failures**
+
+![A failure side by side: fail-safe gaps on the left, nominal gaps on the right](images/architecture/coop-failure.png)
+
+*Twelve seconds after a car stopped dead in the box at the worst moment, with fail-safe
+gaps (A) and nominal gaps (B) on the same arrivals, zoomed in with the reservation
+zones on.*
+
+<img src="images/architecture/coop-failure-settings.png" width="300" alt="Failures
+group: a description, the failure Stops dead, the buttons Stall a vehicle, Stall one in
+the box and Stall one at the worst moment, clear after 60 s, 0 random stalls an hour and
+Clear disabled vehicles">
+
+The *Failures* group, under the manager's settings, makes vehicles fail (§6.11):
+
+* **Failure:** *Stops dead* or *Brakes hard to a stop*.
+* **⚠ Stall a vehicle** is a tool like the spawn tools: with it on, a click on a vehicle
+  makes that vehicle fail, on either side of a comparison.
+* **Stall one in the box** makes the vehicle nearest the middle of its path through the
+  box fail, at once if it is in the box and otherwise when it gets there. A vehicle
+  short of the box whose lane already has a failure set is passed over, so another
+  press sets one in another lane. When no vehicle is left to pick, the app says that a
+  failure is already set.
+* **Stall one at the worst moment** sets the failure for the next vehicle about to
+  clear a zone with a crossing vehicle due right behind it at the smallest gap the
+  policy allows. The status overlay says "a failure is set for the worst moment" until
+  it happens, usually within a cycle.
+* **clear after** (10 to 300 s) is how long a disabled vehicle stays, **random stalls /
+  h** (0 to 120) adds failures at random places in the box, and **Clear disabled
+  vehicles** clears them away now.
+
+In a comparison, a failure made by a click or by *Stall one in the box* is repeated on
+the other side at the same place, by the next vehicle to get there, and random failures
+are set for the same places at the same times on both, so A and B differ mainly in how
+they deal with them. *Stall one at the worst moment* sets a failure on each side, which
+comes at that side's own worst moment. The two buttons work from the keyboard; the tool
+needs a pointer.
+
+On the canvas:
+
+* a disabled vehicle has a red ring that pulses, at any zoom, hazard lights and a red
+  dot;
+* a vehicle that braked to an emergency stop, or stopped behind one, has a magenta dot
+  until it gets a way out;
+* where two vehicles touch, a ring spreads for 4 s with the closing speed;
+* a place set for a failure is a red cross on the path;
+* with *reservation zones* on, the zones that vehicles at rest hold stay red.
+
+The status overlay gains a third line, for example "⚠ 1 DISABLED, 8 stopped for it".
+The selected vehicle's *doing* row can read *emergency braking for a failed vehicle*,
+*stopped after an emergency, waiting for a way out* or *disabled, waiting to be cleared
+away*, and its *reservation* row says when its crossing was withdrawn or given up, and
+when it is on its way out of the box.
+
+<img src="images/architecture/coop-failures-panel.png" width="586" alt="Failures block:
+1 vehicle failed, no crossing or same-lane contacts, 8 emergency stops, 28 crossings
+withdrawn, the closest stop 1.9 m short, 1 disabled now, none cleared away or routed
+out of the box, and the failure in a sentence">
+
+Under the safety monitors, *Failures (what followed each one)* gives the measures of
+§6.11, except the settling time:
+
+* **vehicles failed**, **crossing contacts** and **same-lane contacts**, each count of
+  contacts with the fastest closing speed, green at zero and red otherwise;
+* **emergency stops** and **crossings withdrawn**;
+* **closest stop:** how far short of the zone it braked for the closest emergency stop
+  came to rest, green while it isn't negative;
+* **disabled now**, **cleared away** and **routed out of the box**, with the number
+  towed if any were;
+* the last three failures, each in a sentence: what failed where, under which gaps, who
+  stopped and what touched.
+
+In a comparison the side-by-side table adds *vehicles failed*, *crossing contacts*,
+*fastest of them* and *same-lane contacts* once a vehicle has failed on either side.
+
 **Comparing**
 
 ![Batches against first come, first served, side by side](images/architecture/coop-compare.png)
@@ -3053,7 +3305,8 @@ The notices run to thousands of lines, so only the visible lines are laid out.
 * **Safety is measured, not assumed.** On the cooperative crossing the monitors
   measure what vehicles did, separately from what the manager planned.
 * **The app changes little.** Apart from the settings, clicks that add traffic,
-  controller switches and the learning toggles, it only reads the simulation (§9.2).
+  failures made and cleared by hand, controller switches and the learning toggles, it
+  only reads the simulation (§9.2).
 
 ---
 
@@ -3077,6 +3330,7 @@ The examples are the studies behind `docs/insights.md` and
 | Example | Study | Arguments |
 |---|---|---|
 | `cooperative` | Capacity of the cooperative crossing at rising demand: what it serves, the delay and what the safety monitors measured | gap policy (`p2`, `ph`, `p1`), left lanes (2 or 1), fleet (`mix` or `cars`), seconds, seeds, demand levels, arrivals, scheduling (`batches` or `fcfs`) |
+| `failures` | One vehicle failing in the box in each of many runs, under each gap policy and schedule, at a random place and at the worst moment: contacts and their speeds, emergency stops, the closest stop. Then what a failure costs: the same arrivals with and without it | runs, demand under batches, demand first come, first served, seconds until cleared, part (`safety`, `cost`) |
 | `corridor` | *n* signals along the main road: fixed-time without and with the green wave, the adaptive controllers with the upstream link and the predictive controller without it. Reports end-to-end trips and each intersection's person delay | layout, *n*, minutes, seeds, demand scale |
 | `fya` | Left-turn phasing: flashing yellow arrow, protected-only or automatic, across demand levels | seeds |
 | `lpi` | The leading pedestrian interval and the blank-out NO TURN ON RED sign: near misses and delay | seeds |
@@ -3087,25 +3341,28 @@ The examples are the studies behind `docs/insights.md` and
 
 ### 10.3 Tests
 
-`cargo test` runs nine integration test files and the unit tests in `bin/bench.rs`,
-`sim/coop.rs`, `sim/signal.rs` and `gui/mod.rs`. CI runs them in release mode on Linux,
-macOS and Windows, and measures how much of the crate they cover (§11).
+`cargo test` runs ten integration test files and the unit tests in `bin/bench.rs`,
+`sim/coop.rs`, `sim/coop/failures.rs`, `sim/signal.rs` and `gui/mod.rs`. CI runs them in
+release mode on Linux, macOS and Windows, and measures how much of the crate they cover
+(§11).
 
 | File | Tests | What they require |
 |---|---:|---|
 | `tests/safety.rs` | 4 | Every layout and control combination runs without collisions and serves at least 80% of arrivals at default volumes (65% under two-way stop and under all-way stop on the arterial, which are over capacity); different controllers receive identical arrivals; no gridlock in seeds that used to jam; no collision between a turn finishing late in the yellow and the next stage's traffic |
 | `tests/cooperative.rs` | 14 | The cooperative crossing: no signals, sensors or crosswalks; its geometry and phase order; every gap policy safe under heavy demand, bursts, heavy vehicles and live switching; about 18,000 vehicles per hour served at the design demand, about 19,000 oversaturated and less with single left lanes or first come, first served; reproducible runs; light traffic barely delayed; emergency vehicles first; hand-placed vehicles crossing every way. Every run, except those of the no-signals, single-left-lane and reproducibility tests, must show no overlap between vehicle bodies, no zone entered while occupied, no box entry without a reservation, no step off a granted trajectory, no crossing inside its required gap and no line or zone time off its reservation (both to within a microsecond), and at least one crossing measured |
+| `tests/failures.rs` | 20 | Failures at the cooperative crossing. When a vehicle stops dead at the worst moment, fail-safe gaps stop crossing traffic short of it under both schedules, mitigated gaps let it arrive at no more than 25 km/h and nominal gaps faster; a vehicle that brakes to a stop is survived; in batches a failure at a random place rarely reaches crossing traffic, though a dead stop is struck from behind; the crossing serves what a disabled vehicle leaves clear and recovers once it is cleared away; a failure outside the box only holds up its lane; a failure can be repeated at the same place on another run, and random failures are the same on runs with the same seed; twenty minutes of failures in heavy traffic leave nothing broken, and with fail-safe gaps no vehicles on crossing paths touch through some two hundred dead stops; a vehicle stopped in the box waits for one that passes it, one stopped behind a failure can fail in turn and one that fails at the edge of the map rolls off it; a failure only holds back the vehicles that leave their crossings for an emergency stop: none at rest is set going, none gets ahead of the trajectory it had, and one standing before its line loses its crossing instead; a vehicle that can't stop behind a dead stop is expected where it ends up, as is one that fails close behind it and one already on an emergency stop when the vehicle ahead stops short, and it stops by itself if the wreck is cleared away first; the log keeps the latest fifty failures; other layouts have none. Every run with a failure in it, except those of the test that repeats one, must show no vehicle off its trajectory, in the box without one, or overlapping another outside a recorded contact |
 | `tests/pedestrian_rule.rs` | 4 | Deep RL's shield serves a crosswalk whose pedestrians have waited longer than `PED_MAX_WAIT`, longest wait first, and leaves shorter waits to the controller; the reward counts waiting pedestrians |
 | `tests/weights_files.rs` | 6 | The shipped weights load, misshapen networks are rejected, a Hybrid without a fitting network keeps its base tuning and says so, Hybrid files saved with a score that isn't finite load again, a copy that doesn't load is skipped for the next one and networks that overflow don't crash (§8.7) |
 | `tests/green_wave.rs` | 2 | The green wave runs every signal of a corridor fixed-time, and ending it gives back the controllers they ran before, except where another was chosen during the wave, without collisions; a single intersection isn't coordinated |
 | `tests/networks.rs` | 7 | Backpropagation agrees with the gradient measured numerically, Adam fits a line, the shape check rejects every malformed network (sizes whose product overflows included), the target network moves part way toward the online one, the action mask is respected, Double DQN learns which action pays in which state and the replay memory keeps the latest 60,000 transitions |
-| `tests/gui.rs` | 16 | The app, run without a window by `egui_kittest` and driven through its accessibility tree, the keyboard and the pointer: every panel opens and every control has a name; Space pauses and Step advances one second; every layout, control mode and controller runs, side by side too and along a corridor with the green wave; the demand, sensor and operations settings apply; the learning controllers show what they learn; every overlay and coloring draws; vehicles and pedestrians placed by hand, movements an approach lacks refused; a clicked vehicle's details; pan, zoom and *Fit view*; both benchmark windows; *About* |
-| `tests/scripted.rs` | 8 | Each `TS_*` variable of the scripted mode sets up its scene, a scripted screenshot stops the clock at its moment and screenshots are valid PNG files. The app reads the variables as it starts, so each scene opens in a process of its own |
+| `tests/gui.rs` | 22 | The app, run without a window by `egui_kittest` and driven through its accessibility tree, the keyboard and the pointer: every panel opens and every control has a name; Space pauses and Step advances one second; every layout, control mode and controller runs, side by side too and along a corridor with the green wave; the demand, sensor and operations settings apply; the learning controllers show what they learn; every overlay and coloring draws; vehicles and pedestrians placed by hand, movements an approach lacks refused; a clicked vehicle's details; a vehicle of the cooperative crossing made to fail from the buttons and by a click, on both sides of a comparison; what *Stall one in the box* does on an empty crossing and once every lane with a vehicle on its way has a failure set; what a failed vehicle, one stopped behind it, one on its way out of the box and one whose crossing was withdrawn say when selected; pan, zoom and *Fit view*; both benchmark windows; *About* |
+| `tests/scripted.rs` | 9 | Each `TS_*` variable of the scripted mode sets up its scene, a scripted screenshot stops the clock at its moment and screenshots are valid PNG files. The app reads the variables as it starts, so each scene opens in a process of its own |
 | `tests/tools.rs` | 7 | `bench` compares every strategy on every layout without collisions, takes each arrival pattern and runs the sensor study; `train` trains, saves and resumes both learning controllers, in a scratch directory with its own home directory |
 | `src/bin/bench.rs` | 1 | A run for a strategy table counts a vehicle placed on top of another, so the `coll` column can show an overlap |
 | `src/sim/coop.rs` | 4 | Approach profiles arrive on time and at speed, a short run-up enters slower but on time, the gap policies give the gaps in §6.11 and the following law holds its time gap |
+| `src/sim/coop/failures.rs` | 6 | An emergency stop ends at rest after its braking distance, a trajectory holds the zones it rests in without end, a vehicle that can't stop behind another is expected at its rear and holds the zones it will stand in, a vehicle can be put anywhere along its route and passes clear of one at rest on another approach, a vehicle whose crossing was withdrawn brakes for its line while it doesn't yet respond to the vehicle ahead, and every gap allows the reaction time |
 | `src/sim/signal.rs` | 1 | The signal history records a change's yellow and all-red between the two greens, with no gaps |
-| `src/gui/mod.rs` | 1 | The safety monitors' margin over the gap keeps its sign |
+| `src/gui/mod.rs` | 2 | The safety monitors' margin over the gap keeps its sign, and a failure reads as a sentence |
 
 The `weights` fuzz target (`fuzz/`, a workspace of its own) feeds arbitrary bytes to
 both weights loaders. A network they accept must survive a training step, 20 s of
@@ -3205,8 +3462,8 @@ while it is out of date.
    A bad controller can make traffic slow, but it can't make it unsafe. Deep RL's shield
    and the Hybrid's "the planner decides" design are a second layer, so that learned
    policies stay sensible as well as safe. On the cooperative crossing the manager's
-   reservations keep vehicles apart, and monitors that measure what vehicles actually
-   did check them.
+   reservations keep vehicles apart unless a vehicle is made to fail (§6.11), and
+   monitors that measure what vehicles actually did check them.
 
 3. **Layouts are data.** A signalized layout is a few lines of `LegDef` and `StageDef`
    in `Network::build`; the roundabout and the cooperative crossing have builders of
@@ -3305,6 +3562,7 @@ environment and write files:
 | `TS_COND`, `TS_LOOP_FAULT` | The weather condition and the share of faulty loops |
 | `TS_SELECT` | A vehicle to select, by number |
 | `TS_ABOUT`, `TS_BENCH` | Open the About window, or start a benchmark (`controllers` or `sensors`) |
+| `TS_STALL`, `TS_STALL_AT`, `TS_FAULT` | Make a vehicle of the cooperative crossing fail, on both sides of a comparison: `box` for the one nearest the middle of the box, `worst` for the worst moment (§6.11); at what simulated time (60 s by default); and `brake` to have it brake to a stop instead of stopping dead |
 | `TS_SCROLL`, `TS_SCROLL_LEFT` | Hold the right or left panel at a scroll offset in points |
 | `TS_SHOT`, `TS_SHOT_AFTER` | Where to write the PNG, and at what simulated time (120 s by default) |
 
@@ -3338,6 +3596,7 @@ Every capture used `TS_SPEED=20` and `TS_SHOT_AFTER=120` unless listed otherwise
 | `coop-manager-panel`, `coop-safety` | `TS_LAYOUT=cooperative TS_SCROLL=900` |
 | `coop-zoom` | `TS_LAYOUT=cooperative TS_OVERLAYS=conflicts,paths TS_ZOOM=2.2` |
 | `coop-compare` | `TS_LAYOUT=cooperative TS_TWIN=fcfs` |
+| `coop-failure`, `coop-failure-settings`, `coop-failures-panel` and `docs/failure.png` | `TS_LAYOUT=cooperative TS_TWIN=p1 TS_STALL=worst TS_STALL_AT=60 TS_SPEED=10 TS_SHOT_AFTER=72 TS_OVERLAYS=conflicts TS_ZOOM=1.9 TS_SCROLL=1560 TS_SCROLL_LEFT=420` |
 | `coop-bench-window` | `TS_LAYOUT=cooperative TS_BENCH=controllers TS_SPEED=1 TS_SHOT_AFTER=150` |
 | `layouts` | `TS_LAYOUT` set to each layout's key |
 
@@ -3349,6 +3608,7 @@ The README's screenshots are made the same way:
 | `docs/compare.png` | `TS_TWIN=Fixed TS_SPEED=100 TS_SHOT_AFTER=600` |
 | `docs/corridor.png` | `TS_CORRIDOR=3 TS_SPEED=100 TS_SHOT_AFTER=600` |
 | `docs/cooperative.png` | `TS_LAYOUT=cooperative TS_TWIN=fcfs TS_SPEED=10 TS_SHOT_AFTER=600` |
+| `docs/failure.png` | A crop of the capture for `coop-failure`, in the table above |
 
 A few things to know when making new ones:
 

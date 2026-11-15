@@ -7,8 +7,9 @@ A graphically rich, microscopic traffic-intersection simulator in Rust for explo
 signal control, sensing, pedestrian treatments and AI affect what drivers, transit riders
 and pedestrians actually experience, at one intersection or along a corridor. It also
 looks ahead to a [signal-free crossing](#the-signal-free-cooperative-crossing) for fully
-automated, connected vehicles, to measure how much such a crossing could carry and why
-its vehicles should still take turns in batches rather than weave through one another.
+automated, connected vehicles, to measure how much such a crossing could carry, why its
+vehicles should still take turns in batches rather than weave through one another, and
+what happens when one of them fails in the middle of it.
 
 **[Try it in your browser](https://schreck61.github.io/intersection-lab/)**, no install
 needed, or download it for your desktop below.
@@ -60,6 +61,7 @@ cargo run --release --example lpi                 # pedestrian safety treatments
 cargo run --release --example fya                 # left-turn phasing modes
 cargo run --release --example satflow             # calibration against HCM saturation flow
 cargo run --release --example cooperative         # capacity of the signal-free cooperative crossing
+cargo run --release --example failures            # a vehicle fails there: what each gap survives
 cargo test --release                              # regression tests: safety, throughput, app, tools
 ```
 
@@ -102,6 +104,11 @@ weights can't be saved; everything else matches the desktop app.
 * **Operations:** emergency preemption, right turn on red, a "no turn on red while
   pedestrians are present" blank-out sign, leading pedestrian interval, left-turn phasing
   (flashing yellow arrow / protected only / automatic), and a max-wait guard.
+* **Failures** (cooperative crossing): make a vehicle stop dead or brake to a stop, by
+  clicking it, in the middle of the box, at the worst moment for crossing traffic or at
+  random, and see who stops short, who doesn't, and how the manager keeps the open lanes
+  moving until the vehicle is cleared away. Side by side, both strategies get the same
+  failure, except at the worst moment, which each reaches on its own.
 * **Inspect and measure:** click a vehicle for its speed, delay, stops, fuel, detecting
   sensor and who it yields to. KPIs, live charts, delay histogram, breakdowns by approach,
   movement and class, signal timing diagram, controller "brain", pedestrian near-misses.
@@ -194,11 +201,12 @@ measured.
 | Piece | Design |
 |---|---|
 | Geometry | Each approach has two left-turn lanes, three through lanes and a right-turn slip lane around a corner island, so right turns never enter the box. Opposite left turns pass clear of each other and every lane has its own receiving lane: paths in the box only cross, never merge. Default demand: 4,500 veh/h per approach (18,000 in all), 20% turning left and 15% right |
-| Reservations | Each pair of crossing paths has a conflict zone on each path. The manager builds every trajectory with the simulator's own integrator, so it knows when each vehicle will be in each zone, and grants it only if it keeps the required gap to every trajectory already granted. A granted trajectory never changes |
+| Reservations | Each pair of crossing paths has a conflict zone on each path. The manager builds every trajectory with the simulator's own integrator, so it knows when each vehicle will be in each zone, and grants it only if it keeps the required gap to every trajectory already granted. A granted trajectory never changes, unless a vehicle fails |
 | Phases | By default the manager serves each movement in batches, in two rings with a barrier like an actuated signal, ending a batch when no vehicle can continue it (gap-out) or at its demand-weighted share of a 100 s maximum cycle (max-out). Left turns lag the through movements: a left turn can follow the opposing through traffic almost at once (0.3 s), while the reverse switch would cost about 6 s. The next batch starts as soon as its zones are free, with no yellow or all-red. Emergency vehicles are served out of turn |
 | First come, first served | The alternative schedule has no phases. Of the vehicles first in their lanes without a slot, the one that could cross the stop line soonest goes next, with the earliest trajectory that fits around those already granted. It is the familiar picture of vehicles weaving through one another, and it carries about half as much (below) |
-| Safety gaps | *Fail-safe* (default): enough time for a follower to stop short of the zone if the vehicle ahead stalls in it: two message latencies, the actuation delay and the time its braking distance takes at crossing speed (1.43 s for a car at 40 km/h). *Mitigated*: it could still slow to 25 km/h. *Nominal*: the two message latencies and the actuation delay only (0.5 s), assuming no vehicle ever fails |
+| Safety gaps | *Fail-safe* (default): enough time for a follower to stop short of the zone if the vehicle ahead stalls in it: two message latencies, the actuation delay and the time its braking distance takes at crossing speed (1.43 s for a car at 40 km/h). *Mitigated*: it could still slow to 25 km/h. *Nominal*: the two message latencies and the actuation delay only (0.5 s), sized for a vehicle ahead that brakes hard to a stop, not for one that stops dead |
 | Monitors | Independently of the plans, the simulator measures what vehicles actually did: the closest post-encroachment time (PET), zones entered while occupied, box entries without a reservation, and any step off the granted trajectory |
+| Failures | A vehicle can be made to fail: it stops dead, as after a collision, or brakes hard to a stop. Half a second later (two message latencies and the actuation delay, which every gap allows for) the manager reacts with new trajectories. A vehicle that can still stop short of the box loses its crossing and stops there. One that can't brakes as hard as it can if the failed vehicle is in a zone on its path, or follows the vehicle ahead until it rests behind it. Everyone whose path stays clear crosses as planned. Vehicles that can't stop in time touch: they stop where they touch and are disabled too, and the speed at which they closed is the measure of it. No new crossing is scheduled across a zone that a vehicle at rest holds, the other lanes are served as usual, and vehicles that stopped in the box are routed out once their way is clear. Disabled vehicles are cleared away after a minute by default |
 
 ### Why weaving one at a time carries less
 
@@ -247,6 +255,69 @@ served, slows its vehicles far out on the approaches and, at the design demand, 
 a queue waiting to enter the map.
 
 ![Batches (A) and first come, first served (B) side by side at the design demand](docs/cooperative.png)
+
+### What the safety gap is for
+
+The gaps are sized for a failure that normal running never shows, so the app can cause
+one: under *Failures*, a vehicle can be made to **stop dead** or to **brake hard to a
+stop**. The hardest case for crossing traffic is a vehicle that stops dead just as it is
+about to clear a zone, with a crossing vehicle due right behind it at the smallest gap
+the policy allows. *Stall one at the worst moment* waits for exactly that.
+
+![A car stopped dead in the box, with fail-safe gaps (left) and nominal gaps (right)](docs/failure.png)
+
+*Twelve seconds after a southbound car, ringed in red, stopped dead as it was about to
+clear the path of a platoon of left turns. Left, with fail-safe gaps, the platoon has
+stopped short of it. Right, with nominal gaps and the same arrivals, its first vehicle
+reached it. Westbound traffic, whose lanes stay clear, keeps crossing.*
+
+One failure in the box per run, 400 runs per row, in batches at 16,000 veh/h and first
+come, first served at 8,000 veh/h (`examples/failures.rs`; the [results](#results) have
+every case):
+
+| A vehicle stops dead at the worst moment | Batches: crossing contact | Fastest | Closest emergency stop | First come, first served: crossing contact | Fastest | Closest emergency stop |
+|---|---|---|---|---|---|---|
+| Fail-safe gaps | **none** | | **0.6 m short of its zone** | **none** | | 0.4 m inside it |
+| Mitigated gaps | 85% of failures | 21 km/h | 4.5 m inside | 54% | 22 km/h | 6.6 m inside |
+| Nominal gaps | 96% | 35 km/h | 12.5 m inside | 89% | 35 km/h | 12.8 m inside |
+
+* **Each gap survives what it is sized for, with little to spare.** With fail-safe gaps
+  no crossing vehicle touched the failed one in 800 failures at the worst moment.
+  Mitigated gaps let one arrive at up to 22 km/h, under the 25 km/h they allow, and
+  nominal gaps at up to 35 km/h, close to the crossing speed. A vehicle that only brakes
+  to a stop, the failure the nominal gap is sized for, was reached in 5 of 800 such
+  failures with nominal gaps, at 12 km/h at most, and never with the wider ones.
+* **Batches make most failures harmless to crossing traffic.** At a random place and
+  time, the next vehicle to cross the failed one's path is usually a whole phase away:
+  its crossing is withdrawn, it stops short of the box, and it never needs the gap. Even
+  with nominal gaps, 2 of 400 such failures led to a crossing contact, against 11%
+  first come, first served, which needs its gap at almost every vehicle.
+* **No gap protects the vehicle behind.** In a lane, cars follow about 0.6 s apart at
+  the crossing speed (a 2 m standstill gap plus a 0.42 s time gap), which lets them
+  survive the one ahead braking, not stopping dead. In batches, a vehicle that stopped
+  dead at a random moment was struck from behind in 86–89% of failures, at up to
+  38 km/h, whatever the gap. One that braked to a stop was struck 3 times in 4,800
+  failures, at 6 km/h at most, and never in batches.
+* **The fail-safe gap has a blind spot.** It is sized for the speed at which a vehicle
+  enters a zone, and a vehicle still slowing from the approach speed to the crossing
+  speed carries more than that when it has to react. First come, first served, an
+  emergency stop ended up to 0.4 m inside its zone in 4 of 400 failures, clear of the
+  failed vehicle. In batches, where the first vehicle of a phase isn't slowing as it
+  enters, none did.
+* **A disabled vehicle costs about a sixth of the flow while it stands, and the backlog
+  takes minutes to clear.** The manager closes the zones the vehicle holds and goes on
+  serving the lanes that stay open. With the same arrivals and no failure for
+  comparison, and the vehicle cleared away after 60 s:
+
+  | A vehicle stops dead in the box | Served while it stands | Most vehicles held up | Back to normal after it is cleared away | Delay added, per vehicle over 15 minutes |
+  |---|---|---|---|---|
+  | Batches, 12,000 veh/h | 84% | 74 veh | 3 minutes | 2.4 s |
+  | Batches, 16,000 veh/h | 83% | 106 veh | 5 minutes | 4.5 s |
+  | Batches, 18,000 veh/h (design) | 83% | 121 veh | over 13 minutes in 53 runs of 100 | 10.8 s |
+  | First come, first served, 8,000 veh/h | 88% | 31 veh | 1.5 minutes | 1.0 s |
+
+To watch it, pick the cooperative crossing, turn on *Compare side by side*, give B
+*batches* and *nominal gaps*, and press *Stall one at the worst moment*.
 
 ## Results
 
@@ -395,6 +466,46 @@ the design demand with 2-minute bursts of up to 1.7× on an approach, average 48
 leave about 160 vehicles waiting. The rush-hour peak (1.5×, about 27,000 veh/h) is far
 beyond capacity.
 
+### Failures at the cooperative crossing (`examples/failures.rs`, 400 runs per row)
+
+`failures 400`: one vehicle fails in the box in each run, four minutes are simulated
+after it, and disabled vehicles are cleared away after 60 s. Batches at 16,000 veh/h,
+first come, first served at 8,000 veh/h. A failure comes at a random place in the box
+to the next vehicle that gets there, or at the worst moment: to a vehicle about to clear
+a zone with a crossing vehicle due right behind it at the smallest gap its policy
+allows. Contacts are the share of failures with one and the fastest closing speed.
+Stops and withdrawals are per failure. The closest stop is how far short of the zone it
+braked for the closest emergency stop of the 400 runs came to rest.
+
+| A vehicle stops dead | Gaps | Crossing contact | Struck from behind | Emergency stops | Crossings withdrawn | Closest stop |
+|---|---|---|---|---|---|---|
+| Random place and time, batches | fail-safe | none | 89%, 38 km/h | 2.5 | 22 | 1.3 m short |
+| | mitigated | none | 87%, 38 km/h | 2.5 | 21 | 1.4 m short |
+| | nominal | 0.5%, 29 km/h | 86%, 38 km/h | 2.5 | 21 | 6.9 m inside |
+| Random place and time, first come, first served | fail-safe | none | 26%, 38 km/h | 1.0 | 11 | 0.3 m short |
+| | mitigated | 3%, 14 km/h | 15%, 38 km/h | 1.1 | 9 | 4.1 m inside |
+| | nominal | 11%, 34 km/h | 8%, 38 km/h | 1.3 | 8 | 9.9 m inside |
+| Worst moment, batches | fail-safe | **none** | none | 5.6 | 39 | **0.6 m short** |
+| | mitigated | 85%, 21 km/h | none | 6.0 | 37 | 4.5 m inside |
+| | nominal | 96%, 35 km/h | 15%, 9 km/h | 6.5 | 36 | 12.5 m inside |
+| Worst moment, first come, first served | fail-safe | **none** | none | 2.0 | 15 | 0.4 m inside |
+| | mitigated | 54%, 22 km/h | none | 2.2 | 12 | 6.6 m inside |
+| | nominal | 89%, 35 km/h | 3%, 18 km/h | 2.7 | 13 | 12.8 m inside |
+
+A vehicle that brakes hard to a stop instead was never reached by crossing traffic with
+fail-safe or mitigated gaps, in 3,200 failures, and the closest emergency stop ended
+0.8 m short of its zone. With nominal gaps it was reached in 5 of 1,600 failures, at
+up to 12 km/h. It was struck from behind 3 times in 4,800 failures, at up to 6 km/h,
+each time first come, first served.
+
+The last emergency stop a failure caused was at rest 5.1 s after it at the latest: half a
+second of reaction time, then braking at 6 m/s² (4.5 m/s² for trucks and buses), and
+the same again for the vehicles that a later contact endangered. In all 9,600 runs no
+vehicle left the trajectory it held, entered the box without one, or overlapped another
+outside a recorded contact. Vehicles stopped in the box got in one another's way until
+one was towed 40 times, all first come, first served and all but one with mitigated or
+nominal gaps.
+
 ### Pedestrian treatments (`examples/lpi.rs`, 12 seeds)
 
 Near-misses = vehicles crossing within ~1.5 s of a walking pedestrian, per hour. At 240
@@ -461,12 +572,22 @@ A fuller write-up of every finding, with the commands that reproduce it, is in
   once. Served first come, first served, the same crossing saturates near 10,100 veh/h;
   the zipper wins only below about 6,000 veh/h. The second left-turn lane on each
   approach is worth about 5,500 veh/h.
+* **The safety gap is for the vehicle that crosses last.** When a vehicle was made to
+  stop dead in the box at the worst moment for crossing traffic, fail-safe gaps stopped
+  that traffic short of it every time, mitigated gaps let it arrive at up to 22 km/h and
+  nominal gaps at up to 35 km/h. In batches that moment comes only at a change of
+  phase: at a random moment the next crossing vehicle is a whole phase away, and even
+  nominal gaps almost never led to a crossing contact, while the zipper needs its gap at
+  almost every vehicle. No gap protects the vehicle behind one that stops dead, which
+  was struck in nine failures in ten mid-batch. A disabled vehicle costs the crossing
+  about a sixth of its flow while it stands.
 
 ## Repository layout
 
 ```
 src/sim/        geometry, IDM + MOBIL vehicles, right of way, signals, sensors, demand, stats
 src/sim/coop.rs   intersection manager for the signal-free cooperative crossing
+src/sim/coop/failures.rs  a vehicle fails there: the reaction, contacts and recovery
 src/sim/world.rs  worlds of one or more intersections (corridors, coordination)
 src/control/    fixed, actuated, max-pressure, predictive MPC, deep-RL and hybrid controllers
 src/rl/         MLP + Adam, Double DQN with replay
@@ -474,7 +595,8 @@ src/gui/        eframe/egui app: renderer, charts, panels, self-screenshot (TS_S
 src/bin/        bench (comparisons, sensor study), train (RL training)
 weights/        trained DQN and hybrid weights per layout
 tests/          regression tests: safety, throughput, the app (headless) and the tools
-examples/       corridor, lpi, fya, satflow, preempt, sweep (multi-seed safety sweep), cooperative
+examples/       corridor, lpi, fya, satflow, preempt, sweep (multi-seed safety sweep),
+                cooperative, failures (a vehicle fails at the cooperative crossing)
 docs/           architecture.md (how the code fits together, with a tour of the app),
                 insights.md (every finding), cooperative-intersections.md (design notes for the
                 signal-free crossing, with the scripts behind its estimates and figures),
@@ -488,13 +610,19 @@ simulation step runs and how to add a controller, layout or sensor.
 
 * Corridors run along the east-west road only; side streets end at their own block.
 * The cooperative crossing is a single intersection. It assumes every vehicle is
-  automated and connected, and it does not model human drivers, lost messages, a failed
-  manager or a vehicle that stalls in the box (the fail-safe gap is sized for one, but
-  none is ever injected).
+  automated and connected, and it does not model human drivers, lost messages or a failed
+  manager. A vehicle that is made to fail stops on its path, and the manager learns of
+  it at once from the vehicle itself; one that couldn't report would have to be seen
+  from the roadside, which isn't modeled. Vehicles that touch stop where they touch:
+  nothing more of a collision is simulated.
+* The fail-safe gap is sized for the speed at which a vehicle enters a zone, so a
+  vehicle still slowing to the crossing speed can end an emergency stop a few decimeters
+  inside the zone ([above](#what-the-safety-gap-is-for)).
 * The upstream link shares released vehicles only; it does not coordinate schedules
   between intersections the way SURTRAC does.
 * Drivers are well-behaved: no red-light running, distraction or crashes, so safety is
-  measured with surrogates (overlaps, near-misses).
+  measured with surrogates (overlaps, near-misses). The failures of the cooperative
+  crossing are made on purpose.
 * Training is fast because the simulation runs thousands of times faster than real time
   per core: `RESUME=1 cargo run --release --bin train all 300 900 hybrid` fine-tunes the
   shipped weights.
