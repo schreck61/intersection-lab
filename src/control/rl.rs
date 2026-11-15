@@ -179,9 +179,8 @@ impl RlController {
         let demand: Vec<f64> = (0..net.stages.len())
             .map(|j| {
                 let mut d = 0.0;
-                for m in 0..net.movements.len() {
+                for (m, mo) in ctx.view.moves.iter().enumerate().take(net.movements.len()) {
                     if stat(net, j, m).is_some() {
-                        let mo = &ctx.view.moves[m];
                         d += mo.queue
                             + mo.vehicles
                                 .iter()
@@ -206,8 +205,7 @@ impl RlController {
         let net = ctx.net;
         let mut f = Vec::with_capacity(n_inputs(net));
         let cur = ctx.sig.stage;
-        for m in 0..net.movements.len() {
-            let mo = &ctx.view.moves[m];
+        for (m, mo) in ctx.view.moves.iter().enumerate().take(net.movements.len()) {
             let mut n10 = 0.0;
             let mut n30 = 0.0;
             for o in &mo.vehicles {

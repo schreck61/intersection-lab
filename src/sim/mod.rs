@@ -1341,8 +1341,7 @@ impl Sim {
         }
         let mut dist = self.net.links[link].length() - v.s;
         let mut prev = link;
-        for k in v.ri + 1..v.route.len() {
-            let next = v.route[k];
+        for &next in &v.route[v.ri + 1..] {
             for &j in &self.occ[next] {
                 let w = &self.vehicles[j];
                 consider(&mut best, dist + w.s - w.len(), w.v, j);
