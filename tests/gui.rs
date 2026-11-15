@@ -18,10 +18,10 @@ use intersection_lab::gui::App;
 use intersection_lab::gui::render::Camera;
 use intersection_lab::sim::ControlMode;
 use intersection_lab::sim::LeftMode;
-use intersection_lab::sim::coop::{GapPolicy, Scheduling};
+use intersection_lab::sim::coop::{Fault, GapPolicy, Scheduling};
 use intersection_lab::sim::demand::{DemandConfig, Pattern};
 use intersection_lab::sim::geom::{V2, v2};
-use intersection_lab::sim::network::{LayoutKind, Network, Turn};
+use intersection_lab::sim::network::{LayoutKind, Movement, Network, Turn};
 use intersection_lab::sim::sensors::Conditions;
 use intersection_lab::sim::vtypes::{ALL_KINDS, VKind};
 use std::time::{Duration, Instant};
@@ -248,6 +248,67 @@ fn select_a_vehicle(w: &mut Window, net: &Network) -> bool {
     false
 }
 
+/// The label that follows the one reading `name`, looking from the label `from` on: the
+/// value beside or under a name in one block of the panels.
+fn value_of(w: &Window, from: &str, name: &str) -> Option<String> {
+    let labels = texts(w);
+    let block = labels.iter().position(|t| t == from)?;
+    let at = block + labels[block..].iter().position(|t| t == name)?;
+    labels.get(at + 1).cloned()
+}
+
+/// A row of the selected vehicle's panel ("doing", "reservation", ...), if one is selected.
+fn row(w: &Window, name: &str) -> Option<String> {
+    value_of(w, "Selected vehicle", name)
+}
+
+/// A figure of the failures block ("vehicles failed", "emergency stops", ...), once a
+/// vehicle has failed.
+fn figure(w: &Window, name: &str) -> Option<String> {
+    value_of(w, "Failures (what followed each one)", name)
+}
+
+/// The latest failure, in the sentence the failures block gives it.
+fn latest_failure(w: &Window) -> Option<String> {
+    let labels = texts(w);
+    let at = labels.iter().position(|t| t.starts_with("Closest stop: "))?;
+    labels.get(at + 1).cloned()
+}
+
+/// The line a failure adds under the map's status line ("⚠ 1 DISABLED, 2 stopped for
+/// it"), while there is one.
+fn alert(w: &Window) -> Option<String> {
+    painted(w).into_iter().find(|t| t.starts_with("⚠ ") && t != "⚠ Stall a vehicle")
+}
+
+/// Whether `text` names movement `m` ("Northbound Through", in any case).
+fn names(net: &Network, m: &Movement, text: &str) -> bool {
+    let name = format!("{} {}", net.legs[m.leg].compass.bound(), m.turn.name());
+    text.to_lowercase().contains(&name.to_lowercase())
+}
+
+/// Points 3 m apart along the ways through the box of the movements `of` picks, lane by
+/// lane: from `from` meters past the stop line back to `to` (before the line, if
+/// negative), the farthest along first.
+fn ways(net: &Network, of: impl Fn(&Movement) -> bool, from: f64, to: f64) -> Vec<V2> {
+    let mut spots = vec![];
+    for k in 0..=((from - to) / 3.0) as usize {
+        for (lane, rest) in net.movements.iter().filter(|m| of(m)).flat_map(|m| &m.routes) {
+            // Along the lane to the stop line, then the path through the box and the exit.
+            let mut s = net.links[*lane].length() + from - 3.0 * k as f64;
+            for link in std::iter::once(lane).chain(rest) {
+                let path = &net.links[*link].path;
+                if s <= path.length {
+                    spots.push(path.point(s));
+                    break;
+                }
+                s -= path.length;
+            }
+        }
+    }
+    spots
+}
+
 #[test]
 fn opens_with_every_panel_and_every_control_named() {
     let w = open();
@@ -385,6 +446,337 @@ fn the_cooperative_crossing_shows_its_intersection_manager() {
     step(&mut w, 5);
     assert!(shows(&w, "safety overlaps: 0"));
     assert_named(&w);
+}
+
+#[test]
+fn a_vehicle_of_the_cooperative_crossing_can_be_made_to_fail() {
+    let mut w = open();
+    pause(&mut w);
+    choose(&mut w, "Intersection", LayoutKind::Cooperative.name());
+    step(&mut w, 40);
+    assert!(shows(&w, "None yet. Make a vehicle fail under Intersection manager, on the left."));
+    assert!(w.get_by_label("Clear disabled vehicles").accesskit_node().is_disabled(), "nothing to clear yet");
+    assert_eq!(chosen(&w, "Failure"), Fault::Dead.name());
+
+    // The vehicle nearest the middle of the box stops dead.
+    press(&mut w, "Stall one in the box");
+    assert!(shows(&w, "A vehicle in the box: stopped dead"), "{:?}", texts(&w));
+    step(&mut w, 3);
+    assert!(paints(&w, " DISABLED, "), "the map says so: {:?}", painted(&w));
+    assert!(shows(&w, "Failures (what followed each one)"));
+    for kpi in ["vehicles failed", "crossing contacts", "same-lane contacts", "closest stop", "disabled now"]
+    {
+        assert!(has(&w, kpi), "no {kpi}");
+    }
+    assert!(shows(&w, "stopped dead in the box, fail-safe gaps: "), "{:?}", texts(&w));
+    assert!(shows(&w, "safety overlaps: 0"));
+    // Cleared away on request.
+    press(&mut w, "Clear disabled vehicles");
+    assert!(shows(&w, "Disabled vehicles cleared away"));
+    step(&mut w, 2);
+    assert!(!paints(&w, " DISABLED, "));
+    assert!(w.get_by_label("Clear disabled vehicles").accesskit_node().is_disabled());
+
+    // The other failure, at the worst moment for crossing traffic.
+    choose(&mut w, "Failure", Fault::Braking.name());
+    press(&mut w, "Stall one at the worst moment");
+    assert!(shows(&w, "Set: the next vehicle with a crossing vehicle right behind it fails"));
+    step(&mut w, 1);
+    assert!(paints(&w, "a failure is set for the worst moment") || shows(&w, "braked to a stop in the box"));
+    step(&mut w, 90);
+    assert!(shows(&w, "braked to a stop in the box, fail-safe gaps: "), "{:?}", texts(&w));
+
+    // By hand: the tool, then a vehicle on the map. The bottom of the window says which
+    // vehicle it was, and the count of failures goes up by one.
+    let failed = |w: &Window| -> usize {
+        let labels = texts(w);
+        let at = labels.iter().position(|t| t == "vehicles failed").expect("the failures block");
+        labels[at + 1].parse().expect("a count")
+    };
+    let before = failed(&w);
+    press(&mut w, "⚠ Stall a vehicle");
+    let net = Network::build(LayoutKind::Cooperative);
+    let stalled = queue_spots(&net).into_iter().any(|p| {
+        let pos = on_map(&w, &net, p, false);
+        click_at(&mut w, pos);
+        texts(&w).iter().any(|t| t.contains(" #") && t.ends_with(" braked to a stop"))
+    });
+    assert!(stalled, "no vehicle to click along the approaches");
+    step(&mut w, 2);
+    assert_eq!(failed(&w), before + 1);
+    assert!(paints(&w, "click a vehicle: it brakes hard to a stop"), "the pointer says what a click does");
+    press(&mut w, "⚠ Stall a vehicle");
+    slide(&mut w, "clear after s", 20.0);
+    slide(&mut w, "random stalls / h", 120.0);
+    step(&mut w, 60);
+    assert!(shows(&w, "safety overlaps: 0"));
+    assert_named(&w);
+
+    // Side by side, the next vehicle to reach the same place on side B fails too.
+    slide(&mut w, "random stalls / h", 0.0);
+    tick(&mut w, "Compare side by side", true);
+    step(&mut w, 40);
+    choose(&mut w, "Failure", Fault::Dead.name());
+    press(&mut w, "Stall one in the box");
+    step(&mut w, 20);
+    for row in ["vehicles failed", "fastest of them", "same-lane contacts"] {
+        assert!(has(&w, row), "no {row} in the comparison");
+    }
+    assert_named(&w);
+    // The tool belongs to this crossing: another layout puts it away.
+    press(&mut w, "⚠ Stall a vehicle");
+    choose(&mut w, "Intersection", LayoutKind::Town4.name());
+    step(&mut w, 2);
+    assert!(w.query_by_label("⚠ Stall a vehicle").is_none());
+}
+
+#[test]
+fn an_empty_crossing_has_no_vehicle_to_stall() {
+    let mut w = open();
+    pause(&mut w);
+    choose(&mut w, "Intersection", LayoutKind::Cooperative.name());
+    // A run starts with empty roads: the button says so, and sets nothing.
+    assert_eq!(count(&w, "in network"), 0);
+    press(&mut w, "Stall one in the box");
+    assert!(shows(&w, "No vehicle is on its way into the box"), "{:?}", texts(&w));
+    // The first vehicles cross the box unharmed.
+    step(&mut w, 30);
+    assert!(count(&w, "in network") > 0);
+    assert!(shows(&w, "None yet. Make a vehicle fail under Intersection manager, on the left."));
+    assert_eq!(alert(&w), None);
+}
+
+#[test]
+fn a_failed_vehicle_and_the_one_stopped_behind_it_say_so() {
+    let mut w = open();
+    pause(&mut w);
+    choose(&mut w, "Intersection", LayoutKind::Cooperative.name());
+    let net = Network::build(LayoutKind::Cooperative);
+    // No traffic but twelve cars placed by hand on one approach, all going straight
+    // ahead: they cross the box as a stream, four to a lane.
+    slide(&mut w, "demand ×", 0.0);
+    press(&mut w, &format!("🚗 {}", VKind::Car.name()));
+    press(&mut w, "↑ Through");
+    for _ in 0..12 {
+        press(&mut w, &format!("+ {}", net.legs[0].compass.letter()));
+    }
+    let stream = |m: &Movement| m.leg == 0 && m.turn == Turn::T;
+    // The first of them to reach the far side of the box loses drive and brakes to a
+    // stop, which leaves the cars behind it room to stop too.
+    choose(&mut w, "Failure", Fault::Braking.name());
+    press(&mut w, "⚠ Stall a vehicle");
+    let far_side: Vec<Pos2> =
+        ways(&net, stream, 40.0, 34.0).into_iter().map(|p| on_map(&w, &net, p, false)).collect();
+    let at = (0..60)
+        .find_map(|_| {
+            step(&mut w, 1);
+            far_side.iter().copied().find(|&pos| {
+                click_at(&mut w, pos);
+                shows(&w, " braked to a stop")
+            })
+        })
+        .expect("a car on the far side of the box within a minute");
+    press(&mut w, "⚠ Stall a vehicle");
+    // Clicked again, it is the selected vehicle: the one the bottom of the window named,
+    // on its trajectory until the clock moves.
+    click_at(&mut w, at);
+    let vehicle = row(&w, "vehicle").expect("a selected vehicle");
+    let (id, kind) = vehicle.split_once(' ').expect("#id kind");
+    assert!(shows(&w, &format!("{kind} {id} braked to a stop")), "{vehicle}: {:?}", texts(&w));
+    assert!(row(&w, "reservation").is_some_and(|r| r.starts_with("crossed the line at ")));
+    step(&mut w, 1);
+    assert_eq!(row(&w, "vehicle").as_deref(), Some(vehicle.as_str()));
+    assert_eq!(row(&w, "doing").as_deref(), Some("disabled, waiting to be cleared away"));
+    assert_eq!(row(&w, "reservation").as_deref(), Some("none: it is disabled"));
+    // The map counts the cars that stopped for it, as the results do: the three behind
+    // it in its lane. Those in the other lanes keep their crossings.
+    assert_eq!(alert(&w).as_deref(), Some("⚠ 1 DISABLED, 3 stopped for it"));
+    let failure = latest_failure(&w).expect("the failure");
+    assert!(failure.ends_with(": 3 emergency stops, 0 crossings withdrawn; no contact"), "{failure}");
+
+    // The first of the three gave up its crossing and brakes hard...
+    let behind = ways(&net, stream, 52.0, -12.0).into_iter().any(|p| {
+        let pos = on_map(&w, &net, p, false);
+        click_at(&mut w, pos);
+        row(&w, "reservation").as_deref() == Some("given up for an emergency stop")
+    });
+    assert!(behind, "no car stopped behind {vehicle}");
+    let follower = row(&w, "vehicle");
+    assert_eq!(row(&w, "doing").as_deref(), Some("emergency braking for a failed vehicle"));
+    // ...until it rests behind the failed car, and waits there.
+    let mut seconds = 0;
+    while row(&w, "doing").as_deref() != Some("stopped after an emergency, waiting for a way out") {
+        assert!(seconds < 10, "{:?} after {seconds} s", row(&w, "doing"));
+        step(&mut w, 1);
+        seconds += 1;
+    }
+    assert_eq!(row(&w, "vehicle"), follower);
+    assert_eq!(row(&w, "reservation").as_deref(), Some("given up for an emergency stop"));
+    assert!(row(&w, "speed").is_some_and(|s| s.starts_with("0 km/h ")));
+
+    // Once the failed car is cleared away, the map says how many still wait for a way
+    // out, until the manager has given each of them one.
+    press(&mut w, "Clear disabled vehicles");
+    step(&mut w, 1);
+    assert_eq!(figure(&w, "disabled now").as_deref(), Some("0"));
+    let waiting = alert(&w).expect("cars still stopped");
+    assert!(waiting.ends_with(" stopped, waiting for a way out"), "{waiting}");
+    // The selected car's reservation is then its way out, not a crossing of the line.
+    let on_its_way_out = |w: &Window| {
+        row(w, "reservation").as_deref() == Some("a way out of the box, after an emergency stop")
+    };
+    let (mut seconds, mut way_out) = (0, false);
+    while alert(&w).is_some() {
+        assert!(seconds < 60, "{:?} after {seconds} s", alert(&w));
+        way_out |= on_its_way_out(&w);
+        step(&mut w, 1);
+        seconds += 1;
+    }
+    assert!(way_out || on_its_way_out(&w), "{follower:?}: {:?}", row(&w, "reservation"));
+    assert_eq!(figure(&w, "routed out of the box").as_deref(), Some("3"));
+    assert!(shows(&w, "safety overlaps: 0"));
+}
+
+#[test]
+fn stall_one_in_the_box_sets_one_failure_for_each_lane() {
+    let mut w = open();
+    pause(&mut w);
+    choose(&mut w, "Intersection", LayoutKind::Cooperative.name());
+    let net = Network::build(LayoutKind::Cooperative);
+    // No traffic but twelve cars placed by hand on one approach, all going straight
+    // ahead, four to a lane. None of them is in the box yet.
+    slide(&mut w, "demand ×", 0.0);
+    press(&mut w, &format!("🚗 {}", VKind::Car.name()));
+    press(&mut w, "↑ Through");
+    for _ in 0..12 {
+        press(&mut w, &format!("+ {}", net.legs[0].compass.letter()));
+    }
+    let lanes =
+        net.movements.iter().filter(|m| m.leg == 0 && m.turn == Turn::T).flat_map(|m| &m.routes).count();
+    assert_eq!(lanes, 3);
+    // Five seconds on, the first car of each lane is on the map and still far from the box.
+    step(&mut w, 5);
+    assert!(count(&w, "in network") >= lanes, "{} cars on the map", count(&w, "in network"));
+    choose(&mut w, "Failure", Fault::Braking.name());
+    // Each press sets a place in the box where the next car of one lane fails; a lane
+    // that has such a place is passed over, so three presses cover the three lanes.
+    for _ in 0..lanes {
+        press(&mut w, "Stall one in the box");
+        assert!(shows(&w, "A vehicle in the box: braked to a stop"), "{:?}", texts(&w));
+    }
+    // A fourth finds no car without one, and says so.
+    press(&mut w, "Stall one in the box");
+    assert!(
+        shows(&w, "A failure is already set: the next vehicle to reach its place fails"),
+        "{:?}",
+        texts(&w)
+    );
+    // The first car of each lane fails in the middle of the box, and the cars behind them
+    // stop without touching.
+    let mut seconds = 0;
+    while figure(&w, "vehicles failed").as_deref() != Some("3") {
+        assert!(seconds < 60, "{:?} failed after {seconds} s", figure(&w, "vehicles failed"));
+        step(&mut w, 1);
+        seconds += 1;
+    }
+    step(&mut w, 10);
+    assert_eq!(figure(&w, "vehicles failed").as_deref(), Some("3"));
+    assert_eq!(figure(&w, "disabled now").as_deref(), Some("3"));
+    assert_eq!(figure(&w, "crossing contacts").as_deref(), Some("0"));
+    assert_eq!(figure(&w, "same-lane contacts").as_deref(), Some("0"));
+    assert_eq!(alert(&w).as_deref(), Some("⚠ 3 DISABLED, 9 stopped for them"));
+}
+
+#[test]
+fn a_failure_made_on_side_b_is_repeated_on_side_a() {
+    let mut w = open();
+    pause(&mut w);
+    choose(&mut w, "Intersection", LayoutKind::Cooperative.name());
+    tick(&mut w, "Compare side by side", true);
+    let net = Network::build(LayoutKind::Cooperative);
+    step(&mut w, 42);
+    // The comparison's table took room from the map after the view was fitted: fit it
+    // again. B has the right half of the map, in the same view as A.
+    press(&mut w, "Fit view");
+    let to_b = vec2(map(&w).width() * 0.5 + 1.0, 0.0);
+    // Failures on A and on B, in the comparison's table.
+    let failed = |w: &Window| -> Option<(f64, f64)> {
+        let labels = texts(w);
+        let at = labels.iter().position(|t| t == "vehicles failed")?;
+        let number = |t: &String| t.trim().parse::<f64>().ok();
+        Some((number(&labels[at + 1])?, number(&labels[at + 2])?))
+    };
+
+    // A vehicle approaching the box on side B stops dead, as soon as the clock moves.
+    press(&mut w, "⚠ Stall a vehicle");
+    let spot = ways(&net, |m| m.turn == Turn::T, -17.0, -41.0)
+        .into_iter()
+        .find(|&p| {
+            let pos = on_map(&w, &net, p, true) + to_b;
+            click_at(&mut w, pos);
+            shows(&w, " stopped dead; so will the next one there on the other side")
+        })
+        .expect("a vehicle on an approach of side B");
+    press(&mut w, "⚠ Stall a vehicle");
+    assert_eq!(failed(&w), None, "nothing fails while the clock stands");
+    step(&mut w, 1);
+    assert_eq!(failed(&w), Some((0.0, 1.0)), "the vehicle on side B has failed, and none on side A yet");
+    // On side A the next vehicle to reach that place does, on the same approach.
+    let mut seconds = 0;
+    while failed(&w).is_some_and(|f| f.0 < 1.0) {
+        assert!(seconds < 120, "no failure on side A after {seconds} s");
+        step(&mut w, 1);
+        seconds += 1;
+    }
+    assert_eq!(failed(&w), Some((1.0, 1.0)));
+    let approach = net.legs.iter().max_by(|a, b| spot.dot(a.d).total_cmp(&spot.dot(b.d))).unwrap();
+    let failure = latest_failure(&w).expect("the failure on side A");
+    assert!(failure.contains(&format!(" ({} ", approach.compass.bound().to_lowercase())), "{failure}");
+    assert!(failure.contains(") stopped dead on the approach, "), "{failure}");
+}
+
+#[test]
+fn a_withdrawn_crossing_shows_until_its_vehicle_reacts() {
+    let mut w = open();
+    pause(&mut w);
+    choose(&mut w, "Intersection", LayoutKind::Cooperative.name());
+    let net = Network::build(LayoutKind::Cooperative);
+    // When a vehicle fails, those that can still stop short of the box lose their
+    // crossings, and for the half second it takes them to react they keep to what is
+    // left of them. The Step button moves the clock a whole second, so that shows only
+    // after a failure in the second half of one. Random failures come at any moment:
+    // step until one does, and look at the vehicles behind the failed one. The failed
+    // vehicles brake to a stop, which leaves those behind them room to stop too.
+    choose(&mut w, "Failure", Fault::Braking.name());
+    slide(&mut w, "random stalls / h", 120.0);
+    let mut failures = 0;
+    let mut withdrawn = false;
+    for _ in 0..900 {
+        step(&mut w, 1);
+        let n: usize = figure(&w, "vehicles failed").map_or(0, |n| n.parse().expect("a count"));
+        if n == failures {
+            continue;
+        }
+        failures = n;
+        let failure = latest_failure(&w).expect("the latest failure");
+        withdrawn = ways(&net, |m| names(&net, m, &failure), -12.0, -60.0).into_iter().any(|p| {
+            let pos = on_map(&w, &net, p, false);
+            click_at(&mut w, pos);
+            row(&w, "reservation").as_deref() == Some("withdrawn after a failure: it stops short of the box")
+        });
+        if withdrawn {
+            break;
+        }
+    }
+    assert!(withdrawn, "none of {failures} failures left a withdrawn crossing to see");
+    slide(&mut w, "random stalls / h", 0.0);
+    // A second later the vehicle has no reservation, and waits for a new one.
+    let vehicle = row(&w, "vehicle");
+    step(&mut w, 1);
+    assert_eq!(row(&w, "vehicle"), vehicle);
+    assert_eq!(row(&w, "reservation").as_deref(), Some("none yet: waiting for one"));
+    assert!(figure(&w, "crossings withdrawn").is_some_and(|n| n != "0"), "the results count none");
+    assert!(shows(&w, "safety overlaps: 0"));
 }
 
 #[test]

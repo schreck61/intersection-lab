@@ -198,6 +198,30 @@ fn the_cooperative_crossing_with_both_schedules_and_the_about_window() {
 }
 
 #[test]
+fn a_failure_can_be_set_for_a_moment_of_the_run() {
+    // The vehicle nearest the middle of the box brakes to a stop 12 s into the run, on
+    // both sides of the comparison.
+    let s = scene_of(&[
+        ("TS_LAYOUT", "cooperative"),
+        ("TS_TWIN", "p1"),
+        ("TS_STALL", "box"),
+        ("TS_STALL_AT", "12"),
+        ("TS_FAULT", "brake"),
+    ]);
+    assert_eq!(s.list("Failure"), "Brakes hard to a stop");
+    assert!(s.shows("braked to a stop in the box, fail-safe gaps: "), "{}", s.0);
+    assert!(s.shows("fastest of them"), "side B has no failure:\n{}", s.0);
+    // At the worst moment, once a vehicle has a crossing vehicle right behind it.
+    let s = scene_of(&[("TS_LAYOUT", "cooperative"), ("TS_STALL", "worst"), ("TS_STALL_AT", "1")]);
+    assert_eq!(s.list("Failure"), "Stops dead");
+    assert!(
+        s.paints("a failure is set for the worst moment") || s.shows("stopped dead in the box"),
+        "{}",
+        s.0
+    );
+}
+
+#[test]
 fn the_comparison_can_serve_first_come_first_served() {
     let s = scene_of(&[("TS_LAYOUT", "cooperative"), ("TS_TWIN", "fcfs")]);
     assert!(s.paints("A · Intersection manager · fail-safe gaps"), "{}", s.0);

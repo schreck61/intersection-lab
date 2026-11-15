@@ -5,7 +5,7 @@
 //! scene (terrain, roads, markings, buildings, trees) and per-frame shapes for
 //! signals, sensors, the intersection manager's state, vehicles and pedestrians.
 
-use crate::sim::coop::Scheduling;
+use crate::sim::coop::{PlanKind, Scheduling};
 use crate::sim::geom::{V2, v2};
 use crate::sim::network::{LayoutKind, LinkKind, Network, Turn};
 use crate::sim::sensors::Source;
@@ -92,6 +92,10 @@ pub const SCHEDULED: Color32 = Color32::from_rgb(90, 220, 240);
 pub const WAITING: Color32 = Color32::from_rgb(250, 180, 60);
 pub const ADMITTING: Color32 = Color32::from_rgb(120, 235, 160);
 pub const PASSAGE: Color32 = Color32::from_rgb(214, 196, 150);
+/// Cooperative crossing, after a failure: a disabled vehicle (failed or struck), and one
+/// that braked to an emergency stop or stopped behind one.
+pub const DISABLED: Color32 = Color32::from_rgb(245, 70, 60);
+pub const EMERGENCY: Color32 = Color32::from_rgb(235, 110, 215);
 
 fn shade(c: Color32, k: f32) -> Color32 {
     let f = |x: u8| ((x as f32 * k).clamp(0.0, 255.0)) as u8;
@@ -860,14 +864,15 @@ pub fn paint_dynamic(painter: &egui::Painter, dc: &DrawCtx) {
     if let Some(c) = &sim.coop
         && cam.scale >= 2.2
     {
-        // Has a trajectory, or is still waiting for one (right turns need none).
+        // Has a trajectory, or is still waiting for one (right turns need none); after
+        // a failure, disabled, or stopped for a disabled vehicle.
         for v in &sim.vehicles {
-            let col = if c.plans.contains_key(&v.id) {
-                SCHEDULED
-            } else if c.managed(v.movement) {
-                WAITING
-            } else {
-                continue;
+            let col = match c.plans.get(&v.id).map(|p| p.kind) {
+                _ if v.disabled => DISABLED,
+                Some(PlanKind::Crossing) => SCHEDULED,
+                Some(PlanKind::EmergencyStop | PlanKind::StopBehind) => EMERGENCY,
+                _ if c.managed(v.movement) => WAITING,
+                _ => continue,
             };
             let p = cam.to_screen(dc.center(v));
             painter.circle_filled(p, (0.42 * cam.scale).max(2.0), Color32::from_black_alpha(120));
@@ -877,6 +882,7 @@ pub fn paint_dynamic(painter: &egui::Painter, dc: &DrawCtx) {
     for p in &sim.peds {
         paint_ped(painter, dc, p);
     }
+    paint_failures(painter, dc);
     if dc.ov.conflicts {
         // Cooperative crossing: 2 while a scheduled vehicle is in the zone, 1 when one is
         // due within 3 s.
@@ -1248,6 +1254,70 @@ fn paint_admission(painter: &egui::Painter, dc: &DrawCtx) {
     }
 }
 
+/// Cooperative crossing: disabled vehicles, recent contacts, and the places where the
+/// next vehicle to arrive will fail.
+fn paint_failures(painter: &egui::Painter, dc: &DrawCtx) {
+    let (sim, cam) = (dc.sim, dc.cam);
+    let Some(c) = &sim.coop else { return };
+    // A disabled vehicle: a red ring that pulses, visible at any zoom.
+    let pulse = (0.5 + 0.5 * (dc.time * 5.0).sin()) as f32;
+    for v in sim.vehicles.iter().filter(|v| v.disabled) {
+        let p = cam.to_screen(dc.center(v));
+        let r = ((0.5 * v.len() + 1.2) as f32 * cam.scale).max(7.0);
+        painter.circle_stroke(p, r, Stroke::new(2.0, DISABLED.gamma_multiply(0.55 + 0.45 * pulse)));
+        painter.circle_stroke(p, r + 2.0 + 3.0 * pulse, Stroke::new(1.0, DISABLED.gamma_multiply(0.35)));
+    }
+    // Where two vehicles touched, for a few seconds: a burst, with the closing speed.
+    for imp in c.incidents.iter().flat_map(|i| &i.impacts) {
+        let age = sim.t - imp.t;
+        if !(0.0..4.0).contains(&age) {
+            continue;
+        }
+        let p = cam.to_screen(v2(imp.at.0, imp.at.1));
+        let fade = (1.0 - age / 4.0) as f32;
+        let r = (1.5 + 2.5 * age as f32) * cam.scale.max(2.0);
+        painter.circle_stroke(
+            p,
+            r,
+            Stroke::new(2.5 * fade, Color32::from_rgb(255, 235, 140).gamma_multiply(fade)),
+        );
+        painter.text(
+            p + egui::vec2(0.0, -r - 4.0),
+            Align2::CENTER_BOTTOM,
+            format!("{:.0} km/h", imp.speed * 3.6),
+            FontId::proportional(12.0),
+            Color32::from_rgb(255, 235, 140).gamma_multiply(fade.max(0.3)),
+        );
+    }
+    // A place set for a failure: a cross on the path.
+    for trap in &c.traps {
+        let Some(route) = sim
+            .net
+            .movements
+            .iter()
+            .flat_map(|m| &m.routes)
+            .find(|r| r.0 == trap.lane)
+            .map(|r| std::iter::once(r.0).chain(r.1.iter().copied()))
+        else {
+            continue;
+        };
+        let mut x = trap.x;
+        for l in route {
+            let link = &sim.net.links[l];
+            if x <= link.length() {
+                let p = cam.to_screen(link.path.point(x));
+                let d = (0.9 * cam.scale).max(4.0);
+                for (a, b) in [(egui::vec2(-d, -d), egui::vec2(d, d)), (egui::vec2(-d, d), egui::vec2(d, -d))]
+                {
+                    painter.line_segment([p + a, p + b], Stroke::new(2.0, DISABLED));
+                }
+                break;
+            }
+            x -= link.length();
+        }
+    }
+}
+
 fn base_color(v: &Vehicle, by: ColorBy) -> Color32 {
     match by {
         ColorBy::Type => match v.kind {
@@ -1431,7 +1501,23 @@ fn paint_vehicle(painter: &egui::Painter, dc: &DrawCtx, v: &Vehicle) {
     // Turn indicators near and inside the intersection.
     let link = &sim.net.links[v.link()];
     let near = link.kind.in_box() || (link.kind == LinkKind::Inbound && link.length() - v.s < 70.0);
-    if near && v.turn != Turn::T && blink {
+    if v.disabled {
+        // Hazard lights: all four corners.
+        if blink {
+            for side in [-1.0, 1.0] {
+                for p in [
+                    front - fax * 0.2 + fax.right() * (hw * side),
+                    rear + lax * 0.2 + lax.right() * (lhw * side),
+                ] {
+                    painter.circle_filled(
+                        cam.to_screen(p),
+                        (0.2 * cam.scale).max(1.2),
+                        Color32::from_rgb(255, 170, 30),
+                    );
+                }
+            }
+        }
+    } else if near && v.turn != Turn::T && blink {
         let side = if v.turn == Turn::L { -1.0 } else { 1.0 };
         for p in
             [front - fax * 0.2 + fax.right() * (hw * side), rear + lax * 0.2 + lax.right() * (lhw * side)]
@@ -1622,6 +1708,39 @@ pub fn hud(painter: &egui::Painter, rect: Rect, sim: &Sim, ctrl_name: &str, spee
             FontId::proportional(13.0),
             Color32::from_rgb(200, 245, 255),
         );
+        // A failure gets a line of its own.
+        let stopped = c
+            .plans
+            .values()
+            .filter(|p| matches!(p.kind, PlanKind::EmergencyStop | PlanKind::StopBehind))
+            .count();
+        let alert = if !c.wrecks.is_empty() {
+            let them = if c.wrecks.len() == 1 { "it" } else { "them" };
+            format!("⚠ {} DISABLED, {stopped} stopped for {them}", c.wrecks.len())
+        } else if stopped > 0 {
+            format!("⚠ {stopped} stopped, waiting for a way out")
+        } else if c.armed.is_some() {
+            "⚠ a failure is set for the worst moment".to_string()
+        } else {
+            String::new()
+        };
+        if !alert.is_empty() {
+            let p3 = p2 + egui::vec2(0.0, 19.0);
+            painter.text(
+                p3 + egui::vec2(1.0, 1.0),
+                Align2::LEFT_TOP,
+                &alert,
+                FontId::proportional(13.0),
+                Color32::from_black_alpha(160),
+            );
+            painter.text(
+                p3,
+                Align2::LEFT_TOP,
+                &alert,
+                FontId::proportional(13.0),
+                Color32::from_rgb(255, 150, 130),
+            );
+        }
     }
     if sim.signalized() {
         let st = &sim.net.stages[sim.signal.stage];
