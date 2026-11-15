@@ -49,7 +49,8 @@ fn bench(dir: &Path, args: &[&str]) -> String {
     run(env!("CARGO_BIN_EXE_bench"), dir, args, &[])
 }
 
-/// The rows of a strategy table, with the number of collisions each run had.
+/// The rows of a strategy table, each with the overlaps between vehicles that the safety
+/// check counted in its runs (`bench` turns the check on for these tables).
 fn collisions(table: &str) -> Vec<(String, f64)> {
     table
         .lines()

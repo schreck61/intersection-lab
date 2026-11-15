@@ -713,12 +713,12 @@ this step. A stopped driver waits out their reaction time before pulling away.
   * It retires vehicles that have reached the end of their route. Each becomes a
     `stats::Done` record and, in a corridor, an `Exit` for `World` to hand over.
 * **Safety check (`check_overlaps`):** when `check_safety` is on, as it is in the app,
-  the safety and cooperative tests, the sweeps and the corridor and cooperative studies,
-  every step looks for touching vehicles. Bodies are chains of oriented rectangles that
-  bend through turns (`body`, `obb_overlap`). It flags vehicles on the same lane that
-  overlap by more than 0.3 m, and runs the rectangle test, with rectangles shrunk by
-  0.25 m, on pairs in or just past the box. Each pair counts once per step in
-  `collisions`.
+  `bench`'s strategy tables, the safety, cooperative and green-wave tests, the sweeps and
+  the corridor and cooperative studies, every step looks for touching vehicles. Bodies
+  are chains of oriented rectangles that bend through turns (`body`, `obb_overlap`). It
+  flags vehicles on the same lane that overlap by more than 0.3 m, and runs the rectangle
+  test, with rectangles shrunk by 0.25 m, on pairs in or just past the box. Each pair
+  counts once per step in `collisions`.
 * **Drawing helpers (`body_lagged`, `lag`, `lc_offset`, `ped_pos_lerp`):** let the app
   draw positions *between* steps for smooth motion. The safety check and lane changes
   use the same functions with no lag.
@@ -3065,7 +3065,7 @@ The notices run to thousands of lines, so only the visible lines are laid out.
 |---|---|
 | `src/main.rs` | **Native:** opens a 1600 × 1000 window (at least 1100 × 700) with the embedded icon and runs `gui::App`. Release builds on Windows use the GUI subsystem, so no console window appears. **Browser:** finds `<canvas id="app">` in `web/index.html`, starts `eframe::WebRunner` and replaces the loading message with the outcome |
 | `src/lib.rs` | Declares the four modules. `scenario(kind, mode, ctrl, demand, sensors, seed) -> Sim` builds a headless simulation, and `run_scenario(sim, warmup, duration) -> (Summary, collisions)` runs it and summarizes everything after the warm-up. `bench` and the app's benchmarks use them; the browser's benchmark queue steps each `Sim` itself and calls `Stats::summary` the same way |
-| `src/bin/bench.rs` | `bench [layout\|all] [minutes] [seeds] [demand-scale] [pattern]` prints a table per layout: every control strategy, averaged over seeds 1,000 and up after a 300 s warm-up, with delay, 95th percentile delay, throughput, stops, person delay including unserved vehicles, pedestrian wait, unserved vehicles and collisions. `bench sensors <layout> [minutes] [seeds]` runs the command-line sensor study: the app's five sensor packages (§9.4) and an ideal version of loops, camera and radar, then weather and faulty loops |
+| `src/bin/bench.rs` | `bench [layout\|all] [minutes] [seeds] [demand-scale] [pattern]` prints a table per layout: every control strategy, averaged over seeds 1,000 and up after a 300 s warm-up, with delay, 95th percentile delay, throughput, stops, person delay including unserved vehicles, pedestrian wait and unserved vehicles. The `coll` column counts the overlaps found by the safety check (§6.1), which these runs turn on: a total over the seeds, warm-up included. `bench sensors <layout> [minutes] [seeds]` runs the command-line sensor study, without the safety check: the app's five sensor packages (§9.4) and an ideal version of loops, camera and radar, then weather and faulty loops |
 | `src/bin/train.rs` | Trains the Deep RL and Hybrid networks (§8.5) |
 
 ### 10.2 Studies
@@ -3087,9 +3087,9 @@ The examples are the studies behind `docs/insights.md` and
 
 ### 10.3 Tests
 
-`cargo test` runs nine integration test files and the unit tests in `sim/coop.rs`,
-`sim/signal.rs` and `gui/mod.rs`. CI runs them in release mode on Linux, macOS and
-Windows, and measures how much of the crate they cover (§11).
+`cargo test` runs nine integration test files and the unit tests in `bin/bench.rs`,
+`sim/coop.rs`, `sim/signal.rs` and `gui/mod.rs`. CI runs them in release mode on Linux,
+macOS and Windows, and measures how much of the crate they cover (§11).
 
 | File | Tests | What they require |
 |---|---:|---|
@@ -3102,6 +3102,7 @@ Windows, and measures how much of the crate they cover (§11).
 | `tests/gui.rs` | 16 | The app, run without a window by `egui_kittest` and driven through its accessibility tree, the keyboard and the pointer: every panel opens and every control has a name; Space pauses and Step advances one second; every layout, control mode and controller runs, side by side too and along a corridor with the green wave; the demand, sensor and operations settings apply; the learning controllers show what they learn; every overlay and coloring draws; vehicles and pedestrians placed by hand, movements an approach lacks refused; a clicked vehicle's details; pan, zoom and *Fit view*; both benchmark windows; *About* |
 | `tests/scripted.rs` | 8 | Each `TS_*` variable of the scripted mode sets up its scene, a scripted screenshot stops the clock at its moment and screenshots are valid PNG files. The app reads the variables as it starts, so each scene opens in a process of its own |
 | `tests/tools.rs` | 7 | `bench` compares every strategy on every layout without collisions, takes each arrival pattern and runs the sensor study; `train` trains, saves and resumes both learning controllers, in a scratch directory with its own home directory |
+| `src/bin/bench.rs` | 1 | A run for a strategy table counts a vehicle placed on top of another, so the `coll` column can show an overlap |
 | `src/sim/coop.rs` | 4 | Approach profiles arrive on time and at speed, a short run-up enters slower but on time, the gap policies give the gaps in §6.11 and the following law holds its time gap |
 | `src/sim/signal.rs` | 1 | The signal history records a change's yellow and all-red between the two greens, with no gaps |
 | `src/gui/mod.rs` | 1 | The safety monitors' margin over the gap keeps its sign |
