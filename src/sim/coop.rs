@@ -124,7 +124,7 @@ impl GapPolicy {
         match self {
             GapPolicy::FailSafe => "Fail-safe: can stop for a stalled vehicle",
             GapPolicy::Mitigated => "Mitigated: can slow to 25 km/h",
-            GapPolicy::Nominal => "Nominal: latency and actuation (no failures)",
+            GapPolicy::Nominal => "Nominal: latency and actuation only",
         }
     }
     /// One word for labels.
