@@ -3028,7 +3028,7 @@ gap policy comparison: batches with fail-safe, mitigated and nominal gaps at 27.
 #### About
 
 <img src="images/architecture/about-window.png" width="618" alt="About window:
-Intersection Lab 0.5.1, its description, copyright, dual MIT and Apache 2.0 license, the
+Intersection Lab 0.6.0, its description, copyright, dual MIT and Apache 2.0 license, the
 repository link and the start of the third-party license notices">
 
 The About window shows:
