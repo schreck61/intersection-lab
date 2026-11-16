@@ -236,10 +236,10 @@ docs/               this document, insights.md, cooperative-intersections.md (wi
 | `src/control/` | 8 | 1,608 |
 | `src/rl/` | 3 | 361 |
 | `src/gui/` | 5 | 4,905 |
-| `src/bin/` | 2 | 693 |
+| `src/bin/` | 2 | 727 |
 | `src/lib.rs`, `src/main.rs` | 2 | 96 |
 | `examples/` | 9 | 999 |
-| `tests/` | 11 | 4,187 |
+| `tests/` | 11 | 4,266 |
 | `fuzz/fuzz_targets/` | 1 | 61 |
 
 | Target | Built from | Purpose |
@@ -1776,7 +1776,7 @@ Hybrid's major/minor and T-intersection files hold only its best static tuning
 
 | File | Lines | What it holds |
 |---|---:|---|
-| `src/bin/train.rs` | 441 | Training, model selection and the test report |
+| `src/bin/train.rs` | 475 | Training, model selection and the test report |
 | `rl/nn.rs` | 190 | `Mlp`, `Grads` and `Adam` |
 | `rl/dqn.rs` | 166 | `Dqn`, `Transition`, `SavedModel` and `argmax_masked` |
 | `rl/mod.rs` | 5 | The module list |
@@ -1985,7 +1985,8 @@ tuning.
 ### 8.5 `bin/train.rs`: training and model selection
 
 `train [layout|all] [episodes] [episode-seconds] [dqn|hybrid|both]` trains on the
-signalized layouts. The defaults are `all 200 900 both`; the README's commands train
+signalized layouts. A name that matches no signalized layout stops it with an error
+before it makes `weights/`. The defaults are `all 200 900 both`; the README's commands train
 800 episodes of 900 s. It runs one thread per layout and controller, so `train all`
 trains eight agents at once, and the private `Agent` enum wraps the two controllers
 behind one interface. It moves the boxed controller into a `Sim`, runs an episode, and
@@ -2269,11 +2270,15 @@ tuning". A Hybrid that loaded only a base tuning says "no network beat the best 
 tuning" when its file has no network, the same as for the shipped static files, and
 "the saved network doesn't fit this layout" when the file's network was left out.
 
-Saving goes through `save_path`. It writes to `weights/` in the working directory when
-that directory exists, which, run from a checkout, overwrites the shipped files.
-Otherwise it writes to the user data directory, creating it first, or to `weights/` when
-there is no user data directory. `train` creates `weights/` when it saves, and the next
-build embeds whatever it wrote.
+Saving from the app goes through `save_path`. It writes to `weights/` in the working
+directory when that directory exists, which, run from a checkout, overwrites the shipped
+files. Otherwise it writes to the user data directory, creating it first, or to
+`weights/` when there is no user data directory. `train` doesn't use `save_path`: it
+writes only to `weights/` in the working directory, which it creates before it trains,
+and stops with an error if it can't make the folder or write a file. Unlike `save_path`,
+it doesn't turn to the user data directory when `weights/` is missing. It does write
+over files of the same name already in `weights/`, including ones saved there from the
+app. The next build embeds whatever `train` wrote.
 
 A Hybrid file also records `base_score`, the validation person delay of what it
 holds, when there is one. The app's *Save weights* measures no score, and when no
@@ -3357,7 +3362,7 @@ release mode on Linux, macOS and Windows, and measures how much of the crate the
 | `tests/networks.rs` | 7 | Backpropagation agrees with the gradient measured numerically, Adam fits a line, the shape check rejects every malformed network (sizes whose product overflows included), the target network moves part way toward the online one, the action mask is respected, Double DQN learns which action pays in which state and the replay memory keeps the latest 60,000 transitions |
 | `tests/gui.rs` | 22 | The app, run without a window by `egui_kittest` and driven through its accessibility tree, the keyboard and the pointer: every panel opens and every control has a name; Space pauses and Step advances one second; every layout, control mode and controller runs, side by side too and along a corridor with the green wave; the demand, sensor and operations settings apply; the learning controllers show what they learn; every overlay and coloring draws; vehicles and pedestrians placed by hand, movements an approach lacks refused; a clicked vehicle's details; a vehicle of the cooperative crossing made to fail from the buttons and by a click, on both sides of a comparison; what *Stall one in the box* does on an empty crossing and once every lane with a vehicle on its way has a failure set; what a failed vehicle, one stopped behind it, one on its way out of the box and one whose crossing was withdrawn say when selected; pan, zoom and *Fit view*; both benchmark windows; *About* |
 | `tests/scripted.rs` | 9 | Each `TS_*` variable of the scripted mode sets up its scene, a scripted screenshot stops the clock at its moment and screenshots are valid PNG files. The app reads the variables as it starts, so each scene opens in a process of its own |
-| `tests/tools.rs` | 7 | `bench` compares every strategy on every layout without collisions, takes each arrival pattern and runs the sensor study; `train` trains, saves and resumes both learning controllers, in a scratch directory with its own home directory |
+| `tests/tools.rs` | 10 | `bench` compares every strategy on every layout without collisions, takes each arrival pattern and runs the sensor study; `train` trains, saves and resumes both learning controllers, in a scratch directory with its own home directory, stops without touching the weights saved from the app when it can't make its `weights` folder, stops instead of reporting a result when it can't write the Hybrid's weights file, and stops with an error, making no folder, when no signalized layout has the name it is given |
 | `src/bin/bench.rs` | 1 | A run for a strategy table counts a vehicle placed on top of another, so the `coll` column can show an overlap |
 | `src/sim/coop.rs` | 4 | Approach profiles arrive on time and at speed, a short run-up enters slower but on time, the gap policies give the gaps in §6.11 and the following law holds its time gap |
 | `src/sim/coop/failures.rs` | 6 | An emergency stop ends at rest after its braking distance, a trajectory holds the zones it rests in without end, a vehicle that can't stop behind another is expected at its rear and holds the zones it will stand in, a vehicle can be put anywhere along its route and passes clear of one at rest on another approach, a vehicle whose crossing was withdrawn brakes for its line while it doesn't yet respond to the vehicle ahead, and every gap allows the reaction time |
