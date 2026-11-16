@@ -22,11 +22,13 @@ it, and what it doesn't protect against:
   The `train` tool writes the weights it trains to a `weights` folder in the folder it's
   run from, `bench` writes no files, and the app's screenshot mode (`TS_SHOT`) writes
   only the image you name.
-* **Files are checked before use.** A weights file is parsed into typed data and checked
-  against what its controller accepts (layer sizes, connections between layers, finite
-  values). A file that fails is rejected rather than run, and CI fuzzes this loader on
-  every pull request. A file that passes can still make its controller manage traffic
-  badly, so use weights only from sources you trust.
+* **Files are checked before use.** A weights file is parsed into typed data, and its
+  network is checked against what its controller accepts (layer sizes, connections
+  between layers, finite values). A file that doesn't parse is skipped for the next
+  copy. A network that fails the check is never run: a Deep RL file with one is skipped
+  too, and a Hybrid file loads without its network and runs only its saved base tuning.
+  CI fuzzes this loader on every pull request. A file that loads can still make its
+  controller manage traffic badly, so use weights only from sources you trust.
 * **No code from data.** The app has no plugins, scripting or other way to run code
   from the files it reads, and its own code is safe Rust with no `unsafe` blocks.
 * **Verifiable releases.** Every release file is signed and comes with a
