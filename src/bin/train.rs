@@ -15,6 +15,9 @@
 //!
 //! Environment: `RESUME=1` fine-tunes the saved weights, `SEED=n` changes the random
 //! seed, and `HIDDEN=128,128` overrides the hidden layer sizes of a new network.
+//!
+//! Weights are written to `weights/` in the working directory and nowhere else. If that
+//! folder can't be made, or a file in it can't be written, `train` stops with the error.
 
 use intersection_lab::control::hybrid::{self, Hybrid};
 use intersection_lab::control::rl::{self, RlController};
@@ -24,6 +27,7 @@ use intersection_lab::sim::network::{LayoutKind, Network};
 use intersection_lab::sim::rng::Rng;
 use intersection_lab::sim::sensors::{Conditions, SensorConfig};
 use intersection_lab::sim::{ControlMode, Sim};
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 /// A checkpoint is accepted only if its mean pedestrian wait is within this many
@@ -142,11 +146,16 @@ impl Agent {
         }
     }
     fn save(&self, layout: LayoutKind, score: f64) {
-        std::fs::create_dir_all("weights").ok();
         match self {
-            Agent::Dqn(a) => a.save(&rl::weights_path(layout.key())).ok(),
-            Agent::Hybrid(a) => a.save(&hybrid::weights_path(layout.key()), Some(score), true).ok(),
-        };
+            Agent::Dqn(a) => {
+                let path = weights_dir().join(rl::weights_file(layout.key()));
+                written(a.save(&path), &path);
+            }
+            Agent::Hybrid(a) => {
+                let path = weights_dir().join(hybrid::weights_file(layout.key()));
+                written(a.save(&path, Some(score), true), &path);
+            }
+        }
     }
     fn loss(&self) -> f32 {
         let l = match self {
@@ -280,8 +289,8 @@ fn train(kind: LayoutKind, episodes: u64, secs: f64, which: &str) {
         // When no tuning met the pedestrian limit, its score is infinite and isn't saved.
         h.base_action = base.1;
         best = base.0;
-        std::fs::create_dir_all("weights").ok();
-        h.save(&hybrid::weights_path(kind.key()), Some(base.0), false).ok();
+        let path = weights_dir().join(hybrid::weights_file(kind.key()));
+        written(h.save(&path, Some(base.0), false), &path);
         saved_any = true;
     }
     agent.set(true, 0.0, 0.0);
@@ -407,6 +416,22 @@ fn report_test(
     println!("{line}  agent {}", fmt(evaluate(net, agent, &test, secs).0));
 }
 
+/// Where `train` writes: `weights/` in the working directory. It doesn't use the app's
+/// `save_path`, which turns to the per-user data directory when that folder is missing
+/// and would then write over the weights saved from the app.
+fn weights_dir() -> PathBuf {
+    PathBuf::from("weights")
+}
+
+/// Stop with the error if weights file `path` could not be written: a run must not go on
+/// to report a "saved" checkpoint, or score some other copy of the file as its result.
+fn written(result: std::io::Result<()>, path: &Path) {
+    if let Err(e) = result {
+        eprintln!("train: can't write {}: {e}", path.display());
+        std::process::exit(1);
+    }
+}
+
 fn resume_salt() -> u64 {
     if std::env::var_os("RESUME").is_some() { 99 } else { 0 }
 }
@@ -431,6 +456,15 @@ fn main() {
         .copied()
         .filter(|k| k.signalized() && (which == "all" || k.key() == which))
         .collect();
+    if kinds.is_empty() {
+        eprintln!("train: no signalized layout is named {which}");
+        std::process::exit(1);
+    }
+    // Before any training, so a run doesn't work for minutes only to find the folder can't be made.
+    if let Err(e) = std::fs::create_dir_all(weights_dir()) {
+        eprintln!("train: can't make the folder {}: {e}", weights_dir().display());
+        std::process::exit(1);
+    }
     let hs: Vec<_> = kinds
         .into_iter()
         .flat_map(|k| agents.iter().map(move |&a| std::thread::spawn(move || train(k, episodes, secs, a))))

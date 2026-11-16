@@ -161,6 +161,85 @@ fn train_saves_the_hybrid_tuning() {
 }
 
 #[test]
+fn train_stops_when_it_cannot_write_to_the_weights_folder() {
+    // `weights` is a file here, so the folder can't be made. `train` used to turn to the
+    // per-user data directory then, and write over the weights saved from the app.
+    let dir = scratch("train_no_folder");
+    std::fs::write(dir.join("weights"), "not a folder").unwrap();
+    let per_user = [
+        "Library/Application Support/Intersection Lab/weights",
+        "Intersection Lab/weights",
+        "intersection-lab/weights",
+    ];
+    for folder in per_user {
+        std::fs::create_dir_all(dir.join(folder)).unwrap();
+        std::fs::write(dir.join(folder).join("hybrid_tee.json"), "saved from the app").unwrap();
+    }
+    let out = Command::new(env!("CARGO_BIN_EXE_train"))
+        .args(["tee", "1", "150", "hybrid"])
+        .current_dir(&dir)
+        .env("HOME", &dir)
+        .env("XDG_DATA_HOME", &dir)
+        .env("APPDATA", &dir)
+        .env_remove("RESUME")
+        .env_remove("SEED")
+        .env("HIDDEN", "8")
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "train went on without a weights folder:\n{said}");
+    assert!(said.contains("train: can't make the folder weights"), "{said}");
+    for folder in per_user {
+        let kept = std::fs::read_to_string(dir.join(folder).join("hybrid_tee.json")).unwrap();
+        assert_eq!(kept, "saved from the app", "{folder}");
+    }
+}
+
+#[test]
+fn train_stops_when_it_cannot_write_a_weights_file() {
+    // The folder is there, but a folder stands where the weights file goes.
+    let dir = scratch("train_no_file");
+    std::fs::create_dir_all(dir.join("weights").join("hybrid_tee.json")).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_train"))
+        .args(["tee", "1", "150", "hybrid"])
+        .current_dir(&dir)
+        .env("HOME", &dir)
+        .env("XDG_DATA_HOME", &dir)
+        .env("APPDATA", &dir)
+        .env_remove("RESUME")
+        .env_remove("SEED")
+        .env("HIDDEN", "8")
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&out.stderr);
+    let printed = String::from_utf8_lossy(&out.stdout);
+    assert!(!out.status.success(), "train went on without saving:\n{printed}\n{said}");
+    assert!(said.contains("train: can't write weights"), "{said}");
+    assert!(!printed.contains("TEST person delay"), "{printed}");
+}
+
+#[test]
+fn train_stops_at_a_layout_it_does_not_train() {
+    // A mistyped layout, and one without signals, train nothing: say so, and leave no
+    // empty `weights` folder behind for the app to save into.
+    for layout in ["arterial", "roundabout"] {
+        let dir = scratch("train_no_layout");
+        let out = Command::new(env!("CARGO_BIN_EXE_train"))
+            .args([layout, "1", "150", "hybrid"])
+            .current_dir(&dir)
+            .env("HOME", &dir)
+            .env("XDG_DATA_HOME", &dir)
+            .env("APPDATA", &dir)
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "train {layout} reported success");
+        assert!(said.contains(&format!("train: no signalized layout is named {layout}")), "{said}");
+        assert!(!dir.join("weights").exists(), "train {layout} left a weights folder");
+    }
+}
+
+#[test]
 fn train_resumes_the_built_in_hybrid() {
     let dir = scratch("train_hybrid_resume");
     let out = train(&dir, "hybrid", &[("RESUME", "1")]);
