@@ -3,8 +3,7 @@
 This document describes how Intersection Lab is put together. It covers what each Rust
 source file does, how the code is split into layers, and how those layers work together
 during a simulation step, a corridor run, a cooperative crossing, a benchmark and a
-training run. It describes the code on `main`: version 0.6.0, with the failures at the
-cooperative crossing added since.
+training run. It describes the code on `main`: version 0.7.0.
 Section 9.4 is an illustrated tour of the app's window, and Appendix A says how the
 screenshots were made.
 
@@ -2493,11 +2492,12 @@ This section goes through every part of the window: what it shows, how to read i
 which code produces it. The screenshots come from the desktop app in its default
 1600 × 1000 window (the smallest it allows is 1100 × 700). Most show version 0.5.1;
 those of parts that changed since, such as the signal timing chart, which now draws
-yellow and all-red, were retaken with the code released as 0.6.0, and those of the
-failures at the cooperative crossing come from the code that added them. They were taken
-with the scripted-screenshot settings of Appendix A, two simulated minutes into the
-default scenario unless a caption says otherwise. The browser version looks the same,
-without the *Save weights* buttons and training commands of the learning panels.
+yellow and all-red, were retaken with the code released as 0.6.0, those of the
+failures at the cooperative crossing come from the code that added them, and the About
+window comes from version 0.7.0. They were taken with the scripted-screenshot settings
+of Appendix A, two simulated minutes into the default scenario unless a caption says
+otherwise. The browser version looks the same, without the *Save weights* buttons and
+training commands of the learning panels.
 
 #### The window at a glance
 
@@ -3285,7 +3285,7 @@ gap policy comparison: batches with fail-safe, mitigated and nominal gaps at 27.
 #### About
 
 <img src="images/architecture/about-window.png" width="618" alt="About window:
-Intersection Lab 0.6.0, its description, copyright, dual MIT and Apache 2.0 license, the
+Intersection Lab 0.7.0, its description, copyright, dual MIT and Apache 2.0 license, the
 repository link and the start of the third-party license notices">
 
 The About window shows:
