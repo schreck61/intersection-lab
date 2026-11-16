@@ -239,7 +239,7 @@ docs/               this document, insights.md, cooperative-intersections.md (wi
 | `src/bin/` | 2 | 727 |
 | `src/lib.rs`, `src/main.rs` | 2 | 96 |
 | `examples/` | 9 | 999 |
-| `tests/` | 11 | 4,266 |
+| `tests/` | 11 | 4,271 |
 | `fuzz/fuzz_targets/` | 1 | 61 |
 
 | Target | Built from | Purpose |
@@ -2254,7 +2254,7 @@ flowchart TB
 * **What happens when a check fails:** nothing is logged, and the next copy is tried,
   so a damaged file doesn't hide a good copy further down the list. A Hybrid file
   whose network doesn't fit still loads, without the network, since its base tuning
-  can still run.
+  can still run. A base tuning past the last of the 48 is read as the last one.
 
 | The copy | Deep RL | Hybrid |
 |---|---|---|
@@ -2300,9 +2300,9 @@ Weights files can be damaged or edited by hand, so their loading is tested and f
 * `tests/weights_files.rs` checks that every shipped file loads, that seven kinds of
   misshapen network are rejected (one with a weight of 10³⁹, which is infinite as an
   `f32`), that a Hybrid whose network doesn't fit keeps its base tuning and says so,
-  that Hybrid files saved with a score that isn't finite load again, that a copy that
-  doesn't load is skipped for the next one and that networks whose outputs overflow
-  don't crash anything.
+  that a base tuning out of range is read as the last one, that Hybrid files saved
+  with a score that isn't finite load again, that a copy that doesn't load is skipped
+  for the next one and that networks whose outputs overflow don't crash anything.
 * The `weights` fuzz target reads each input as both kinds of file for the
   T-intersection. A file that is accepted gets a training step if it has a network,
   then 20 s of simulation. The CI job "Fuzz (weights)" runs it for 60 s, starting from
@@ -3357,7 +3357,7 @@ release mode on Linux, macOS and Windows, and measures how much of the crate the
 | `tests/cooperative.rs` | 14 | The cooperative crossing: no signals, sensors or crosswalks; its geometry and phase order; every gap policy safe under heavy demand, bursts, heavy vehicles and live switching; about 18,000 vehicles per hour served at the design demand, about 19,000 oversaturated and less with single left lanes or first come, first served; reproducible runs; light traffic barely delayed; emergency vehicles first; hand-placed vehicles crossing every way. Every run, except those of the no-signals, single-left-lane and reproducibility tests, must show no overlap between vehicle bodies, no zone entered while occupied, no box entry without a reservation, no step off a granted trajectory, no crossing inside its required gap and no line or zone time off its reservation (both to within a microsecond), and at least one crossing measured |
 | `tests/failures.rs` | 20 | Failures at the cooperative crossing. When a vehicle stops dead at the worst moment, fail-safe gaps stop crossing traffic short of it under both schedules, mitigated gaps let it arrive at no more than 25 km/h and nominal gaps faster; a vehicle that brakes to a stop is survived; in batches a failure at a random place rarely reaches crossing traffic, though a dead stop is struck from behind; the crossing serves what a disabled vehicle leaves clear and recovers once it is cleared away; a failure outside the box only holds up its lane; a failure can be repeated at the same place on another run, and random failures are the same on runs with the same seed; twenty minutes of failures in heavy traffic leave nothing broken, and with fail-safe gaps no vehicles on crossing paths touch through some two hundred dead stops; a vehicle stopped in the box waits for one that passes it, one stopped behind a failure can fail in turn and one that fails at the edge of the map rolls off it; a failure only holds back the vehicles that leave their crossings for an emergency stop: none at rest is set going, none gets ahead of the trajectory it had, and one standing before its line loses its crossing instead; a vehicle that can't stop behind a dead stop is expected where it ends up, as is one that fails close behind it and one already on an emergency stop when the vehicle ahead stops short, and it stops by itself if the wreck is cleared away first; the log keeps the latest fifty failures; other layouts have none. Every run with a failure in it, except those of the test that repeats one, must show no vehicle off its trajectory, in the box without one, or overlapping another outside a recorded contact |
 | `tests/pedestrian_rule.rs` | 4 | Deep RL's shield serves a crosswalk whose pedestrians have waited longer than `PED_MAX_WAIT`, longest wait first, and leaves shorter waits to the controller; the reward counts waiting pedestrians |
-| `tests/weights_files.rs` | 6 | The shipped weights load, misshapen networks are rejected, a Hybrid without a fitting network keeps its base tuning and says so, Hybrid files saved with a score that isn't finite load again, a copy that doesn't load is skipped for the next one and networks that overflow don't crash (§8.7) |
+| `tests/weights_files.rs` | 6 | The shipped weights load, misshapen networks are rejected, a Hybrid without a fitting network keeps its base tuning and says so, a base tuning out of range is read as the last one, Hybrid files saved with a score that isn't finite load again, a copy that doesn't load is skipped for the next one and networks that overflow don't crash (§8.7) |
 | `tests/green_wave.rs` | 2 | The green wave runs every signal of a corridor fixed-time, and ending it gives back the controllers they ran before, except where another was chosen during the wave, without collisions; a single intersection isn't coordinated |
 | `tests/networks.rs` | 7 | Backpropagation agrees with the gradient measured numerically, Adam fits a line, the shape check rejects every malformed network (sizes whose product overflows included), the target network moves part way toward the online one, the action mask is respected, Double DQN learns which action pays in which state and the replay memory keeps the latest 60,000 transitions |
 | `tests/gui.rs` | 22 | The app, run without a window by `egui_kittest` and driven through its accessibility tree, the keyboard and the pointer: every panel opens and every control has a name; Space pauses and Step advances one second; every layout, control mode and controller runs, side by side too and along a corridor with the green wave; the demand, sensor and operations settings apply; the learning controllers show what they learn; every overlay and coloring draws; vehicles and pedestrians placed by hand, movements an approach lacks refused; a clicked vehicle's details; a vehicle of the cooperative crossing made to fail from the buttons and by a click, on both sides of a comparison; what *Stall one in the box* does on an empty crossing and once every lane with a vehicle on its way has a failure set; what a failed vehicle, one stopped behind it, one on its way out of the box and one whose crossing was withdrawn say when selected; pan, zoom and *Fit view*; both benchmark windows; *About* |

@@ -122,6 +122,11 @@ fn hybrid_without_a_fitting_network_keeps_its_base_tuning() {
     let no_network = json!({ "base_action": 10, "base_score": 0.0, "model": null }).to_string();
     let notes = status(Hybrid::from_saved(&net, &no_network).unwrap());
     assert!(notes.contains("no network beat the best static tuning"), "{notes}");
+
+    // A tuning number past the last one can only come from a damaged or edited file. It
+    // is read as the last tuning, not skipped.
+    let past = json!({ "base_action": 1000, "base_score": 0.0, "model": null }).to_string();
+    assert_eq!(Hybrid::from_saved(&net, &past).unwrap().base_action, N_ACTIONS - 1);
 }
 
 #[test]
