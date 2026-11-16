@@ -3433,7 +3433,9 @@ date:
   against the version and runs `cargo publish` through crates.io's Trusted Publishing.
 * **`scorecard.yml`** runs the OpenSSF Scorecard on every push to `main`, every Monday
   and when branch protection changes.
-* **Dependabot** proposes updates to the actions and the Cargo dependencies weekly.
+* **Dependabot** proposes updates to the actions and to the dependencies named in
+  `Cargo.toml` weekly, and a security update for a version in `Cargo.lock` that GitHub
+  has an advisory for, when a fixed version exists.
 
 | Platform | Packages | Built by | Signing |
 |---|---|---|---|
