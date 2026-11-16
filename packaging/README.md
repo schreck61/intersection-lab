@@ -1,6 +1,8 @@
 # Packaging and releases
 
-Intersection Lab ships as signed, installable packages for every major desktop platform.
+Intersection Lab ships as installable packages for every major desktop platform. Each comes
+with a signed build-provenance attestation, and the macOS app and the Windows executable
+and installer are also code-signed.
 GitHub Actions builds them all from a version tag ([`.github/workflows/release.yml`](../.github/workflows/release.yml)).
 It's also published to crates.io, so Rust users can `cargo install --locked intersection-lab`
 (see [crates.io](#cratesio)).
@@ -12,7 +14,7 @@ It's also published to crates.io, so Rust users can `cargo install --locked inte
 | Linux (glibc 2.35+) | x86_64, aarch64 | `.deb`, `.rpm`, `.tar.gz` | Build provenance attestations + SHA-256 checksums |
 
 Every release also carries `SHA256SUMS.txt` and a signed build-provenance attestation
-for each file. Users can verify a download with:
+that covers each package and that checksum file. Users can verify a download with:
 
 ```bash
 gh attestation verify IntersectionLab-0.6.0-macos-universal.dmg --repo schreck61/intersection-lab

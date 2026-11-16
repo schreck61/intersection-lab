@@ -16,12 +16,14 @@ it, and what it doesn't protect against:
   it has loaded.
 * **No extra privileges.** Once installed, the app runs with your ordinary user rights
   and never asks for more.
-* **Only its own files.** The app reads trained-weights files: from a `weights` folder in
-  the folder it's started from, then from its folder in your user data directory, and
-  otherwise from the copies built into it. It writes them only when you save weights.
-  The `train` tool writes the weights it trains to a `weights` folder in the folder it's
-  run from, `bench` writes no files, and the app's screenshot mode (`TS_SHOT`) writes
-  only the image you name.
+* **Only its own files.** The app reads trained-weights files: from a `weights` folder
+  in the folder it's started from, then from its folder in your user data directory, and
+  otherwise from the copies built into it. It writes them only when you save weights. To
+  draw its window, the desktop app also reads the fonts installed on your system and, on
+  Linux, desktop settings such as the mouse-pointer theme, and it loads the system's
+  windowing and graphics libraries. The `train` tool writes the weights it trains to a
+  `weights` folder in the folder it's run from, `bench` writes no files, and the app's
+  screenshot mode (`TS_SHOT`) writes only the image you name.
 * **Files are checked before use.** A weights file is parsed into typed data, and its
   network is checked against what its controller accepts (layer sizes, connections
   between layers, finite values). A file that doesn't parse is skipped for the next
@@ -31,9 +33,11 @@ it, and what it doesn't protect against:
   controller manage traffic badly, so use weights only from sources you trust.
 * **No code from data.** The app has no plugins, scripting or other way to run code
   from the files it reads, and its own code is safe Rust with no `unsafe` blocks.
-* **Verifiable releases.** Every release file is signed and comes with a
-  build-provenance attestation (see [Verifying downloads](#verifying-downloads)).
-  Packages from anywhere else aren't covered.
+* **Verifiable releases.** Every release package comes with a signed build-provenance
+  attestation. The macOS disk image and the app inside it, and the Windows executable
+  and installer, also carry their platform's signature (see
+  [Verifying downloads](#verifying-downloads)). Packages from anywhere else aren't
+  covered.
 
 It doesn't protect against someone who can already change files in your user account,
 who could replace the app or its weights, and a very large weights file is read whole
@@ -80,8 +84,9 @@ Out of scope: unrealistic simulation behavior or results. Those are welcome as o
 
 ## Verifying downloads
 
-Every release includes `SHA256SUMS.txt` and a signed build-provenance attestation for
-each file. To check that a download was built by this repository's release workflow:
+Every release includes `SHA256SUMS.txt` and a signed build-provenance attestation that
+covers each package and that checksum file. To check that a download was built by this
+repository's release workflow:
 
 ```bash
 gh attestation verify <downloaded-file> --repo schreck61/intersection-lab
@@ -92,6 +97,6 @@ pass it with `--bundle` to verify without fetching it from GitHub. The release's
 `IntersectionLab-<version>.intoto.jsonl` is an identical copy, named the way supply-chain
 scanners such as the OpenSSF Scorecard expect provenance to be.
 
-The macOS app is also signed with a Developer ID and notarized, and the Windows
-executable and installer are signed with Azure Artifact Signing. See
-[packaging/README.md](packaging/README.md) for details.
+The macOS disk image and the app inside it are also signed with a Developer ID and
+notarized, and the Windows executable and installer are signed with Azure Artifact
+Signing. See [packaging/README.md](packaging/README.md) for details.
