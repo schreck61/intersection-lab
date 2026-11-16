@@ -114,8 +114,8 @@ error, also check all code on every pull request.
 * **One maintainer.** The maintainer's own changes are checked by CI, CodeQL and fuzzing
   rather than by a second reviewer, and the release pipeline trusts the maintainer's
   GitHub account: whoever controlled that account could publish a release.
-* **Valid but unhelpful weights.** A weights file that passes every check can still make
-  its controller manage traffic badly. That affects the simulation's results, not the
+* **Valid but unhelpful weights.** A weights file that loads can still make its
+  controller manage traffic badly. That affects the simulation's results, not the
   computer it runs on.
 * **Very large files.** A weights file is read whole into memory before it's checked, so
   an enormous one can make the app slow or exhaust its memory.
