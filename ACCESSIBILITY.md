@@ -5,7 +5,7 @@ and a set of live charts. That makes some of it hard or impossible to use withou
 and some of it hard to use without a mouse. This page says what works today, what
 doesn't, and which results are available without the visual app.
 
-Last reviewed: November 2026, for the browser version and version 0.7.0.
+Last reviewed: November 2026, for the browser version and the release after 0.7.0.
 
 ## Results available as text
 
@@ -13,7 +13,7 @@ The main results can be produced from the command line as plain-text tables, whi
 with screen readers, braille displays and any terminal:
 
 ```bash
-cargo run --release --bin bench all 20 6        # every controller on every layout
+cargo run --release --bin bench all 20 6        # every automatic strategy on every layout
 cargo run --release --bin bench sensors all 20 4 # sensor study
 cargo run --release --example corridor           # corridor study
 cargo run --release --example lpi                # pedestrian safety treatments
@@ -38,8 +38,9 @@ findings as text and tables, and every image in them has a text description.
 * **Keyboard:** Tab and Shift+Tab move through the controls, with a visible focus
   outline. Enter or Space activates the focused control; on a dropdown it opens the list,
   the arrow keys move through it, Enter chooses, and Escape closes it. Escape also closes
-  the About and benchmark windows. With no control focused, Space pauses and resumes the
-  simulation.
+  the About and benchmark windows, and takes keyboard focus off a control. With no
+  control focused, Space pauses and resumes the simulation, and under manual control the
+  number keys choose a stage and N chooses the next one.
 * **Zoom:** in the desktop app, Cmd or Ctrl with +, − and 0 enlarge, shrink and reset
   the whole interface. In the browser, the browser's own zoom does the same.
 * **Motion:** the simulation can be paused at any time, and its speed set from ×0.5 to
@@ -47,7 +48,9 @@ findings as text and tables, and every image in them has a text description.
   light bars of emergency vehicles and the hazard lights of a disabled vehicle) blink
   about twice a second at every simulation speed, below the three-flashes-per-second
   limit for photosensitive seizures. The red ring around a disabled vehicle pulses more
-  slowly, a little under once a second.
+  slowly, a little under once a second. Under manual control, the view of what the
+  sensors see fades out a vehicle the sensors lose over half a second rather than
+  dropping it, so vehicles detected on and off don't blink.
 * **Screen readers, desktop only:** the desktop app exposes its controls to the
   operating system's accessibility interface. On macOS it presents buttons, checkboxes,
   sliders, dropdowns and the text of the results panel, and dropdowns and number fields
@@ -70,7 +73,11 @@ findings as text and tables, and every image in them has a text description.
   pedestrian at a crosswalk corner and the charts' hover readouts need a pointer. So
   does choosing which vehicle of the cooperative crossing fails; the *Stall one in the
   box* and *Stall one at the worst moment* buttons make one fail from the keyboard, and
-  what follows is reported as text in the results panel.
+  what follows is reported as text in the results panel. Under manual control, giving
+  an approach green by clicking it needs a pointer too, but the stage buttons and the
+  number keys choose any stage without one, and the panel says in text what the signal
+  will do next. Which movements and crosswalks a stage serves is shown when the pointer
+  hovers over its button.
 * **No shortcuts between panels:** reaching the settings means tabbing through the whole
   top toolbar, about two dozen controls.
 * **Color:** the *Color by delay* and *Color by speed* map views use color alone. So do

@@ -3,7 +3,8 @@
 This document describes how Intersection Lab is put together. It covers what each Rust
 source file does, how the code is split into layers, and how those layers work together
 during a simulation step, a corridor run, a cooperative crossing, a benchmark and a
-training run. It describes the code on `main`: version 0.7.0.
+training run. It describes the code on `main`: version 0.7.0, with manual control
+added since.
 Section 9.4 is an illustrated tour of the app's window, and Appendix A says how the
 screenshots were made.
 
@@ -48,6 +49,9 @@ What can be compared:
   * predictive (schedule-driven model predictive control);
   * Deep RL (reinforcement learning with a Double DQN, a deep Q-network);
   * the Hybrid, in which RL re-tunes the predictive planner.
+* **A person at the controls:** manual control, in which someone using the app chooses
+  each stage on the same terms as a controller, seeing the whole map or only what the
+  sensors see. Side by side, the person takes on any controller with the same arrivals.
 * **Unsignalized control:** all-way stop, two-way stop and the roundabout's yield rule.
 * **A signal-free crossing for automated, connected vehicles,** where an intersection
   manager gives each vehicle an exact trajectory through the box. It schedules them
@@ -141,9 +145,9 @@ Each front end uses only the library's public modules:
 | Layer | Owns | Does not do |
 |---|---|---|
 | `sim` | Ground truth: geometry, vehicles, pedestrians, the signal state machine, sensors, demand, statistics, corridor hand-over and the cooperative crossing's intersection manager. Also the parts of signal control a controller must not override: minimum green, pedestrian clearance, emergency preemption and the max-wait guard. | Pick a controller's stages; draw anything; read files |
-| `control` | Signal decisions made from a `SensorView`; loading and saving trained weights | See ground truth, apart from pedestrians and emergency vehicles (§6.5) and the learning reward (§2.2); move vehicles; change clearance timing |
+| `control` | Signal decisions made from a `SensorView`, or under manual control a person's choice; loading and saving trained weights | See ground truth, apart from pedestrians and emergency vehicles (§6.5) and the learning reward (§2.2); move vehicles; change clearance timing |
 | `rl` | A generic neural network, the Adam optimizer and the Double DQN algorithm | Know anything about traffic |
-| `gui` | Input, rendering, charts, the benchmark windows and screenshots. It steps the `World`, changes settings, swaps controllers, spawns vehicles by hand and makes vehicles of the cooperative crossing fail. | Move vehicles or decide anything itself |
+| `gui` | Input, rendering, charts, the benchmark windows and screenshots. It steps the `World`, changes settings, swaps controllers, passes on a person's choice of stage, spawns vehicles by hand and makes vehicles of the cooperative crossing fail. | Move vehicles or decide anything itself |
 | `bin`, `examples`, `tests`, `fuzz` | Experiment scripts and command-line output | Contain simulation logic |
 
 ### 2.2 The key boundary: controllers only see sensors
@@ -164,6 +168,11 @@ radar, it is because it saw more, not because it peeked. The exception is pedest
 and emergency vehicles, which reach the `SensorView` straight from ground truth,
 whatever sensors are fitted (§6.5). No controller reads the emergency vehicles, though:
 only `Sim`'s preemption does (§7.2), so controllers see them only through their sensors.
+
+Manual control (§7.3) puts a person in the controller's place. The person's choice
+reaches `Sim` as the controller's wish, so the rules above bind it too. The map shows
+every vehicle by default, which is more than any controller knows; its sensor view
+(§9.4) narrows it to what the sensors see, and so to what the controllers know.
 
 `Ctx` carries the network, the `SensorView`, the signal state, the configured demand and
 sensor settings, the time, `can_switch` and `reward_delay`. Two of those deserve a note:
@@ -208,7 +217,7 @@ src/
   lib.rs            library root: scenario() and run_scenario()
   main.rs           app entry point (native window or browser canvas)
   sim/              simulation core, including the cooperative crossing (12 files)
-  control/          signal controllers and weights files (8 files)
+  control/          signal controllers and weights files (9 files)
   rl/               neural network and Double DQN (3 files)
   gui/              egui front end (5 files)
   bin/bench.rs      headless controller and sensor benchmarks
@@ -231,14 +240,14 @@ docs/               this document, insights.md, cooperative-intersections.md (wi
 
 | Directory | Files | Lines |
 |---|---:|---:|
-| `src/sim/` | 12 | 9,973 |
-| `src/control/` | 8 | 1,608 |
+| `src/sim/` | 12 | 10,033 |
+| `src/control/` | 9 | 2,082 |
 | `src/rl/` | 3 | 361 |
-| `src/gui/` | 5 | 4,905 |
+| `src/gui/` | 5 | 5,407 |
 | `src/bin/` | 2 | 727 |
-| `src/lib.rs`, `src/main.rs` | 2 | 96 |
+| `src/lib.rs`, `src/main.rs` | 2 | 97 |
 | `examples/` | 9 | 999 |
-| `tests/` | 11 | 4,271 |
+| `tests/` | 11 | 4,616 |
 | `fuzz/fuzz_targets/` | 1 | 61 |
 
 | Target | Built from | Purpose |
@@ -286,7 +295,7 @@ other; the table after it lists every dependency between files.
 flowchart TB
     world["<b>world.rs</b><br/>one signal or a corridor"]
     ENGINE["<b>The engine</b><br/>sim/mod.rs: Sim, Vehicle, Ped<br/>sensors.rs · stats.rs<br/>coop.rs · coop/failures.rs"]
-    CONTROL["<b>control/</b><br/>mod.rs: Controller, Ctx, make()<br/>fixed · actuated · maxpressure · predictive<br/>rl · hybrid · weights"]
+    CONTROL["<b>control/</b><br/>mod.rs: Controller, Ctx, make()<br/>fixed · actuated · maxpressure · predictive<br/>rl · hybrid · manual · weights"]
     RLM["<b>rl/</b><br/>dqn.rs · nn.rs"]
     MODEL["<b>Road and demand</b><br/>network.rs · signal.rs · demand.rs"]
     BASE["<b>Foundations</b><br/>geom.rs · rng.rs · vtypes.rs"]
@@ -327,18 +336,19 @@ and fully qualified paths show them.
 | `sim/signal.rs` | `network` |
 | `sim/network.rs` | `geom` |
 | `sim/geom.rs`, `sim/rng.rs`, `sim/vtypes.rs` | nothing |
-| `control/mod.rs` | the six controllers; `sim`: `demand`, `network`, `sensors`, `signal` |
+| `control/mod.rs` | the six controllers and `manual`; `sim`: `demand`, `network`, `sensors`, `signal` |
 | `control/fixed.rs` | `control/mod.rs`; `sim`: `demand`, `network`, `signal` |
 | `control/actuated.rs` | `control/mod.rs`; `sim`: `network`, `signal`, `vtypes` |
 | `control/maxpressure.rs` | `control/mod.rs`; `sim`: `network`, `signal` |
 | `control/predictive.rs` | `control/mod.rs`; `sim`: `network`, `signal`, `vtypes` |
 | `control/rl.rs` | `control/mod.rs`, `maxpressure`, `predictive`, `weights`; `rl/dqn.rs`; `sim`: `network`, `rng`, `signal` |
 | `control/hybrid.rs` | `control/mod.rs`, `predictive`, `rl`, `weights`; `rl/dqn.rs`; `sim`: `network`, `rng` |
+| `control/manual.rs` | `control/mod.rs`; `sim`: `network`, `signal` |
 | `control/weights.rs` | nothing (it embeds `weights/*.json`) |
 | `rl/dqn.rs` | `rl/nn.rs`; `sim/rng.rs` |
 | `rl/nn.rs` | `sim/rng.rs` |
 | `lib.rs` | `control/mod.rs`; `sim`: `mod`, `demand`, `network`, `sensors`, `stats` |
-| `gui/mod.rs` | `gui/bench`, `charts`, `render`, `shot`; `control`: `mod`, `rl`, `hybrid`; `sim`: `mod`, `coop`, `demand`, `geom`, `network`, `sensors`, `stats`, `vtypes`, `world` |
+| `gui/mod.rs` | `gui/bench`, `charts`, `render`, `shot`; `control`: `mod`, `manual`, `rl`, `hybrid`; `sim`: `mod`, `coop`, `demand`, `geom`, `network`, `sensors`, `signal`, `stats`, `vtypes`, `world` |
 | `gui/bench.rs` | `lib.rs`; `control/mod.rs`; `sim`: `mod`, `coop`, `demand`, `network`, `sensors`, `stats` |
 | `gui/render.rs` | `sim`: `mod`, `coop`, `geom`, `network`, `rng`, `sensors`, `signal`, `vtypes` |
 | `gui/charts.rs` | `gui/render.rs`; `sim`: `mod`, `network`, `signal` |
@@ -411,7 +421,7 @@ Three things about this ordering matter:
 | `mod.rs` | 2,544 | `Sim`, `Vehicle` and `Ped`: spawning, car following, right of way, lane changes, pedestrians and the safety check |
 | `coop.rs` | 2,282 | The cooperative crossing's intersection manager |
 | `coop/failures.rs` | 1,607 | What happens when a vehicle of the cooperative crossing fails: the reaction, contacts and recovery |
-| `network.rs` | 1,094 | The layouts: legs, lanes, paths, movements, stages and conflict points |
+| `network.rs` | 1,154 | The layouts: legs, lanes, paths, movements, stages and conflict points, and the lane under a point |
 | `sensors.rs` | 605 | Sensor models and `Sim::sense` |
 | `world.rs` | 438 | One intersection or a corridor |
 | `signal.rs` | 347 | The signal state machine |
@@ -1536,15 +1546,17 @@ policy in force and its own share of these counts and contacts.
 A controller decides from the `SensorView` (§6.5), the signal's state, which sensors
 are fitted and, for the fixed-time plan, the design demand. It asks the signal state
 machine for a stage. The learning controllers also get each step's true person delay,
-but only as their reward (§8.3).
+but only as their reward (§8.3). Under manual control a person decides, and the
+controller passes the choice on (§7.3).
 
 | File | Lines | What it holds |
 |---|---:|---|
+| `manual.rs` | 458 | `Manual`, which passes on a person's choice of stage, and `stage_for`, the stage a click on a lane chooses |
 | `rl.rs` | 360 | `RlController`, the Deep RL controller, with its input features and safety shield |
 | `predictive.rs` | 294 | `Predictive`, the rolling-horizon planner |
 | `hybrid.rs` | 292 | `Hybrid`, the planner re-tuned by a network |
 | `fixed.rs` | 185 | `FixedTime`: Webster's plan and corridor coordination |
-| `mod.rs` | 159 | The `Controller` trait, `Ctx`, `Brain`, `CtrlKind` and `make` |
+| `mod.rs` | 175 | The `Controller` trait, `Ctx`, `Brain`, `CtrlKind` and `make` |
 | `actuated.rs` | 146 | `Actuated`: gap-out and max-out control |
 | `maxpressure.rs` | 98 | `MaxPressure` |
 | `weights.rs` | 74 | Where trained networks are loaded from and saved to (§8.7) |
@@ -1558,7 +1570,7 @@ classDiagram
         +name() &'static str
         +step(&mut self, &Ctx) Option~usize~
         +brain() Brain
-        +as_rl(), as_hybrid(), as_fixed()
+        +as_rl(), as_hybrid(), as_fixed(), as_manual()
         +into_rl(), into_hybrid()
     }
     class Ctx {
@@ -1581,7 +1593,7 @@ classDiagram
     Controller ..> Brain : explains
 ```
 
-The six controllers, and what the two learned ones are built from:
+The six controllers and manual control, and what the two learned ones are built from:
 
 ```mermaid
 classDiagram
@@ -1594,6 +1606,7 @@ classDiagram
     Controller <|.. Predictive
     Controller <|.. RlController
     Controller <|.. Hybrid
+    Controller <|.. Manual
     Hybrid *-- Predictive : planner
     Hybrid *-- Dqn : agent
     RlController *-- Dqn : agent
@@ -1608,19 +1621,26 @@ classDiagram
   `ctx.can_switch` is true, and `Sim::control_signal` checks `can_switch` again (§7.2).
 * **`brain()`** fills the app's *Controller brain* panel with a title, bars, notes and
   whether lower is better. Each controller explains itself in its own terms: green
-  times, the gap since the last actuation, stage pressures, plan costs or Q-values.
+  times, the gap since the last actuation, stage pressures, plan costs, Q-values or,
+  under manual control, the people the sensors report waiting for each stage.
 * **The `as_*` and `into_*` methods** are narrow downcasts. Their default
-  implementations return `None`, and only the matching controller overrides one. The app
-  uses `as_rl` and `as_hybrid` for the learning controls, corridor coordination uses
-  `as_fixed` to install a coordinated plan and `train` uses `into_rl` and `into_hybrid`
-  to take an agent back out of a `Sim` after an episode. They avoid `Any` and keep the
-  trait object-safe.
+  implementations return `None`, and only the matching controller overrides one:
+  * the app uses `as_rl` and `as_hybrid` for the learning controls, and `as_manual` to
+    pass on a person's choice;
+  * corridor coordination uses `as_fixed` to install a coordinated plan;
+  * `train` uses `into_rl` and `into_hybrid` to take an agent back out of a `Sim` after
+    an episode.
+
+  They avoid `Any` and keep the trait object-safe.
 * **`Controller: Send`**, so a `Sim` can move to another thread with its controller.
-* **`CtrlKind`** names the six controllers (`ALL`), each with a display `name`, a
-  `short` name, a `description` and `adaptive()`, which is true for max-pressure,
-  predictive, Deep RL and the Hybrid. **`make()`** is the only place that maps a
-  `CtrlKind` to a concrete type. For Deep RL and the Hybrid it loads the trained
-  weights (§8.7).
+* **`CtrlKind`** names the six controllers and manual control, each with a display
+  `name`, a `short` name, a `description` and `adaptive()`, which is true for
+  max-pressure, predictive, Deep RL and the Hybrid. `ALL` lists the six automatic
+  controllers and leaves manual control out: `ALL` drives the controller comparison, the
+  `bench` tool and the safety tests, where nobody would choose a stage and manual
+  control would hold its first one for the whole run. **`make()`** is the only place
+  that maps a `CtrlKind` to a concrete type. For Deep RL and the Hybrid it loads the
+  trained weights (§8.7).
 * **Helpers:** `stat` gives a movement's `MStat` in a stage, `lanes_for` the number of
   inbound lanes that can carry a movement and `needs_clearance` whether a switch between
   two stages needs a yellow and an all-red.
@@ -1669,7 +1689,8 @@ flowchart TB
   *EMERGENCY PREEMPTION* to the signal's status line.
 * **The max-wait guard** (`max_wait_guard`, 150 s by default, 0 turns it off) applies
   to the adaptive controllers only. It looks at the movements the current stage doesn't
-  serve at all, and at their longest sensed waits.
+  serve at all, and at their longest sensed waits. Manual control has none: a person
+  who holds a stage while an approach waits sees the cost in the charts.
 * Otherwise the controller's wish, if any, goes to `SignalState::request` (§6.4).
 
 ### 7.3 The controllers
@@ -1682,6 +1703,7 @@ flowchart TB
 | Predictive (`Predictive`) | Every `Obs`: arrival time, people, wait and class; waiting pedestrians | When switching now is the cheapest plan, checked every second |
 | Deep RL (`RlController`) | `features(ctx)` (§8.2) | When the network picks another stage, every 2 s |
 | Hybrid (`Hybrid`) | `features(ctx)`, and everything `Predictive` uses | As `Predictive`, re-tuned every 10 s |
+| Manual (`Manual`) | A person's choice; for its brain, the sensed queues, push-button calls and waits | Once a person has chosen a stage other than the one green or coming |
 
 * **Fixed-time** applies Webster's method to the design demand when it is built. A
   stage's critical flow ratio y is the highest ratio of flow to saturation flow among
@@ -1752,6 +1774,18 @@ flowchart TB
 * **The Hybrid** leaves every signal decision to an embedded `Predictive`. Every 10 s,
   whatever the signal is doing, its network picks one of 48 tunings of that planner.
   Where training kept no network, it applies its best static tuning (§8.5).
+* **Manual** control asks for the stage a person chose in the app (§9.4) as soon as
+  `can_switch` allows, so a choice made during a minimum green, a pedestrian interval
+  or a change waits for it to end. A later choice replaces a waiting one, and choosing
+  the stage that's green or coming cancels it. Without a choice, the stage holds for as
+  long as the person lets it.
+  * `stage_for` maps a click on an inbound lane to a stage. A shared lane counts as its
+    through movement. The click chooses the first stage, in the layout's usual order,
+    that gives that movement a green ball or arrow; failing that, a right-turn green,
+    then a permissive one. With Shift, it prefers a stage that serves that approach
+    alone.
+  * Its brain shows, for each stage, the people the sensors report waiting that it
+    would serve, in vehicles and at push buttons, and the longest sensed wait.
 
 The two learned controllers share code. The Hybrid reuses `RlController::features`,
 `n_inputs`, the discount `GAMMA_PER_2S` and the reward scale `REWARD_SCALE`.
@@ -2402,8 +2436,8 @@ nothing itself: every vehicle, signal and measurement it shows comes from `sim` 
 
 | File | Role |
 |---|---|
-| `gui/mod.rs` | `App`: all UI state. It holds the main `World`, an optional comparison twin `World`, the focused intersection, the camera, overlays and tools, the selected vehicle, the benchmark state and the cooperative crossing's settings. It draws the top bar; the left panel (scenario, demand, then sensors, operations and the learning panels or the intersection manager's settings and failure controls, then view); the right panel (measurements, charts, breakdowns, the manager panel, safety monitors and failures, the controller brain, the selected vehicle and benchmarks); the bottom panel; the canvas, where clicks pan, zoom, select, spawn and make a vehicle fail; the legend; and the About and results windows. `with_env` applies the `TS_*` settings of scripted screenshots (Appendix A) |
-| `gui/render.rs` | Drawing. `Scene` is a mesh of the static scene, built once per layout in world coordinates: terrain, roads, markings, buildings and trees, and on the cooperative crossing its slip lanes and underpass stairs (`build_coop_roads`). Each frame, `paint_dynamic` draws the moving parts: the sensors overlay, paths, signals (or, on the cooperative crossing, the admission lines of `paint_admission`), vehicles colored by `ColorBy`, reservation dots, pedestrians, disabled vehicles and contacts after a failure (`paint_failures`), the selected vehicle and conflict points or reservation zones. `paint_detections` draws the detection markers, `Camera` maps world to screen and `hud` draws the status overlay |
+| `gui/mod.rs` | `App`: all UI state. It holds the main `World`, an optional comparison twin `World`, the focused intersection, the camera, overlays and tools, the selected vehicle, the benchmark state and the cooperative crossing's settings. It draws the top bar; the left panel (scenario, with the manual control group under manual control, demand, then sensors, operations and the learning panels or the intersection manager's settings and failure controls, then view); the right panel (measurements, charts, breakdowns, the manager panel, safety monitors and failures, the controller brain, the selected vehicle and benchmarks); the bottom panel; the canvas, where clicks pan, zoom, select, spawn, give an approach green under manual control and make a vehicle fail; the legend; and the About and results windows. For the sensor view it keeps the vehicles the sensors detected in the last half second (`update_sightings`). `with_env` applies the `TS_*` settings of scripted screenshots (Appendix A) |
+| `gui/render.rs` | Drawing. `Scene` is a mesh of the static scene, built once per layout in world coordinates: terrain, roads, markings, buildings and trees, and on the cooperative crossing its slip lanes and underpass stairs (`build_coop_roads`). Each frame, `paint_dynamic` draws the moving parts: the sensors overlay, paths, signals (or, on the cooperative crossing, the admission lines of `paint_admission`), vehicles colored by `ColorBy`, reservation dots, pedestrians, disabled vehicles and contacts after a failure (`paint_failures`), the selected vehicle and conflict points or reservation zones. In the sensor view, a `Sight` limits the vehicles drawn to those detected, fading those that drop out, and `paint_sensed_queues` labels each approach with what the controllers read there. `paint_detections` draws the detection markers, `Camera` maps world to screen and `hud` draws the status overlay |
 | `gui/charts.rs` | Small hand-painted charts: `line_chart`, `hbars` (also used for the brain's bars), `histogram`, `sparkline`, the signal `timeline` (from `SignalState.history`) and the cooperative crossing's `crossing_timeline` and `pet_histogram` |
 | `gui/bench.rs` | The runs behind *Compare controllers*, *Sensor study* and *Compare schedules*: each strategy on three seeds, with a 300 s warm-up and 20 measured minutes, through `lib::scenario`. On the desktop each strategy runs on its own thread and reports over an `mpsc` channel. In the browser a queue runs 50-step chunks for 12 ms of each frame |
 | `gui/shot.rs` | A minimal PNG encoder (CRC32, stored zlib blocks) and `request`, which asks eframe for a screenshot, writes it and exits. Used for the documentation's images and for visual checks |
@@ -2425,7 +2459,7 @@ sequenceDiagram
         A->>W: step()
         A->>T: step(), when comparing
     end
-    A->>A: Space, Escape, top bar,<br/>left panel (settings)
+    A->>A: Space, Escape, manual<br/>control keys, top bar,<br/>left panel (settings)
     A->>W: sync_settings(focus)
     A->>T: follow(main)
     A->>A: right panel: Summary<br/>refreshed every 400 ms
@@ -2453,6 +2487,9 @@ The app changes the simulation in only these ways:
 * **Controllers:** `World::set_controller` swaps the focused intersection's
   controller, or side B's on every twin intersection. `set_coordination` runs the
   green wave, and gives back the controllers it replaced when the wave ends.
+* **Manual control:** `Controller::as_manual` hands the focused intersection's
+  `Manual` a person's choice of stage, from a stage button, *Next stage*, a number key,
+  `N` or a click on an approach. The choice is a wish like any controller's (§7.2).
 * **The cooperative crossing:** `set_scheduling`, `set_gap_policy` and the maximum cycle
   and batch join window, all live.
 * **Rebuilds:** a new `World` when the layout, control mode or corridor size changes,
@@ -2482,6 +2519,9 @@ on the other at the same place, by the next vehicle to get there (§6.11).
 * Turning the comparison on or off restarts both worlds from time zero, and so does
   changing side B's control mode.
 * Changing B's controller, scheduling or gap policy is live, like A's.
+* Only A can run manual control: B's list of controllers leaves it out, since a person
+  can choose stages for one side only. Side by side, the person takes on B's controller
+  with the same arrivals.
 * The canvas draws both worlds with the same camera, A on the left. Only A's
   vehicles can be selected.
 * The right panel adds a table of both `Summary`s. Every other panel describes A.
@@ -2492,12 +2532,12 @@ This section goes through every part of the window: what it shows, how to read i
 which code produces it. The screenshots come from the desktop app in its default
 1600 × 1000 window (the smallest it allows is 1100 × 700). Most show version 0.5.1;
 those of parts that changed since, such as the signal timing chart, which now draws
-yellow and all-red, were retaken with the code released as 0.6.0, those of the
-failures at the cooperative crossing come from the code that added them, and the About
-window comes from version 0.7.0. They were taken with the scripted-screenshot settings
-of Appendix A, two simulated minutes into the default scenario unless a caption says
-otherwise. The browser version looks the same, without the *Save weights* buttons and
-training commands of the learning panels.
+yellow and all-red, were retaken with the code released as 0.6.0, those of the failures
+at the cooperative crossing come from the code that added them, as do those of manual
+control, and the About window comes from version 0.7.0. They were taken with the
+scripted-screenshot settings of Appendix A, two simulated minutes into the default
+scenario unless a caption says otherwise. The browser version looks the same, without
+the *Save weights* buttons and training commands of the learning panels.
 
 #### The window at a glance
 
@@ -2506,7 +2546,7 @@ training commands of the learning panels.
 | # | Region | What it is for | Code |
 |---|---|---|---|
 | 1 | Top bar | Run controls, speed and adding traffic by hand | `App::top_bar` |
-| 2 | Left panel | Every setting: scenario, demand, sensors, operations, learning and view | `App::left_panel` |
+| 2 | Left panel | Every setting: scenario, manual control, demand, sensors, operations, learning and view | `App::left_panel` |
 | 3 | Canvas | The simulated world, seen from above, with the legend at its bottom left | `App::canvas`, `App::legend`, `render.rs` |
 | 4 | Status overlay | Clock, speed, strategy and the current stage and phase | `render::hud` |
 | 5 | Bottom panel | Signal timing for the last 3 minutes and short notices | `App::bottom_panel`, `charts::timeline` |
@@ -2515,7 +2555,8 @@ training commands of the learning panels.
 The layout follows the data flow:
 
 * **Left panel:** inputs. Each control writes a setting of the focused `Sim`, or of
-  the app, such as the overlays.
+  the app, such as the overlays. Under manual control, the stage buttons pass a choice
+  of stage to the focused intersection's controller instead.
 * **Canvas and bottom panel:** the world as it runs.
 * **Right panel:** outputs. It reads a `Summary` refreshed every 400 ms, the statistics'
   time series and delay histogram, the controller's own explanation from `brain()`,
@@ -2529,12 +2570,15 @@ scroll when their content is taller than the window.
 
 Every control works from the keyboard. Tab and Shift+Tab move through the controls;
 Enter or Space activates one, and opens a dropdown, whose list the arrow keys move
-through. Space pauses and resumes the simulation when no control has keyboard focus.
-Escape closes an open dropdown, then the About window, then the results window. In the
-desktop app, dropdowns and number fields are named by their labels for screen readers.
-The smallest text is 11 pixels. Panning, zooming, selecting a vehicle, placing a
-pedestrian, choosing which vehicle of the cooperative crossing fails and the charts'
-hover readouts need a pointer. `ACCESSIBILITY.md` gives the details.
+through. Space pauses and resumes the simulation when no control has keyboard focus,
+and under manual control the number keys choose a stage and N the next one. Escape
+closes an open dropdown, then the About window, then the results window; it also takes
+keyboard focus off a control. In the desktop app, dropdowns and number fields are named
+by their labels for screen readers. The smallest text is 11 pixels. Panning, zooming,
+selecting a vehicle, placing a pedestrian, giving an approach green with a click,
+choosing which vehicle of the cooperative crossing fails and the charts' hover readouts
+need a pointer; the stage buttons and keys give green without one. `ACCESSIBILITY.md`
+gives the details.
 
 #### 1. Top bar
 
@@ -2586,13 +2630,55 @@ controller with its description, seed 1 with Restart and the Compare side by sid
 * **Control:** the control modes the layout allows (§6.1): *Traffic signal*, *All-way
   stop*, *Two-way stop (minor street)*, *Yield (roundabout)* or *Intersection manager
   (no signal)*.
-* **Controller** (signals only): one of six strategies (§7.3), with a short description
-  below the list. Changing it swaps the controller live: traffic keeps moving, only the
-  decision-maker changes and the bottom panel confirms the switch. In a corridor it
-  shows and changes the focused intersection's controller.
+* **Controller** (signals only): one of six strategies (§7.3), or *Manual (you choose
+  each stage)*, with a short description below the list. Changing it swaps the
+  controller live: traffic keeps moving, only the decision-maker changes and the bottom
+  panel confirms the switch. In a corridor it shows and changes the focused
+  intersection's controller.
 * **Seed** (1 to 99,999) fixes every random arrival: the same seed gives the same
   traffic. *Restart* rebuilds the world from time zero, like *Reset*.
 * **Compare side by side:** see [Comparing two strategies](#comparing-two-strategies).
+
+**Manual control**
+
+<img src="images/architecture/manual-control.png" width="300" alt="Manual control group
+under the Manual controller's description: eight numbered stage buttons with 3 EW
+Through selected and 1 NS Through in amber, Next stage, Give green selected, Show with
+What the sensors see selected, the line Next: NS Through, in 24 s, when the WALK and
+flashing DON'T WALK end, and a note on the keys">
+
+*Manual control 109 s into a run, with EW Through chosen at 100 s and NS Through at
+107 s, before EW Through's pedestrian intervals had ended.*
+
+Choosing *Manual* as the controller adds this group below its description. It acts on
+the focused intersection:
+
+* **Stage buttons,** numbered, one per stage. The stage that's green or coming is
+  selected, and a choice waiting for the signal is amber. Hovering over a button lists
+  the movements the stage protects, those that must yield, and the crosswalks that get
+  WALK.
+* **Next stage** chooses the stage after the one green or coming, in the layout's usual
+  order.
+* **🚦 Give green** is the canvas tool that gives an approach green with a click
+  (see [Canvas](#3-canvas)). It turns on when *Manual* is chosen; clicking it again
+  returns to the select tool.
+* **Show:** *Everything*, the default, or *What the sensors see*
+  (see [Canvas](#3-canvas)).
+* **The status line** says what the signal will do next: hold the stage until another
+  is chosen; change to the chosen stage, saying in how many seconds and whether the
+  minimum green or the WALK and flashing DON'T WALK hold it back; finish a change under
+  way first; or wait for emergency preemption to end.
+* **Keys:** with no control focused, 1 to 9 choose a stage by its number and N the next
+  stage.
+
+A choice reaches the signal through `Sim::control_signal` like any controller's wish
+(§7.2). The minimum green, the pedestrian intervals, the yellow and the all-red run in
+full, emergency preemption overrides the choice, and no max-wait guard steps in. A
+corridor built with it gives manual control to the focused intersection and the
+predictive controller to the rest. Any of them can be switched to manual control
+later: the group and the keys act on the focused one, and a manual signal out of focus
+holds its stage. The status overlay adds the chosen stage to its second line, and the
+*Controller brain* panel shows the people the sensors report waiting for each stage.
 
 **Demand**
 
@@ -2712,13 +2798,15 @@ the northbound approach">
 
 **Using the canvas**
 
-* drag to pan, with the select tool;
+* drag to pan, with the select tool or *Give green*;
 * scroll or pinch to zoom, around the pointer, from 0.6 to 40 pixels per meter;
 * click a vehicle to select it; clicking one at another intersection of a corridor
   also moves the focus there;
 * with a spawn tool, click an approach road, or near a crosswalk corner;
 * with the *Stall a vehicle* tool on the cooperative crossing, click a vehicle to make
-  it fail.
+  it fail;
+* with *Give green* under manual control, click an approach's lanes to give them green,
+  or Shift-click for a stage that serves that approach alone.
 
 **What is drawn**
 
@@ -2793,6 +2881,41 @@ at night: a dark scene with headlight beams, lit signals and camera brackets">
 *Night* darkens the scene and turns on headlights. It is only a view setting. Darkness
 that affects the sensors is the *Night* condition under *Sensors*.
 
+<img src="images/architecture/sensor-view.png" width="916" alt="The arterial in the
+sensor view, with EW Through green and NS Through next: only the vehicles the sensors
+detect are drawn, with their camera and radar markers, and beside each approach a label
+gives what the controllers read there, such as queued: 0 left, 12 through, 2 right,
+longest wait 90 s on the north approach">
+
+*The sensor view at the same moment as the Manual control picture.*
+
+**Under manual control,** two more things happen on the canvas:
+
+* **Give green:** with the tool on, a click on an approach's lanes chooses the stage
+  that gives the lane's main movement green (`manual::stage_for`, §7.3), and a
+  Shift-click a stage that serves that approach alone, where the layout has one. Next to
+  the pointer, a hint says what each would choose, or why a click there gives none:
+  the point isn't on an approach's lanes, it is on side B, which runs its own
+  controller, or it is at an intersection of a corridor that runs another controller.
+  The bottom panel confirms each choice.
+* **The sensor view:** *What the sensors see* draws only what the controllers know:
+  * The vehicles a camera, radar or connected-vehicle message detects, and only those
+    can be selected. A selected vehicle that drops out of sight is deselected.
+  * A vehicle that drops out fades where it was last seen over half a second, so one
+    detected on and off doesn't blink. One that crosses its stop line, where no sensor
+    looks, goes at once.
+  * The sensors themselves, even with the *sensors* overlay off: a stop-bar loop
+    lights while a vehicle stands on it.
+  * Beside each approach, what the controllers read there: each movement's estimated
+    queue, to a tenth where the sensors can't tell which way a vehicle in a shared lane
+    will go, and the longest wait the sensors report.
+  * Pedestrians, as always, since the push buttons report them to every controller
+    (§6.5).
+
+  With loops only, no vehicle is drawn: the person knows what the actuated controller
+  knows. The view lasts while the focused intersection runs manual control; another
+  controller brings everything back.
+
 #### 4. Status overlay
 
 The text at the top left of the canvas (region 4 in the overview) has up to two lines,
@@ -2802,10 +2925,11 @@ being dealt with:
 * **First line:** the simulated clock, the speed, *paused* when paused and the strategy:
   the controller's short name, the control mode or, on the cooperative crossing,
   *Intersection manager* (batches) or *First come, first served*, followed by the gap
-  policy.
+  policy. The sensor view adds *what the sensors see*.
 * **Second line, for signals:** the current stage and its phase (*GREEN* with the
-  seconds of green so far, *YELLOW* or *ALL-RED*), with *EMERGENCY PREEMPTION* while a
-  preemption runs. The cooperative crossing has its own second line, and a third for
+  seconds of green so far, *YELLOW* or *ALL-RED*), then under manual control *next:*
+  and the chosen stage while it waits, and *EMERGENCY PREEMPTION* while a preemption
+  runs. The cooperative crossing has its own second line, and a third for
   failures (see [The cooperative crossing](#the-cooperative-crossing)).
 
 In a comparison each half has its own overlay, labeled *A ·* or *B ·*. In a corridor
@@ -2831,9 +2955,10 @@ In this window the predictive controller has used only three of its eight stages
 With flashing yellow arrows, lefts can also turn during the through stages by yielding
 to oncoming traffic. §6.2 explains the split stages.
 
-Short notices appear to the right of the heading for 5 s: a live controller switch,
-where a hand-spawned vehicle went or the result of saving weights. Without a signal the
-chart says so, and the cooperative crossing has a chart of its own.
+Short notices appear to the right of the heading for 5 s: a live controller switch, a
+stage chosen with *Give green* or why a click chose none, where a hand-spawned vehicle
+went or the result of saving weights. Without a signal the chart says so, and the
+cooperative crossing has a chart of its own.
 
 #### 6. Right panel: measurements
 
@@ -2957,6 +3082,10 @@ doesn't fit the layout, they say that instead.
 * **Actuated:** its status, the time since the last actuation against the passage time
   and the stages with calls.
 * **Max-pressure:** each stage's pressure, the queue upstream minus downstream.
+* **Manual:** a bar for each stage, numbered as its key, with the people the sensors
+  report waiting that it would serve, in vehicles and at push buttons, and the current
+  stage marked. The notes give the longest sensed wait and its movement, and say that
+  no max-wait guard steps in.
 
 **Selected vehicle**
 
@@ -2987,9 +3116,10 @@ is selected.
 section: a short description and the Compare controllers and Sensor study buttons">
 
 **Compare controllers** runs every strategy the layout allows, headless: all six
-controllers and the layout's other control modes. **Sensor study** runs five
-controllers (actuated, max-pressure, predictive, Deep RL and the Hybrid) with five
-sensor packages each:
+automatic controllers and the layout's other control modes. Manual control isn't among
+them, since nobody would choose its stages. **Sensor study** runs five controllers
+(actuated, max-pressure, predictive, Deep RL and the Hybrid) with five sensor packages
+each:
 
 * loops only;
 * loops and a camera;
@@ -3020,7 +3150,8 @@ results stay until the next run.
 checked, with a B row choosing Traffic signal and the Fixed controller">
 
 *Compare side by side* adds a **B** row for the second strategy's control mode and
-controller. Turning it on restarts both worlds from the same seed (§9.3).
+controller. Turning it on restarts both worlds from the same seed (§9.3). Manual control
+is offered on A only, so a person can take on any controller with the same arrivals.
 
 ![Two strategies side by side](images/architecture/compare.png)
 
@@ -3062,8 +3193,8 @@ intersection's measurements">
 * The numbers below, the charts, the timeline and the brain describe only the focused
   intersection, and so do the *Controller* list and the status overlay.
 * Settings changed in the left panel apply to every intersection, except the
-  controller, which changes only the focused one. Side B's controller applies to all
-  of B's intersections.
+  controller and the manual control group, which act only on the focused one. Side B's
+  controller applies to all of B's intersections.
 
 #### The cooperative crossing
 
@@ -3301,8 +3432,9 @@ The notices run to thousands of lines, so only the visible lines are laid out.
 #### How the app's design shows up in the window
 
 * **The sensors-only boundary is visible.** The *sensors* and *detections* overlays
-  and the *seen by* row show what a controller can know. A vehicle without a marker is
-  one the controller can't see.
+  and the *seen by* row show what a controller can know, and under manual control the
+  sensor view shows only that. A vehicle without a marker is one the controller can't
+  see.
 * **Controllers explain themselves.** The brain panel draws whatever `brain()` returns,
   so a new controller gets an explanation panel without any change to the app.
 * **Fair comparisons by construction.** The twin reuses the app's seed and the
@@ -3310,8 +3442,8 @@ The notices run to thousands of lines, so only the visible lines are laid out.
 * **Safety is measured, not assumed.** On the cooperative crossing the monitors
   measure what vehicles did, separately from what the manager planned.
 * **The app changes little.** Apart from the settings, clicks that add traffic,
-  failures made and cleared by hand, controller switches and the learning toggles, it
-  only reads the simulation (§9.2).
+  failures made and cleared by hand, controller switches, a person's choices of stage
+  under manual control and the learning toggles, it only reads the simulation (§9.2).
 
 ---
 
@@ -3323,7 +3455,7 @@ The notices run to thousands of lines, so only the visible lines are laid out.
 |---|---|
 | `src/main.rs` | **Native:** opens a 1600 × 1000 window (at least 1100 × 700) with the embedded icon and runs `gui::App`. Release builds on Windows use the GUI subsystem, so no console window appears. **Browser:** finds `<canvas id="app">` in `web/index.html`, starts `eframe::WebRunner` and replaces the loading message with the outcome |
 | `src/lib.rs` | Declares the four modules. `scenario(kind, mode, ctrl, demand, sensors, seed) -> Sim` builds a headless simulation, and `run_scenario(sim, warmup, duration) -> (Summary, collisions)` runs it and summarizes everything after the warm-up. `bench` and the app's benchmarks use them; the browser's benchmark queue steps each `Sim` itself and calls `Stats::summary` the same way |
-| `src/bin/bench.rs` | `bench [layout\|all] [minutes] [seeds] [demand-scale] [pattern]` prints a table per layout: every control strategy, averaged over seeds 1,000 and up after a 300 s warm-up, with delay, 95th percentile delay, throughput, stops, person delay including unserved vehicles, pedestrian wait and unserved vehicles. The `coll` column counts the overlaps found by the safety check (§6.1), which these runs turn on: a total over the seeds, warm-up included. `bench sensors <layout> [minutes] [seeds]` runs the command-line sensor study, without the safety check: the app's five sensor packages (§9.4) and an ideal version of loops, camera and radar, then weather and faulty loops |
+| `src/bin/bench.rs` | `bench [layout\|all] [minutes] [seeds] [demand-scale] [pattern]` prints a table per layout: every automatic control strategy, averaged over seeds 1,000 and up after a 300 s warm-up, with delay, 95th percentile delay, throughput, stops, person delay including unserved vehicles, pedestrian wait and unserved vehicles. The `coll` column counts the overlaps found by the safety check (§6.1), which these runs turn on: a total over the seeds, warm-up included. `bench sensors <layout> [minutes] [seeds]` runs the command-line sensor study, without the safety check: the app's five sensor packages (§9.4) and an ideal version of loops, camera and radar, then weather and faulty loops |
 | `src/bin/train.rs` | Trains the Deep RL and Hybrid networks (§8.5) |
 
 ### 10.2 Studies
@@ -3341,33 +3473,36 @@ The examples are the studies behind `docs/insights.md` and
 | `lpi` | The leading pedestrian interval and the blank-out NO TURN ON RED sign: near misses and delay | seeds |
 | `preempt` | Emergency vehicles, with and without preemption | none |
 | `satflow` | Calibration: saturation flow and start-up lost time of a queued through lane, against the HCM base of 1,900 vehicles per hour per lane | none |
-| `sweep` | Every layout × control mode × seed with `check_safety` on, reporting in-box overlaps. Signals run the four controllers that don't learn | seeds, demand scale, options |
+| `sweep` | Every layout × control mode × seed with `check_safety` on, reporting in-box overlaps. Signals run the four automatic controllers that don't learn: fixed-time, actuated, max-pressure and predictive | seeds, demand scale, options |
 | `make_icons` | Renders the application icon at every size the installers need (run by `packaging/icons/build.sh`) | output folder |
 
 ### 10.3 Tests
 
 `cargo test` runs ten integration test files and the unit tests in `bin/bench.rs`,
-`sim/coop.rs`, `sim/coop/failures.rs`, `sim/signal.rs` and `gui/mod.rs`. CI runs them in
-release mode on Linux, macOS and Windows, and measures how much of the crate they cover
-(§11).
+`control/manual.rs`, `sim/network.rs`, `sim/coop.rs`, `sim/coop/failures.rs`,
+`sim/signal.rs`, `gui/mod.rs` and `gui/render.rs`. CI runs them in release mode on
+Linux, macOS and Windows, and measures how much of the crate they cover (§11).
 
 | File | Tests | What they require |
 |---|---:|---|
-| `tests/safety.rs` | 4 | Every layout and control combination runs without collisions and serves at least 80% of arrivals at default volumes (65% under two-way stop and under all-way stop on the arterial, which are over capacity); different controllers receive identical arrivals; no gridlock in seeds that used to jam; no collision between a turn finishing late in the yellow and the next stage's traffic |
+| `tests/safety.rs` | 5 | Every layout, control mode and automatic controller runs without collisions and serves at least 80% of arrivals at default volumes (65% under two-way stop and under all-way stop on the arterial, which are over capacity); different controllers receive identical arrivals; no gridlock in seeds that used to jam; no collision between a turn finishing late in the yellow and the next stage's traffic; a person choosing stages at random moments on every signal layout, often mid-change and mid-interval, gets no collision, no green shorter than the minimum, and every yellow, all-red, WALK and flashing DON'T WALK in full |
 | `tests/cooperative.rs` | 14 | The cooperative crossing: no signals, sensors or crosswalks; its geometry and phase order; every gap policy safe under heavy demand, bursts, heavy vehicles and live switching; about 18,000 vehicles per hour served at the design demand, about 19,000 oversaturated and less with single left lanes or first come, first served; reproducible runs; light traffic barely delayed; emergency vehicles first; hand-placed vehicles crossing every way. Every run, except those of the no-signals, single-left-lane and reproducibility tests, must show no overlap between vehicle bodies, no zone entered while occupied, no box entry without a reservation, no step off a granted trajectory, no crossing inside its required gap and no line or zone time off its reservation (both to within a microsecond), and at least one crossing measured |
 | `tests/failures.rs` | 20 | Failures at the cooperative crossing. When a vehicle stops dead at the worst moment, fail-safe gaps stop crossing traffic short of it under both schedules, mitigated gaps let it arrive at no more than 25 km/h and nominal gaps faster; a vehicle that brakes to a stop is survived; in batches a failure at a random place rarely reaches crossing traffic, though a dead stop is struck from behind; the crossing serves what a disabled vehicle leaves clear and recovers once it is cleared away; a failure outside the box only holds up its lane; a failure can be repeated at the same place on another run, and random failures are the same on runs with the same seed; twenty minutes of failures in heavy traffic leave nothing broken, and with fail-safe gaps no vehicles on crossing paths touch through some two hundred dead stops; a vehicle stopped in the box waits for one that passes it, one stopped behind a failure can fail in turn and one that fails at the edge of the map rolls off it; a failure only holds back the vehicles that leave their crossings for an emergency stop: none at rest is set going, none gets ahead of the trajectory it had, and one standing before its line loses its crossing instead; a vehicle that can't stop behind a dead stop is expected where it ends up, as is one that fails close behind it and one already on an emergency stop when the vehicle ahead stops short, and it stops by itself if the wreck is cleared away first; the log keeps the latest fifty failures; other layouts have none. Every run with a failure in it, except those of the test that repeats one, must show no vehicle off its trajectory, in the box without one, or overlapping another outside a recorded contact |
 | `tests/pedestrian_rule.rs` | 4 | Deep RL's shield serves a crosswalk whose pedestrians have waited longer than `PED_MAX_WAIT`, longest wait first, and leaves shorter waits to the controller; the reward counts waiting pedestrians |
 | `tests/weights_files.rs` | 6 | The shipped weights load, misshapen networks are rejected, a Hybrid without a fitting network keeps its base tuning and says so, a base tuning out of range is read as the last one, Hybrid files saved with a score that isn't finite load again, a copy that doesn't load is skipped for the next one and networks that overflow don't crash (§8.7) |
 | `tests/green_wave.rs` | 2 | The green wave runs every signal of a corridor fixed-time, and ending it gives back the controllers they ran before, except where another was chosen during the wave, without collisions; a single intersection isn't coordinated |
 | `tests/networks.rs` | 7 | Backpropagation agrees with the gradient measured numerically, Adam fits a line, the shape check rejects every malformed network (sizes whose product overflows included), the target network moves part way toward the online one, the action mask is respected, Double DQN learns which action pays in which state and the replay memory keeps the latest 60,000 transitions |
-| `tests/gui.rs` | 22 | The app, run without a window by `egui_kittest` and driven through its accessibility tree, the keyboard and the pointer: every panel opens and every control has a name; Space pauses and Step advances one second; every layout, control mode and controller runs, side by side too and along a corridor with the green wave; the demand, sensor and operations settings apply; the learning controllers show what they learn; every overlay and coloring draws; vehicles and pedestrians placed by hand, movements an approach lacks refused; a clicked vehicle's details; a vehicle of the cooperative crossing made to fail from the buttons and by a click, on both sides of a comparison; what *Stall one in the box* does on an empty crossing and once every lane with a vehicle on its way has a failure set; what a failed vehicle, one stopped behind it, one on its way out of the box and one whose crossing was withdrawn say when selected; pan, zoom and *Fit view*; both benchmark windows; *About* |
-| `tests/scripted.rs` | 9 | Each `TS_*` variable of the scripted mode sets up its scene, a scripted screenshot stops the clock at its moment and screenshots are valid PNG files. The app reads the variables as it starts, so each scene opens in a process of its own |
-| `tests/tools.rs` | 10 | `bench` compares every strategy on every layout without collisions, takes each arrival pattern and runs the sensor study; `train` trains, saves and resumes both learning controllers, in a scratch directory with its own home directory, stops without touching the weights saved from the app when it can't make its `weights` folder, stops instead of reporting a result when it can't write the Hybrid's weights file, and stops with an error, making no folder, when no signalized layout has the name it is given |
+| `tests/gui.rs` | 25 | The app, run without a window by `egui_kittest` and driven through its accessibility tree, the keyboard and the pointer: every panel opens and every control has a name; Space pauses and Step advances one second; every layout, control mode and controller runs, side by side too and along a corridor with the green wave; the demand, sensor and operations settings apply; the learning controllers show what they learn; every overlay and coloring draws; vehicles and pedestrians placed by hand, movements an approach lacks refused; a clicked vehicle's details; a vehicle of the cooperative crossing made to fail from the buttons and by a click, on both sides of a comparison; what *Stall one in the box* does on an empty crossing and once every lane with a vehicle on its way has a failure set; what a failed vehicle, one stopped behind it, one on its way out of the box and one whose crossing was withdrawn say when selected; pan, zoom and *Fit view*; both benchmark windows; *About*; manual control from the stage buttons, *Next stage* and the keys, which stand down while a control has focus; giving an approach green with a click and a Shift-click, refused on side B and off the approach lanes; side B offering no manual control and a corridor giving it only to the focused intersection; the sensor view, which draws and selects only the vehicles the sensors detect, labels each approach and ends with manual control |
+| `tests/scripted.rs` | 10 | Each `TS_*` variable of the scripted mode sets up its scene, a scripted screenshot stops the clock at its moment and screenshots are valid PNG files. The app reads the variables as it starts, so each scene opens in a process of its own |
+| `tests/tools.rs` | 10 | `bench` compares every automatic control strategy on every layout without collisions, takes each arrival pattern and runs the sensor study; `train` trains, saves and resumes both learning controllers, in a scratch directory with its own home directory, stops without touching the weights saved from the app when it can't make its `weights` folder, stops instead of reporting a result when it can't write the Hybrid's weights file, and stops with an error, making no folder, when no signalized layout has the name it is given |
 | `src/bin/bench.rs` | 1 | A run for a strategy table counts a vehicle placed on top of another, so the `coll` column can show an overlap |
+| `src/control/manual.rs` | 9 | A choice waits for the minimum green, then the change runs in full; without a choice the stage holds, past the max-wait guard's limit; a choice can be replaced, canceled or refused; *Next stage* follows the usual order and wraps; the pedestrian intervals hold a choice back; preemption overrides a choice, which runs once it ends; the status line says what a choice waits for; a click chooses the stage that serves the lane, on four layouts; the brain shows the people waiting for each stage |
+| `src/sim/network.rs` | 1 | On every signal layout, points along each inbound lane, from the map edge to the stop line, map back to that lane, and the box, the exits, the roadside, the crosswalks and a bay before it opens map to none |
 | `src/sim/coop.rs` | 4 | Approach profiles arrive on time and at speed, a short run-up enters slower but on time, the gap policies give the gaps in §6.11 and the following law holds its time gap |
 | `src/sim/coop/failures.rs` | 6 | An emergency stop ends at rest after its braking distance, a trajectory holds the zones it rests in without end, a vehicle that can't stop behind another is expected at its rear and holds the zones it will stand in, a vehicle can be put anywhere along its route and passes clear of one at rest on another approach, a vehicle whose crossing was withdrawn brakes for its line while it doesn't yet respond to the vehicle ahead, and every gap allows the reaction time |
 | `src/sim/signal.rs` | 1 | The signal history records a change's yellow and all-red between the two greens, with no gaps |
-| `src/gui/mod.rs` | 2 | The safety monitors' margin over the gap keeps its sign, and a failure reads as a sentence |
+| `src/gui/mod.rs` | 3 | The safety monitors' margin over the gap keeps its sign, a failure reads as a sentence and a stage button's hover text says what the stage serves |
+| `src/gui/render.rs` | 1 | A queue estimate in the sensor view is whole when it is, otherwise to a tenth |
 
 The `weights` fuzz target (`fuzz/`, a workspace of its own) feeds arbitrary bytes to
 both weights loaders. A network they accept must survive a training step, 20 s of
@@ -3458,7 +3593,9 @@ while it is out of date.
    `reward_delay`, the true person delay, which only the learning controllers read,
    and only as their training reward. The cooperative crossing's manager, part of
    `sim`, works from what its connected vehicles report about themselves. This rule
-   makes the sensor studies fair, and makes it safe to plug in a learned policy.
+   makes the sensor studies fair, and makes it safe to plug in a learned policy. Under
+   manual control a person decides, from a map that shows everything unless the sensor
+   view limits it to what a controller would know.
 
 2. **Safety is enforced where the physics is, not in controllers.**
    * Clearance intervals, minimum greens and pedestrian intervals live in
@@ -3476,7 +3613,8 @@ while it is out of date.
    in `Network::build`; the roundabout and the cooperative crossing have builders of
    their own. Lanes, connectors, conflict points and zones are all derived.
    Controllers are written against movements and stages, never against a particular
-   layout, so all six work on every signalized layout.
+   layout, so all six, and manual control, work on every signalized layout. A click on
+   a lane finds its stage the same way.
 
 4. **Expensive work is precomputed.**
    * Conflict points and zones are computed once per network.
@@ -3488,8 +3626,10 @@ while it is out of date.
 
 5. **Determinism is a feature.** With in-house random number streams, hash-based
    sensor noise and a fixed step order, a seed reproduces a run exactly on a given
-   platform (§6.9). This is what makes the side-by-side comparisons, the regression
-   seeds in the tests and repeatable benchmarks possible.
+   platform (§6.9), as long as nobody steps in by hand: vehicles placed, failures
+   made, controllers switched and stages chosen by hand are part of the run. This is
+   what makes the side-by-side comparisons, the regression seeds in the tests and
+   repeatable benchmarks possible.
 
 6. **One measurement path.** Every front end gets its numbers from `Stats::summary`,
    often through `lib::run_scenario`: the app, `bench`, the examples and training
@@ -3517,7 +3657,9 @@ while it is out of date.
    `Ctx`; `reward_delay` is only for a learning reward.
 2. Add a `CtrlKind` variant to the enum and to `CtrlKind::ALL`, an array whose length
    changes with it, with its `name`, `short`, `description` and `adaptive` entries, and
-   a line in `make()`. An adaptive controller gets the max-wait guard (§7.2).
+   a line in `make()`. An adaptive controller gets the max-wait guard (§7.2). Manual
+   control is the one variant left out of `ALL`, since nobody would choose its stages in
+   a benchmark or a test.
 3. Optionally implement `brain()` so the app can explain its decisions (§9.4).
 4. It then appears in the app, *Compare controllers*, `bench` and the safety tests,
    which iterate over `CtrlKind::ALL`. The sensor studies, in `bin/bench.rs` and the
@@ -3560,9 +3702,10 @@ environment and write files:
 |---|---|
 | `TS_LAYOUT` | The layout, by key: `arterial4` (the default), `majorminor4`, `town4`, `tee`, `roundabout` or `cooperative` |
 | `TS_MODE` | The control mode: `allway`, `twoway`, `roundabout` or `cooperative`; anything else is a signal |
-| `TS_CTRL` | The controller, by short name, for example `Fixed`, `Predictive`, `DeepRL` or `Hybrid` |
+| `TS_CTRL` | The controller, by short name, for example `Fixed`, `Predictive`, `DeepRL`, `Hybrid` or `Manual` |
+| `TS_VIEW`, `TS_CHOOSE` | Under manual control, `sensors` to show what the sensors see; and the stages to choose, as a comma-separated list of `stage@seconds`, each stage numbered from 1 and chosen at that simulated time |
 | `TS_POLICY`, `TS_SCHED` | The cooperative crossing's gap policy (`p2`, `ph` or `p1`) and scheduling (`fcfs`) |
-| `TS_TWIN` | Turns on the comparison, with side B given by a controller, `allway`, `twoway`, a gap policy or `fcfs` |
+| `TS_TWIN` | Turns on the comparison, with side B given by an automatic controller, `allway`, `twoway`, a gap policy or `fcfs` |
 | `TS_CORRIDOR`, `TS_WAVE` | The number of signals and the green wave |
 | `TS_SPEED`, `TS_ZOOM` | The speed and a zoom factor applied to the fitted view |
 | `TS_COLOR`, `TS_NIGHT`, `TS_OVERLAYS` | Color by (`delay`, `turn` or `speed`), night and the overlays to show, comma-separated: `sensors`, `detections`, `conflicts`, `paths`, `labels` |
@@ -3599,6 +3742,7 @@ Every capture used `TS_SPEED=20` and `TS_SHOT_AFTER=120` unless listed otherwise
 | `corridor`, `corridor-scenario`, `corridor-kpis` | `TS_CORRIDOR=3 TS_SHOT_AFTER=600` |
 | `bench-window` | `TS_BENCH=controllers TS_SPEED=1 TS_SHOT_AFTER=20` |
 | `about-window` | `TS_ABOUT=1` |
+| `manual-control`, `sensor-view` | `TS_CTRL=Manual TS_VIEW=sensors TS_CHOOSE=3@100,1@107 TS_SHOT_AFTER=109` |
 | `coop`, `coop-manager`, `coop-view`, `coop-crossings` | `TS_LAYOUT=cooperative` |
 | `coop-manager-panel`, `coop-safety` | `TS_LAYOUT=cooperative TS_SCROLL=900` |
 | `coop-zoom` | `TS_LAYOUT=cooperative TS_OVERLAYS=conflicts,paths TS_ZOOM=2.2` |
