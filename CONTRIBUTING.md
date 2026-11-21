@@ -104,12 +104,12 @@ pass that file's path in place of the two folders.
   result, which the side-by-side view, the benchmarks and training all depend on. Draw
   random numbers from the simulation's own generator (`src/sim/rng.rs`), never from the
   clock or another source.
-* **Safety comes first.** The regression tests require zero vehicle overlaps, and most
-  arrivals served, on every layout, control mode and controller. A change that
-  introduces an overlap isn't ready, however much it helps delay. The one exception is
-  made on purpose: when a vehicle of the cooperative crossing is made to fail, vehicles
-  that can't stop in time touch, and each contact is recorded with its speed instead of
-  counting as an overlap.
+* **Safety comes first.** The regression tests require zero vehicle overlaps on every
+  layout, control mode and controller, manual control included, and most arrivals served
+  under every control mode and automatic controller. A change that introduces an overlap
+  isn't ready, however much it helps delay. The one exception is made on purpose: when a
+  vehicle of the cooperative crossing is made to fail, vehicles that can't stop in time
+  touch, and each contact is recorded with its speed instead of counting as an overlap.
 * **Add tests with your change.** New functionality, such as a controller, a safety rule,
   a change to the reward or new simulation behavior, comes with automated tests that
   check it, and a bug fix comes with a test that fails without the fix. Put tests that

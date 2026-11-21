@@ -389,6 +389,24 @@ impl Network {
         self.links[link].kind == LinkKind::Inbound
     }
 
+    /// The inbound lane under point `p`, as (leg, lane), anywhere from the map edge to
+    /// the stop line. A turn bay counts only from where it opens.
+    pub fn lane_at(&self, p: V2) -> Option<(usize, usize)> {
+        for (li, leg) in self.legs.iter().enumerate() {
+            let (r, lat) = (p.dot(leg.d), p.dot(leg.in_side()));
+            for (k, &l) in leg.in_lanes.iter().enumerate() {
+                let link = &self.links[l];
+                let (start, stop) = (link.path.start(), link.path.end());
+                let far = start.dot(leg.d) - link.bay_start;
+                let near = stop.dot(leg.d) - 1.0;
+                if (lat - stop.dot(leg.in_side())).abs() <= leg.lane_w / 2.0 && (near..=far).contains(&r) {
+                    return Some((li, k));
+                }
+            }
+        }
+        None
+    }
+
     pub fn build(kind: LayoutKind) -> Network {
         match kind {
             LayoutKind::Arterial4 => {
@@ -1090,5 +1108,47 @@ impl Network {
             }
         }
         self.ped_conflicts = pcs;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every inbound lane's center line, from the map edge to the stop line, maps back to
+    /// that lane; the box, the exits, the median and the roadside map to none.
+    #[test]
+    fn lane_at_finds_the_lane_under_a_point() {
+        for kind in LayoutKind::ALL.into_iter().filter(|k| k.signalized()) {
+            let net = Network::build(kind);
+            for (li, leg) in net.legs.iter().enumerate() {
+                for (k, &l) in leg.in_lanes.iter().enumerate() {
+                    let link = &net.links[l];
+                    let (start, stop) = (link.path.start(), link.path.end());
+                    let along = |s: f64| start + (stop - start) * (s / link.length());
+                    for s in
+                        [link.bay_start + 0.5, (link.bay_start + link.length()) / 2.0, link.length() - 0.5]
+                    {
+                        let p = along(s) + leg.in_side() * (leg.lane_w * 0.45);
+                        assert_eq!(net.lane_at(along(s)), Some((li, k)), "{kind:?} leg {li} lane {k} at {s}");
+                        assert_eq!(net.lane_at(p), Some((li, k)), "{kind:?} leg {li} lane {k} off center");
+                    }
+                    if link.bay_start > 0.0 {
+                        assert_eq!(
+                            net.lane_at(along(link.bay_start - 5.0)),
+                            None,
+                            "{kind:?}: before the bay opens"
+                        );
+                    }
+                }
+                let out = &net.links[leg.out_lanes[0]];
+                assert_eq!(net.lane_at(out.path.point(out.length() / 2.0)), None, "{kind:?}: an exit lane");
+                let edge = leg.d * 100.0 + leg.in_side() * (leg.in_width + 3.0);
+                assert_eq!(net.lane_at(edge), None, "{kind:?}: beside the road");
+            }
+            assert_eq!(net.lane_at(v2(0.0, 0.0)), None, "{kind:?}: the box");
+            let cw = &net.crosswalks[0];
+            assert_eq!(net.lane_at((cw.a + cw.b) * 0.5), None, "{kind:?}: a crosswalk");
+        }
     }
 }

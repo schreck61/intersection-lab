@@ -1,12 +1,14 @@
 // Copyright (c) 2026 Jim Schreckengast
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Signal controllers. Each one sees only the `SensorView` (plus "historical" demand
-//! for fixed-time planning) and asks the signal state machine for a stage.
+//! Signal controllers. Each automatic one sees only the `SensorView` (plus
+//! "historical" demand for fixed-time planning) and asks the signal state machine for a
+//! stage. The manual one asks for the stage a person chose.
 
 pub mod actuated;
 pub mod fixed;
 pub mod hybrid;
+pub mod manual;
 pub mod maxpressure;
 pub mod predictive;
 pub mod rl;
@@ -64,6 +66,9 @@ pub trait Controller: Send {
     fn into_hybrid(self: Box<Self>) -> Option<Box<hybrid::Hybrid>> {
         None
     }
+    fn as_manual(&mut self) -> Option<&mut manual::Manual> {
+        None
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -74,9 +79,14 @@ pub enum CtrlKind {
     Predictive,
     DeepRl,
     Hybrid,
+    /// A person chooses each stage (see `manual`).
+    Manual,
 }
 
 impl CtrlKind {
+    /// The automatic controllers. Manual isn't one: `ALL` drives the controller
+    /// comparison, the `bench` tool and the safety tests, where nobody would choose its
+    /// stages and it would hold its first stage for the whole run.
     pub const ALL: [CtrlKind; 6] = [
         CtrlKind::Fixed,
         CtrlKind::Actuated,
@@ -93,6 +103,7 @@ impl CtrlKind {
             CtrlKind::Predictive => "Predictive (schedule-driven MPC)",
             CtrlKind::DeepRl => "AI: Deep RL (Double DQN)",
             CtrlKind::Hybrid => "AI: Hybrid (RL-tuned predictive)",
+            CtrlKind::Manual => "Manual (you choose each stage)",
         }
     }
     pub fn short(self) -> &'static str {
@@ -103,6 +114,7 @@ impl CtrlKind {
             CtrlKind::Predictive => "Predictive",
             CtrlKind::DeepRl => "DeepRL",
             CtrlKind::Hybrid => "Hybrid",
+            CtrlKind::Manual => "Manual",
         }
     }
     pub fn adaptive(self) -> bool {
@@ -128,6 +140,9 @@ impl CtrlKind {
             CtrlKind::Hybrid => {
                 "The predictive planner makes every signal decision; a reinforcement-learning agent re-tunes it every 10 s (fairness weight, hold/switch bias, max green) from the traffic it sees. Keeps the planner's safety; learns when to deviate from its defaults."
             }
+            CtrlKind::Manual => {
+                "You are the controller: choose the next stage with the buttons below, the number keys or a click on an approach. The signal still times the minimum green, the pedestrian intervals, yellow and all-red, and emergency preemption still overrides you. A stage holds until you choose another: there is no max-wait guard."
+            }
         }
     }
 }
@@ -140,6 +155,7 @@ pub fn make(kind: CtrlKind, net: &Network, demand: &DemandConfig) -> Box<dyn Con
         CtrlKind::Predictive => Box::new(predictive::Predictive::new(net)),
         CtrlKind::DeepRl => Box::new(rl::RlController::load_or_new(net)),
         CtrlKind::Hybrid => Box::new(hybrid::Hybrid::load_or_new(net)),
+        CtrlKind::Manual => Box::new(manual::Manual::new(net)),
     }
 }
 

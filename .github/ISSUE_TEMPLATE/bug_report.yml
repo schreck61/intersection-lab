@@ -31,7 +31,7 @@ body:
     id: steps
     attributes:
       label: Steps to reproduce
-      description: Settings that matter, such as the layout, control mode and controller, seed, demand, sensors and weather, or the command you ran. The same seed and settings reproduce the same run.
+      description: Settings that matter, such as the layout, control mode and controller, seed, demand, sensors and weather, or the command you ran. The same seed and settings reproduce the same run. Under manual control, the stages you chose and when matter too.
       placeholder: |
         1. Layout: 4-Way Arterial, Traffic signal, Predictive, seed 1
         2. Set demand to 1.3x

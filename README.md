@@ -23,8 +23,8 @@ needed, or download it for your desktop below.
 2. In the *Scenario* panel on the left, pick an *Intersection* and how it's controlled:
    a *Control* mode and, for traffic signals, a *Controller*. Watch the delay and queue
    charts on the right respond.
-3. Under *Benchmark* on the right, press *▶ Compare controllers* to run every option on
-   identical arrivals and chart the results.
+3. Under *Benchmark* on the right, press *▶ Compare controllers* to run every option but
+   manual control on identical arrivals and chart the results.
 4. Click a vehicle to see its speed, delay, stops and who it's yielding to. `Space`
    pauses.
 
@@ -92,10 +92,17 @@ weights can't be saved; everything else matches the desktop app.
   another strategy (B), in a split view with an A/B table. On the cooperative crossing, B
   is another schedule or safety gap; by default it weaves vehicles through first come,
   first served.
-* **Control:** traffic signal (6 controllers, hot-swappable while traffic runs), all-way
-  stop, two-way stop, roundabout yield, and on the cooperative crossing an intersection
-  manager that schedules every vehicle (no signals, no sensors), in batches or first come,
-  first served.
+* **Control:** traffic signal (6 automatic controllers or manual control, hot-swappable
+  while traffic runs), all-way stop, two-way stop, roundabout yield, and on the
+  cooperative crossing an intersection manager that schedules every vehicle (no signals,
+  no sensors), in batches or first come, first served.
+* **Manual control:** be the controller. Choose each stage with a button, a number key
+  or a click on an approach, which gives its lanes green; a Shift-click picks a stage
+  that serves that approach alone. The signal still times the minimum green, the
+  pedestrian intervals, yellow and all-red, and emergency preemption still overrides
+  you. The map can show everything, or only what the sensors see: the vehicles they
+  detect, the loop detectors and, at each approach, the queues and the longest wait that
+  the controllers read.
 * **Demand:** per-approach volume and turning shares, global multiplier, vehicle mix,
   pedestrian volume, and arrival pattern (Poisson, platoons, rush-hour peak, surges).
 * **Spawn by hand:** pick a vehicle type and intent (left/through/right), then click an
@@ -114,12 +121,13 @@ weights can't be saved; everything else matches the desktop app.
 * **Inspect and measure:** click a vehicle for its speed, delay, stops, fuel, detecting
   sensor and who it yields to. KPIs, live charts, delay histogram, breakdowns by approach,
   movement and class, signal timing diagram, controller "brain", pedestrian near-misses.
-* **Benchmark:** *Compare controllers* and *Sensor study* run every option headless on
-  identical arrivals and chart the results. On the cooperative crossing, *Compare
-  schedules* runs batches under each of its three safety gaps, and first come, first
-  served under fail-safe gaps.
+* **Benchmark:** *Compare controllers* and *Sensor study* run every option but manual
+  control headless on identical arrivals and chart the results. On the cooperative
+  crossing, *Compare schedules* runs batches under each of its three safety gaps, and
+  first come, first served under fail-safe gaps.
 
-Keyboard: `Space` pauses. Mouse wheel zooms, drag pans.
+Keyboard: `Space` pauses; under manual control, the number keys choose a stage and `N`
+the next one. Mouse wheel zooms, drag pans.
 
 ## How the simulation works
 
@@ -141,8 +149,9 @@ Arrivals come from a dedicated random stream, so every controller faces the *sam
 
 ## Signal controllers
 
-All controllers see only the `SensorView`, built from their sensors rather than ground
-truth. Pedestrians and emergency vehicles are the exceptions (below).
+The six automatic controllers see only the `SensorView`, built from their sensors rather
+than ground truth. Pedestrians and emergency vehicles are the exceptions (below). Under
+manual control, a person chooses the stages instead.
 
 1. **Fixed-time (Webster).** Cycle and splits from critical flow ratios of historical
    demand; every green covers its pedestrian interval. In a corridor it can be
@@ -164,8 +173,15 @@ truth. Pedestrians and emergency vehicles are the exceptions (below).
    Training first searches for the layout's best *static* tuning, which becomes the fallback
    and the bar to clear; the network is kept only where it beats that bar.
 
-Safety layers sit on top of every controller: emergency **preemption** (emergency-vehicle
-delay 22.1 s → 4.0 s, `examples/preempt.rs`) and a **max-wait guard**.
+**Manual control.** A person chooses each stage, and the choice passes the same checks
+as a controller's: the signal times the minimum green, the pedestrian intervals, yellow
+and all-red in full. A stage holds until the person chooses another. With the map
+showing only what the sensors see, the person has what the controllers have.
+
+Safety layers sit on top of the controllers: emergency **preemption** (emergency-vehicle
+delay 22.1 s → 4.0 s, `examples/preempt.rs`) on every one, manual control included, and
+a **max-wait guard** on the four adaptive ones (Max-Pressure, Predictive, Deep RL and
+Hybrid).
 
 ## Sensors and their failure modes
 
@@ -591,7 +607,8 @@ src/sim/        geometry, IDM + MOBIL vehicles, right of way, signals, sensors, 
 src/sim/coop.rs   intersection manager for the signal-free cooperative crossing
 src/sim/coop/failures.rs  a vehicle fails there: the reaction, contacts and recovery
 src/sim/world.rs  worlds of one or more intersections (corridors, coordination)
-src/control/    fixed, actuated, max-pressure, predictive MPC, deep-RL and hybrid controllers
+src/control/    fixed, actuated, max-pressure, predictive MPC, deep-RL and hybrid controllers,
+                and manual control
 src/rl/         MLP + Adam, Double DQN with replay
 src/gui/        eframe/egui app: renderer, charts, panels, self-screenshot (TS_SHOT=…)
 src/bin/        bench (comparisons, sensor study), train (RL training)

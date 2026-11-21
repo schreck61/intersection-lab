@@ -8,19 +8,20 @@ pub mod charts;
 pub mod render;
 pub mod shot;
 
-use crate::control::CtrlKind;
+use crate::control::{CtrlKind, manual};
 use crate::sim::coop::{CoopManager, Fault, GapPolicy, Incident, PlanKind, Scheduling};
 use crate::sim::demand::{DemandConfig, Pattern, compass_index};
 use crate::sim::geom::v2;
-use crate::sim::network::{LayoutKind, Network, Turn};
+use crate::sim::network::{Compass, LayoutKind, MStat, Network, Turn};
 use crate::sim::sensors::{Conditions, Source};
 use crate::sim::stats::{HIST_BIN, Summary, los};
 use crate::sim::vtypes::{ALL_KINDS, VKind};
 use crate::sim::world::{CorridorSummary, SPACING, World};
-use crate::sim::{ControlMode, LeftMode, Sim};
+use crate::sim::{ControlMode, LeftMode, Sim, Vehicle};
 use bench::{Bench, BenchRow, Job};
 use egui::{Color32, RichText, Sense, Ui, vec2};
-use render::{Camera, ColorBy, DrawCtx, Overlays, Scene};
+use render::{Camera, ColorBy, DrawCtx, Overlays, Scene, Sight};
+use std::collections::HashMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 #[cfg(target_arch = "wasm32")]
@@ -36,7 +37,16 @@ enum Tool {
     Pedestrian,
     /// Cooperative crossing: click a vehicle to make it fail.
     Stall,
+    /// Manual control: click an approach's lanes to give them green.
+    Green,
 }
+
+/// Real time (s) over which a vehicle the sensors stop detecting fades from the sensor
+/// view, so that nothing on the map blinks faster than twice a second.
+const FADE: f64 = 0.5;
+
+/// The pending choice of manual control is drawn in this color.
+const AMBER: Color32 = Color32::from_rgb(255, 200, 70);
 
 pub struct App {
     world: World,
@@ -100,6 +110,13 @@ pub struct App {
     scroll_right: Option<f32>,
     /// Scripted runs: hold the left panel at this scroll offset.
     scroll_left: Option<f32>,
+    /// Manual control: the map shows only what the sensors see.
+    sensor_view: bool,
+    /// Sensor view: when (real time) and where each vehicle was last detected, by side,
+    /// intersection and vehicle, so that a vehicle that drops out can fade.
+    sightings: HashMap<(usize, usize, u64), (f64, Vehicle)>,
+    /// Scripted runs: stages (counted from 1) to choose at simulated times.
+    scripted_choices: Vec<(usize, f64)>,
 }
 
 impl App {
@@ -167,22 +184,29 @@ impl App {
             shot_since: None,
             scroll_right: None,
             scroll_left: None,
+            sensor_view: false,
+            sightings: HashMap::new(),
+            scripted_choices: vec![],
         }
         .with_env()
     }
 
-    /// Optional overrides for scripted runs: TS_LAYOUT, TS_MODE, TS_CTRL, TS_TWIN (B side:
-    /// a controller, allway/twoway, a gap policy p2/ph/p1 with batches, or fcfs for first
-    /// come, first served), TS_POLICY (gap policy p2/ph/p1), TS_SCHED (fcfs),
+    /// Optional overrides for scripted runs: TS_LAYOUT, TS_MODE, TS_CTRL (a controller's
+    /// short name, Manual included), TS_TWIN (B side: an automatic controller,
+    /// allway/twoway, a gap policy p2/ph/p1 with batches, or fcfs for first come, first
+    /// served), TS_POLICY (gap policy p2/ph/p1), TS_SCHED (fcfs),
     /// TS_CORRIDOR (signals), TS_WAVE, TS_SPEED, TS_ZOOM, TS_COLOR, TS_NIGHT, TS_COND,
     /// TS_LOOP_FAULT, TS_ABOUT, TS_OVERLAYS (the overlays to show, comma-separated:
     /// sensors, detections, conflicts, paths, labels), TS_SELECT (a vehicle id to select),
     /// TS_BENCH (controllers or sensors: start that benchmark), TS_STALL (a failure at
     /// the cooperative crossing: `box` for the vehicle nearest the middle of the box,
     /// `worst` for the worst moment) + TS_STALL_AT (sim seconds, 60 by default) +
-    /// TS_FAULT (`brake`: it brakes to a stop instead of stopping dead), TS_SCROLL (right
-    /// panel offset), TS_SCROLL_LEFT (left panel offset), TS_SHOT (png path) +
-    /// TS_SHOT_AFTER (sim seconds).
+    /// TS_FAULT (`brake`: it brakes to a stop instead of stopping dead), TS_VIEW (`sensors`:
+    /// under manual control, show what the sensors see), TS_CHOOSE (manual control: a
+    /// comma-separated list of `stage@seconds`, each choosing that stage, counted from 1,
+    /// at that simulated time),
+    /// TS_SCROLL (right panel offset), TS_SCROLL_LEFT (left panel offset), TS_SHOT (png
+    /// path) + TS_SHOT_AFTER (sim seconds).
     fn with_env(mut self) -> Self {
         let var = |k: &str| std::env::var(k).ok();
         if let Some(l) = var("TS_LAYOUT").and_then(|v| LayoutKind::ALL.into_iter().find(|k| k.key() == v)) {
@@ -204,7 +228,7 @@ impl App {
         if var("TS_SCHED").as_deref() == Some("fcfs") {
             self.coop_sched = Scheduling::FirstCome;
         }
-        if let Some(c) = var("TS_CTRL").and_then(|v| CtrlKind::ALL.into_iter().find(|k| k.short() == v)) {
+        if let Some(c) = var("TS_CTRL").and_then(|v| Self::a_controllers().find(|k| k.short() == v)) {
             self.ctrl = c;
         }
         if let Some(n) = var("TS_CORRIDOR").and_then(|v| v.parse().ok()) {
@@ -227,6 +251,16 @@ impl App {
             }
         }
         self.rebuild(false);
+        if self.manual_here() {
+            self.tool = Tool::Green;
+        }
+        self.sensor_view = var("TS_VIEW").as_deref() == Some("sensors");
+        self.scripted_choices = (var("TS_CHOOSE").unwrap_or_default().split(','))
+            .filter_map(|c| {
+                let (stage, at) = c.trim().split_once('@')?;
+                Some((stage.parse().ok()?, at.parse().ok()?))
+            })
+            .collect();
         if let Some(s) = var("TS_SPEED").and_then(|v| v.parse().ok()) {
             self.speed = s;
         }
@@ -371,6 +405,14 @@ impl App {
     ) -> World {
         let n = if self.is_coop() { 1 } else { self.corridor_n };
         let mut w = World::corridor(n, self.layout, mode, ctrl, &demand, self.seed);
+        // One person runs one signal: the one the panels show after a rebuild.
+        if ctrl == CtrlKind::Manual {
+            for (i, sim) in w.sims.iter_mut().enumerate() {
+                if i != n / 2 && sim.signalized() {
+                    sim.set_controller(CtrlKind::Predictive);
+                }
+            }
+        }
         for sim in &mut w.sims {
             sim.set_gap_policy(policy);
             sim.set_scheduling(sched);
@@ -398,6 +440,46 @@ impl App {
 
     fn is_coop(&self) -> bool {
         self.layout == LayoutKind::Cooperative
+    }
+
+    /// The controllers side A offers: the automatic ones, then manual control.
+    fn a_controllers() -> impl Iterator<Item = CtrlKind> {
+        CtrlKind::ALL.into_iter().chain([CtrlKind::Manual])
+    }
+
+    /// The focused intersection runs manual control.
+    fn manual_here(&self) -> bool {
+        let sim = &self.world.sims[self.focus];
+        sim.ctrl_kind == CtrlKind::Manual && sim.signalized()
+    }
+
+    /// The map shows only what the sensors see: chosen under manual control.
+    fn sensed(&self) -> bool {
+        self.sensor_view && self.manual_here()
+    }
+
+    /// Manual control: choose stage `j` at the focused intersection. Whether it exists.
+    fn choose_stage(&mut self, j: usize) -> bool {
+        let sim = &mut self.world.sims[self.focus];
+        let sig = &sim.signal;
+        sim.controller.as_manual().is_some_and(|m| m.choose(j, sig))
+    }
+
+    /// Manual control: choose the next stage in the usual order.
+    fn next_stage(&mut self) {
+        let sim = &mut self.world.sims[self.focus];
+        let sig = &sim.signal;
+        if let Some(m) = sim.controller.as_manual() {
+            m.advance(sig);
+        }
+    }
+
+    /// Manual control: the stage the focused intersection will change to next, by name.
+    fn pending_name(&mut self) -> Option<String> {
+        let sim = &mut self.world.sims[self.focus];
+        let sig = &sim.signal;
+        let j = sim.controller.as_manual()?.pending(sig)?;
+        Some(sim.net.stages[j].name.clone())
     }
 
     /// Apply the shared intersection-manager settings to both worlds.
@@ -441,6 +523,13 @@ impl App {
                 "worst" => self.stall_at_worst(),
                 _ => self.stall_in_box(),
             }
+        }
+        let now = self.world.t();
+        let due: Vec<usize> =
+            self.scripted_choices.iter().filter(|&&(_, at)| now >= at).map(|&(stage, _)| stage).collect();
+        self.scripted_choices.retain(|&(_, at)| now < at);
+        for stage in due {
+            self.choose_stage(stage.saturating_sub(1));
         }
         if self.paused {
             return;
@@ -654,7 +743,7 @@ impl App {
                     .selected_text(c.name())
                     .width(270.0)
                     .show_ui(ui, |ui| {
-                        for k in CtrlKind::ALL {
+                        for k in Self::a_controllers() {
                             ui.selectable_value(&mut c, k, k.name());
                         }
                     })
@@ -665,8 +754,14 @@ impl App {
                     self.ctrl = c;
                     self.world.set_controller(self.focus, c);
                     self.notify(format!("Controller switched live to {}", c.name()));
+                    if c == CtrlKind::Manual {
+                        self.tool = Tool::Green;
+                    }
                 }
                 ui.label(RichText::new(self.ctrl.description()).small().color(Color32::from_gray(170)));
+                if self.manual_here() {
+                    self.manual_control(ui);
+                }
             }
             ui.horizontal(|ui| {
                 let label = ui.label("Seed");
@@ -982,6 +1077,75 @@ impl App {
                 self.fitted = false;
             }
         });
+    }
+
+    /// Manual control: a button for each stage, Next stage, Give green, the choice of
+    /// view and a sentence saying what the choice waits for.
+    fn manual_control(&mut self, ui: &mut Ui) {
+        let (next, pending, status) = {
+            let sim = &mut self.world.sims[self.focus];
+            let (sig, pre) = (&sim.signal, sim.preempt_active);
+            let Some(m) = sim.controller.as_manual() else { return };
+            (sig.next, m.pending(sig), m.status(sig, pre))
+        };
+        let net = &self.world.sims[self.focus].net;
+        let stages: Vec<(String, String)> = (0..net.stages.len())
+            .map(|j| (format!("{} {}", j + 1, net.stages[j].name), stage_summary(net, j)))
+            .collect();
+        let (mut pick, mut advance) = (None, false);
+        ui.group(|ui| {
+            ui.label(RichText::new("Manual control").strong());
+            ui.horizontal_wrapped(|ui| {
+                for (j, (label, tip)) in stages.iter().enumerate() {
+                    // The stage that's green or coming is selected; the choice waiting
+                    // for it is amber.
+                    let text = if pending == Some(j) { RichText::new(label).color(AMBER) } else { RichText::new(label) };
+                    if ui.selectable_label(next == j, text).on_hover_text(tip).clicked() {
+                        pick = Some(j);
+                    }
+                }
+            });
+            ui.horizontal_wrapped(|ui| {
+                advance = ui
+                    .button("Next stage")
+                    .on_hover_text("The stage after the one chosen, green or coming next, in the layout's usual order")
+                    .clicked();
+                let on = self.tool == Tool::Green;
+                if ui
+                    .selectable_label(on, "🚦 Give green")
+                    .on_hover_text("Click an approach's lanes on the map to give them green. Shift-click for a stage that serves that approach alone. Click here again to select vehicles instead.")
+                    .clicked()
+                {
+                    self.tool = if on { Tool::Select } else { Tool::Green };
+                }
+            });
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Show:");
+                ui.selectable_value(&mut self.sensor_view, false, "Everything")
+                    .on_hover_text("Every vehicle on the map: more than any controller knows");
+                ui.selectable_value(&mut self.sensor_view, true, "What the sensors see")
+                    .on_hover_text("Only the vehicles that cameras, radar and connected-vehicle messages detect, the loop detectors and, at each approach, the queues and the longest wait the controllers read");
+            });
+            let col = if pending.is_some() { AMBER } else { Color32::from_gray(220) };
+            ui.label(RichText::new(status).color(col));
+            ui.label(
+                RichText::new(format!(
+                    "Keys 1 to {} choose a stage and N the next one, while no control has keyboard focus.",
+                    stages.len().min(9)
+                ))
+                .small()
+                .color(Color32::from_gray(160)),
+            );
+        });
+        if let Some(j) = pick {
+            self.choose_stage(j);
+        }
+        if advance {
+            self.next_stage();
+        }
+        if pick.is_some() || advance {
+            ui.ctx().request_repaint();
+        }
     }
 
     fn strategy_name(
@@ -1440,7 +1604,7 @@ impl App {
             ui.separator();
             ui.heading("Benchmark");
             let coop = self.is_coop();
-            let what = if coop { "the three gap policies, and first come, first served," } else { "every control strategy (or sensor package)" };
+            let what = if coop { "the three gap policies, and first come, first served," } else { "every automatic control strategy (or sensor package)" };
             ui.label(RichText::new(format!("Runs {what} headless on identical random arrivals with the current demand, 3 seeds × 20 min.")).small().color(Color32::from_gray(160)));
             ui.horizontal(|ui| {
                 let running = self.bench.as_ref().is_some_and(|b| b.rows.iter().any(|r| r.is_none()));
@@ -1942,7 +2106,7 @@ impl App {
             self.fitted = true;
         }
         // Pan and zoom.
-        if resp.dragged() && self.tool == Tool::Select {
+        if resp.dragged() && matches!(self.tool, Tool::Select | Tool::Green) {
             let d = resp.drag_delta();
             self.cam_center = self.cam_center - v2((d.x / self.scale) as f64, (d.y / self.scale) as f64);
         }
@@ -1972,6 +2136,11 @@ impl App {
         };
         painter.rect_filled(rect, 0.0, Color32::from_rgb(20, 22, 26));
         let alpha = if self.paused { 1.0 } else { self.acc / self.world.dt() };
+        if self.update_sightings() {
+            ui.ctx().request_repaint();
+        }
+        let next = self.pending_name();
+        let sensed = self.sensed();
         for (k, half) in halves.iter().enumerate() {
             let (world, mode, ctrl, policy) = if k == 0 {
                 (&self.world, self.mode, self.ctrl, (self.coop_policy, self.coop_sched))
@@ -1983,12 +2152,16 @@ impl App {
                     (self.twin_policy, self.twin_sched),
                 )
             };
-            let label = match (self.twin.is_some(), k) {
+            let mut label = match (self.twin.is_some(), k) {
                 (false, _) => self.strategy_name(mode, ctrl, policy),
                 (true, 0) => format!("A · {}", self.strategy_name(mode, ctrl, policy)),
                 _ => format!("B · {}", self.strategy_name(mode, ctrl, policy)),
             };
-            self.paint_world(&painter.with_clip_rect(*half), world, *half, &label, alpha, k == 0);
+            if sensed {
+                label.push_str("  ·  what the sensors see");
+            }
+            let next = if k == 0 { next.as_deref() } else { None };
+            self.paint_world(&painter.with_clip_rect(*half), world, *half, &label, alpha, k, next);
         }
         if self.twin.is_some() {
             painter.vline(rect.center().x, rect.y_range(), egui::Stroke::new(2.0, Color32::from_gray(15)));
@@ -1999,16 +2172,17 @@ impl App {
         if resp.clicked()
             && let Some(p) = resp.interact_pointer_pos()
         {
-            let k = halves.iter().position(|h| h.contains(p)).unwrap_or(0);
-            let cam = Camera { center: self.cam_center, scale: self.scale, rect: halves[k] };
-            let w = cam.to_world(p);
-            let (i, local) = self.locate(w);
+            let (k, i, local) = self.pick_point(&halves, p);
             match self.tool {
                 Tool::Select if k == 0 => {
+                    // The sensor view shows, and so selects, only detected vehicles.
+                    let sensed = self.sensed();
                     let sim = &self.world.sims[i];
+                    let seen = |id: u64| !sensed || sim.view.detections.iter().any(|d| d.0 == id);
                     self.selected = sim
                         .vehicles
                         .iter()
+                        .filter(|v| seen(v.id))
                         .map(|v| (v.id, sim.center(v).dist(local) - v.len() * 0.5))
                         .filter(|(_, d)| *d < 2.5)
                         .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
@@ -2018,6 +2192,10 @@ impl App {
                     }
                 }
                 Tool::Select => {}
+                Tool::Green => {
+                    let alone = ui.input(|i| i.modifiers.shift);
+                    self.give_green(k, i, local, alone);
+                }
                 Tool::Stall => {
                     let world = if k == 0 { Some(&self.world) } else { self.twin.as_ref() };
                     let hit = world.map(|w| &w.sims[i]).and_then(|sim| {
@@ -2090,6 +2268,10 @@ impl App {
                     format!("click an approach: {} {}", self.spawn_kind.name(), self.spawn_turn.name())
                 }
                 Tool::Stall => format!("click a vehicle: it {}", self.stall_fault.name().to_lowercase()),
+                Tool::Green => {
+                    let (k, i, local) = self.pick_point(&halves, h);
+                    self.green_hint(k, i, local)
+                }
                 _ => "click a crosswalk corner".to_string(),
             };
             painter.text(
@@ -2102,6 +2284,107 @@ impl App {
         }
     }
 
+    /// The side of the map (0 for A, 1 for B) under screen point `p`, the nearest
+    /// intersection there and the point in that intersection's coordinates.
+    fn pick_point(&self, halves: &[egui::Rect], p: egui::Pos2) -> (usize, usize, crate::sim::geom::V2) {
+        let k = halves.iter().position(|h| h.contains(p)).unwrap_or(0);
+        let cam = Camera { center: self.cam_center, scale: self.scale, rect: halves[k] };
+        let (i, local) = self.locate(cam.to_world(p));
+        (k, i, local)
+    }
+
+    /// Manual control: the stage a click at `local`, intersection `i` of side `side`,
+    /// gives green to, or why it gives none. With `alone`, a stage that serves that
+    /// approach alone.
+    fn green_target(
+        &self,
+        side: usize,
+        i: usize,
+        local: crate::sim::geom::V2,
+        alone: bool,
+    ) -> Result<usize, String> {
+        if side != 0 {
+            return Err("Side B runs its own controller: give green on side A".into());
+        }
+        let sim = &self.world.sims[i];
+        let Some((leg, lane)) = sim.net.lane_at(local) else {
+            return Err("Click an approach's lanes to give them green".into());
+        };
+        if sim.ctrl_kind != CtrlKind::Manual || !sim.signalized() {
+            return Err(format!("This signal runs {}: choose Manual for it first", sim.ctrl_kind.short()));
+        }
+        manual::stage_for(&sim.net, leg, lane, alone).ok_or_else(|| "No stage serves this lane".into())
+    }
+
+    /// Manual control: give green to the lanes under a click, and say what follows.
+    fn give_green(&mut self, side: usize, i: usize, local: crate::sim::geom::V2, alone: bool) {
+        let j = match self.green_target(side, i, local, alone) {
+            Ok(j) => j,
+            Err(why) => {
+                self.notify(why);
+                return;
+            }
+        };
+        self.focus = i;
+        let sig = &self.world.sims[i].signal;
+        let name = self.world.sims[i].net.stages[j].name.clone();
+        let msg = match (sig.next == j, sig.phase) {
+            (true, crate::sim::signal::Phase::Green) => format!("{name} is already green"),
+            (true, _) => format!("Already changing to {name}"),
+            (false, _) => format!("Next: {name}"),
+        };
+        self.choose_stage(j);
+        self.notify(msg);
+    }
+
+    /// The pointer hint of Give green: what a click and a shift-click would choose.
+    fn green_hint(&self, side: usize, i: usize, local: crate::sim::geom::V2) -> String {
+        let stages = &self.world.sims[i].net.stages;
+        match (self.green_target(side, i, local, false), self.green_target(side, i, local, true)) {
+            (Ok(a), Ok(b)) if a == b => format!("click: {}", stages[a].name),
+            (Ok(a), Ok(b)) => format!("click: {} · shift-click: {}", stages[a].name, stages[b].name),
+            (Err(why), _) | (_, Err(why)) => {
+                let mut c = why.chars();
+                c.next().map(|f| f.to_lowercase().chain(c).collect()).unwrap_or_default()
+            }
+        }
+    }
+
+    /// Sensor view: note where each detected vehicle is, and forget those out of sight
+    /// for longer than the fade. A vehicle past its stop line has left the sensors' sight
+    /// for good, and goes at once. A selected vehicle that goes is deselected. Outside the
+    /// sensor view, forget them all. Whether to draw again, even while paused: a sighting
+    /// is fading, or the panels drew a vehicle that has just been deselected.
+    fn update_sightings(&mut self) -> bool {
+        if !self.sensed() {
+            self.sightings.clear();
+            return false;
+        }
+        let now = self.anim_t;
+        for (k, world) in std::iter::once(&self.world).chain(self.twin.as_ref()).enumerate() {
+            for (i, sim) in world.sims.iter().enumerate() {
+                let by_id: HashMap<u64, &Vehicle> = sim.vehicles.iter().map(|v| (v.id, v)).collect();
+                for (id, _) in &sim.view.detections {
+                    if let Some(v) = by_id.get(id) {
+                        self.sightings.insert((k, i, *id), (now, (*v).clone()));
+                    }
+                }
+                self.sightings.retain(|&(kk, ii, id), _| {
+                    (kk, ii) != (k, i) || by_id.get(&id).is_some_and(|v| v.ri == 0)
+                });
+            }
+        }
+        self.sightings.retain(|_, (t, _)| now - *t < FADE);
+        let mut again = self.sightings.values().any(|(t, _)| *t < now);
+        if let Some(id) = self.selected
+            && !self.sightings.contains_key(&(0, self.focus, id))
+        {
+            self.selected = None;
+            again = true;
+        }
+        again
+    }
+
     /// Intersection nearest to world point `w`, and `w` in its local coordinates.
     fn locate(&self, w: crate::sim::geom::V2) -> (usize, crate::sim::geom::V2) {
         let i = (0..self.world.offsets.len())
@@ -2112,6 +2395,9 @@ impl App {
         (i, w - self.world.offsets[i])
     }
 
+    /// Draw one side of the map: side 0 is A, the main world, and 1 is B. `next` is the
+    /// stage manual control will change to.
+    #[allow(clippy::too_many_arguments)]
     fn paint_world(
         &self,
         painter: &egui::Painter,
@@ -2119,7 +2405,8 @@ impl App {
         rect: egui::Rect,
         label: &str,
         alpha: f64,
-        main: bool,
+        side: usize,
+        next: Option<&str>,
     ) {
         painter.rect_filled(rect, 0.0, render::GRASS);
         let cam_for =
@@ -2135,16 +2422,35 @@ impl App {
             let clip = egui::Rect::from_x_y_ranges(x0..=x1, rect.y_range()).intersect(rect);
             self.scene.paint(&painter.with_clip_rect(clip), &cam, self.ov.night);
         }
+        let sensed = self.sensed();
         for (i, sim) in world.sims.iter().enumerate() {
-            let selected = if main && i == self.focus { self.selected } else { None };
-            let dc = DrawCtx { sim, cam: cam_for(i), ov: &self.ov, selected, time: self.anim_t, alpha };
+            let selected = if side == 0 && i == self.focus { self.selected } else { None };
+            // The sensor view: what this intersection's sensors detect, and the vehicles
+            // that dropped out lately, fading where they were last detected.
+            let sight = sensed.then(|| {
+                let shown: std::collections::HashSet<u64> = sim.view.detections.iter().map(|d| d.0).collect();
+                let fading = (self.sightings.iter())
+                    .filter(|((k, j, id), _)| *k == side && *j == i && !shown.contains(id))
+                    .map(|(_, (t, v))| (v, (1.0 - (self.anim_t - t) / FADE).clamp(0.0, 1.0) as f32))
+                    .collect();
+                Sight { shown, fading }
+            });
+            let dc = DrawCtx {
+                sim,
+                cam: cam_for(i),
+                ov: &self.ov,
+                selected,
+                time: self.anim_t,
+                alpha,
+                sight: sight.as_ref(),
+            };
             render::paint_dynamic(painter, &dc);
             if self.ov.detections && sim.coop.is_none() {
                 render::paint_detections(painter, &dc);
             }
         }
         let focus = self.focus.min(world.sims.len() - 1);
-        render::hud(painter, rect, &world.sims[focus], label, self.speed, self.paused);
+        render::hud(painter, rect, &world.sims[focus], label, self.speed, self.paused, next);
     }
 
     fn legend(&self, painter: &egui::Painter, rect: egui::Rect) {
@@ -2156,7 +2462,7 @@ impl App {
             items.push((render::PASSAGE, "pedestrian underpass"));
             items.push((render::DISABLED, "disabled: failed or struck"));
             items.push((render::EMERGENCY, "stopped for a disabled vehicle"));
-        } else if self.ov.sensors && self.world.sims[self.focus].sensors.loops {
+        } else if (self.ov.sensors || self.sensed()) && self.world.sims[self.focus].sensors.loops {
             items.push((Color32::from_rgb(255, 200, 60), "loop detector"));
         }
         if self.ov.detections && self.world.sims[self.focus].coop.is_none() {
@@ -2184,6 +2490,46 @@ impl App {
             y += 16.0;
         }
     }
+}
+
+/// What a stage serves, for its button's hover text: the movements with a protected
+/// green, those that yield only to pedestrians, those that yield to oncoming traffic too,
+/// and the crosswalks that may walk.
+fn stage_summary(net: &Network, j: usize) -> String {
+    let st = &net.stages[j];
+    let mut lines = vec![];
+    for (label, want) in [
+        ("Protected", MStat::G),
+        ("Yielding to pedestrians", MStat::Rt),
+        ("Yielding to oncoming traffic and pedestrians", MStat::P),
+    ] {
+        let names: Vec<String> = (0..st.stat.len())
+            .filter(|&m| st.stat[m] == Some(want))
+            .map(|m| {
+                let mv = &net.movements[m];
+                format!("{} {}", net.legs[mv.leg].compass.bound(), mv.turn.name())
+            })
+            .collect();
+        if !names.is_empty() {
+            lines.push(format!("{label}: {}", names.join(", ")));
+        }
+    }
+    let legs: Vec<&str> = st
+        .walk
+        .iter()
+        .map(|&cw| match net.legs[net.crosswalks[cw].leg].compass {
+            Compass::N => "north",
+            Compass::E => "east",
+            Compass::S => "south",
+            Compass::W => "west",
+        })
+        .collect();
+    lines.push(match legs.as_slice() {
+        [] => "No crosswalk walks".to_string(),
+        [one] => format!("WALK across the {one} leg"),
+        [rest @ .., last] => format!("WALK across the {} and {last} legs", rest.join(", ")),
+    });
+    lines.join("\n")
 }
 
 /// How far short of its zone the closest emergency stop came to rest, and whether every
@@ -2246,9 +2592,30 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.advance(&ctx);
+        // Give green is for manual control: the focus may have moved, or the controller
+        // changed.
+        if self.tool == Tool::Green && !self.manual_here() {
+            self.tool = Tool::Select;
+        }
         // Space pauses unless a control has keyboard focus, where it activates that control.
         if ui.input(|i| i.key_pressed(egui::Key::Space)) && ctx.memory(|m| m.focused().is_none()) {
             self.paused = !self.paused;
+        }
+        // Manual control: the number keys choose a stage and N the next one, on the same
+        // terms, and not while a list is open.
+        if self.manual_here() && ctx.memory(|m| m.focused().is_none()) && !egui::Popup::is_any_open(&ctx) {
+            use egui::Key::*;
+            const KEYS: [egui::Key; 9] = [Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9];
+            let (pick, next) = ui.input(|i| {
+                let plain = i.modifiers.is_none();
+                (KEYS.iter().position(|&k| plain && i.key_pressed(k)), plain && i.key_pressed(N))
+            });
+            if let Some(j) = pick {
+                self.choose_stage(j);
+            }
+            if next {
+                self.next_stage();
+            }
         }
         // Escape closes the About window, then the benchmark window (an open dropdown
         // closes first).
@@ -2287,10 +2654,34 @@ impl eframe::App for App {
 
 #[cfg(test)]
 mod tests {
-    use super::{incident_line, margin_kpi, stop_margin};
+    use super::{incident_line, margin_kpi, stage_summary, stop_margin};
     use crate::sim::coop::{Fault, GapPolicy, Impact, Incident, Place};
     use crate::sim::network::{LayoutKind, Network};
     use crate::sim::vtypes::VKind;
+
+    /// Each stage button's hover text says what the stage serves and who walks.
+    #[test]
+    fn a_stage_says_what_it_serves() {
+        let net = Network::build(LayoutKind::Arterial4);
+        assert_eq!(
+            stage_summary(&net, 0),
+            "Protected: Southbound Through, Northbound Through\n\
+             Yielding to pedestrians: Southbound Right, Northbound Right\n\
+             Yielding to oncoming traffic and pedestrians: Southbound Left, Northbound Left\n\
+             WALK across the east and west legs"
+        );
+        assert_eq!(
+            stage_summary(&net, 6),
+            "Protected: Westbound Left, Westbound Through\n\
+             Yielding to pedestrians: Westbound Right\n\
+             WALK across the north leg"
+        );
+        let net = Network::build(LayoutKind::Tee);
+        assert_eq!(
+            stage_summary(&net, 1),
+            "Protected: Westbound Left, Westbound Through\nNo crosswalk walks"
+        );
+    }
 
     #[test]
     fn margin_over_gap_keeps_its_sign() {

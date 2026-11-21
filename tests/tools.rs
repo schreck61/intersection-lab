@@ -1,10 +1,11 @@
 // Copyright (c) 2026 Jim Schreckengast
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The developer tools in src/bin, run briefly: `bench` compares every strategy and
-//! studies the sensor packages, and `train` trains, saves and resumes both learning
-//! controllers. Each runs in a scratch directory of its own, with its home directory
-//! there too, so nothing reads or writes the repository's weights or the user's.
+//! The developer tools in src/bin, run briefly: `bench` compares every automatic
+//! strategy and studies the sensor packages, and `train` trains, saves and resumes both
+//! learning controllers. Each runs in a scratch directory of its own, with its home
+//! directory there too, so nothing reads or writes the repository's weights or the
+//! user's.
 
 use intersection_lab::control::CtrlKind;
 use intersection_lab::sim::ControlMode;

@@ -1,10 +1,10 @@
 // Copyright (c) 2026 Jim Schreckengast
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Benchmark runs behind *Compare controllers* and *Sensor study*: every strategy on
-//! the same arrival streams, averaged over a few seeds. The desktop app runs the
-//! strategies in parallel on threads; a browser page has a single thread, so there they
-//! run one after another, a slice of each frame at a time.
+//! Benchmark runs behind *Compare controllers* and *Sensor study*: every automatic
+//! strategy on the same arrival streams, averaged over a few seeds. The desktop app
+//! runs the strategies in parallel on threads; a browser page has a single thread, so
+//! there they run one after another, a slice of each frame at a time.
 
 use crate::control::CtrlKind;
 use crate::sim::coop::{GapPolicy, Scheduling};

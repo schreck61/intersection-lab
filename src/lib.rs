@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Traffic intersection simulator: microscopic simulation, sensor models,
-//! signal controllers (fixed, actuated, max-pressure, predictive MPC, deep RL).
+//! signal controllers (fixed, actuated, max-pressure, predictive MPC, deep RL,
+//! RL-tuned predictive) and manual control.
 
 pub mod control;
 pub mod gui;

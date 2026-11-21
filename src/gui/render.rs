@@ -14,6 +14,7 @@ use crate::sim::vtypes::VKind;
 use crate::sim::{ControlMode, PedState, Reason, Sim, Vehicle};
 use egui::epaint::{Mesh, PathShape, PathStroke};
 use egui::{Align2, Color32, FontId, Pos2, Rect, Shape, Stroke, pos2};
+use std::collections::HashSet;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ColorBy {
@@ -805,6 +806,16 @@ pub struct DrawCtx<'a> {
     pub time: f64,
     /// Fraction of the next simulation step elapsed in real time (render interpolation).
     pub alpha: f64,
+    /// Manual control's sensor view: draw only what the sensors see (None: everything).
+    pub sight: Option<&'a Sight<'a>>,
+}
+
+/// What an intersection's sensors see, for manual control's sensor view: the vehicles a
+/// camera, radar or connected-vehicle message detected in the latest step, and those that
+/// dropped out lately, each with the vehicle as last detected and how opaque to draw it.
+pub struct Sight<'a> {
+    pub shown: HashSet<u64>,
+    pub fading: Vec<(&'a Vehicle, f32)>,
 }
 
 impl DrawCtx<'_> {
@@ -835,8 +846,12 @@ impl DrawCtx<'_> {
 pub fn paint_dynamic(painter: &egui::Painter, dc: &DrawCtx) {
     let sim = dc.sim;
     let cam = dc.cam;
-    // The cooperative crossing has no roadside sensors.
-    if dc.ov.sensors && sim.coop.is_none() {
+    // In the sensor view, a vehicle no sensor detects isn't drawn, nor is anything that
+    // would give it away.
+    let shown = |v: &Vehicle| dc.sight.is_none_or(|s| s.shown.contains(&v.id));
+    // The cooperative crossing has no roadside sensors. The sensor view always shows the
+    // loop detectors, which may be all there is to see.
+    if (dc.ov.sensors || dc.sight.is_some()) && sim.coop.is_none() {
         paint_sensors(painter, dc);
     }
     if dc.ov.paths {
@@ -851,14 +866,20 @@ pub fn paint_dynamic(painter: &egui::Painter, dc: &DrawCtx) {
         }
     }
     paint_signals(painter, dc);
-    // Vehicles: shadows first, then bodies.
-    for v in &sim.vehicles {
-        for (c, ax, hl, hw) in dc.body(v) {
-            let off = v2(0.35, 0.5);
-            poly(painter, &cam, &rect_pts(c + off, ax, hl, hw), Color32::from_black_alpha(55));
+    // Vehicles that dropped out of the sensors' sight fade where they were last seen.
+    if let Some(s) = dc.sight {
+        for &(v, a) in &s.fading {
+            let mut faded = painter.clone();
+            faded.multiply_opacity(a);
+            paint_shadow(&faded, dc, v);
+            paint_vehicle(&faded, dc, v);
         }
     }
-    for v in &sim.vehicles {
+    // Vehicles: shadows first, then bodies.
+    for v in sim.vehicles.iter().filter(|v| shown(v)) {
+        paint_shadow(painter, dc, v);
+    }
+    for v in sim.vehicles.iter().filter(|v| shown(v)) {
         paint_vehicle(painter, dc, v);
     }
     if let Some(c) = &sim.coop
@@ -914,7 +935,7 @@ pub fn paint_dynamic(painter: &egui::Painter, dc: &DrawCtx) {
                     };
                 }
                 None => {
-                    let held = sim.vehicles.iter().any(|v| v.commits.contains(&c.id));
+                    let held = sim.vehicles.iter().any(|v| shown(v) && v.commits.contains(&c.id));
                     let col = if held {
                         Color32::from_rgb(255, 90, 60)
                     } else if c.merge {
@@ -928,7 +949,7 @@ pub fn paint_dynamic(painter: &egui::Painter, dc: &DrawCtx) {
         }
     }
     if let Some(id) = dc.selected
-        && let Some(v) = sim.vehicles.iter().find(|v| v.id == id)
+        && let Some(v) = sim.vehicles.iter().find(|v| v.id == id && shown(v))
     {
         // Remaining route.
         let mut pts = vec![];
@@ -955,7 +976,7 @@ pub fn paint_dynamic(painter: &egui::Painter, dc: &DrawCtx) {
             painter.add(Shape::closed_line(pts, Stroke::new(2.0, Color32::from_rgb(255, 255, 120))));
         }
         if let Some(yid) = v.yield_to
-            && let Some(w) = sim.vehicles.iter().find(|w| w.id == yid)
+            && let Some(w) = sim.vehicles.iter().find(|w| w.id == yid && shown(w))
         {
             painter.arrow(
                 cam.to_screen(dc.front(v)),
@@ -963,6 +984,69 @@ pub fn paint_dynamic(painter: &egui::Painter, dc: &DrawCtx) {
                 Stroke::new(2.0, Color32::from_rgb(255, 160, 60)),
             );
         }
+    }
+    if dc.sight.is_some() && sim.signalized() {
+        paint_sensed_queues(painter, dc);
+    }
+}
+
+fn paint_shadow(painter: &egui::Painter, dc: &DrawCtx, v: &Vehicle) {
+    for (c, ax, hl, hw) in dc.body(v) {
+        let off = v2(0.35, 0.5);
+        poly(painter, &dc.cam, &rect_pts(c + off, ax, hl, hw), Color32::from_black_alpha(55));
+    }
+}
+
+/// A queue estimate: whole when it is, otherwise to a tenth (the sensors can't always
+/// tell which way a vehicle in a shared lane will go).
+fn queue_text(q: f64) -> String {
+    if (q - q.round()).abs() < 0.05 { format!("{:.0}", q.round()) } else { format!("{q:.1}") }
+}
+
+/// The sensor view's label at each approach: what the controllers read there, each
+/// movement's estimated queue and the longest wait the sensors report.
+pub fn sensed_queue_text(sim: &Sim, leg: usize) -> String {
+    let mut parts = vec![];
+    let mut wait: f64 = 0.0;
+    for t in Turn::ALL {
+        let Some(m) = sim.net.movement_for(leg, t) else { continue };
+        let o = &sim.view.moves[m];
+        wait = wait.max(o.max_wait);
+        // In words: beside a digit, a turn arrow such as ↰ reads as a 1.
+        parts.push(format!("{} {}", queue_text(o.queue), t.name().to_lowercase()));
+    }
+    let mut text = format!("queued: {}", parts.join(", "));
+    if wait >= 1.0 {
+        text.push_str(&format!("\nlongest wait {wait:.0} s"));
+    }
+    text
+}
+
+/// Draw the sensor view's approach labels beside each approach, just upstream of the
+/// stop line and away from the road.
+fn paint_sensed_queues(painter: &egui::Painter, dc: &DrawCtx) {
+    let (sim, cam) = (dc.sim, dc.cam);
+    // Too small to read when the map is zoomed far out.
+    if cam.scale < 1.5 {
+        return;
+    }
+    for (li, leg) in sim.net.legs.iter().enumerate() {
+        let ins = leg.in_side();
+        let p = cam.to_screen(leg.d * (leg.stop_dist + 14.0) + ins * (leg.in_width + 5.5));
+        let align = if ins.x > 0.5 {
+            Align2::LEFT_CENTER
+        } else if ins.x < -0.5 {
+            Align2::RIGHT_CENTER
+        } else if ins.y > 0.5 {
+            Align2::CENTER_TOP
+        } else {
+            Align2::CENTER_BOTTOM
+        };
+        let galley =
+            painter.layout_no_wrap(sensed_queue_text(sim, li), FontId::proportional(12.0), Color32::WHITE);
+        let r = align.anchor_size(p, galley.size());
+        painter.rect_filled(r.expand(4.0), 4.0, Color32::from_black_alpha(190));
+        painter.galley(r.min, galley, Color32::WHITE);
     }
 }
 
@@ -1656,7 +1740,17 @@ fn paint_ped(painter: &egui::Painter, dc: &DrawCtx, p: &crate::sim::Ped) {
     }
 }
 
-pub fn hud(painter: &egui::Painter, rect: Rect, sim: &Sim, ctrl_name: &str, speed: f32, paused: bool) {
+/// The status overlay at the top left of a side of the map. `next` is the stage manual
+/// control will change to.
+pub fn hud(
+    painter: &egui::Painter,
+    rect: Rect,
+    sim: &Sim,
+    ctrl_name: &str,
+    speed: f32,
+    paused: bool,
+    next: Option<&str>,
+) {
     let t = sim.t;
     let txt = format!(
         "{:02}:{:02}:{:02}   ×{}{}   {}",
@@ -1750,6 +1844,9 @@ pub fn hud(painter: &egui::Painter, rect: Rect, sim: &Sim, ctrl_name: &str, spee
             Phase::AllRed => "ALL-RED".into(),
         };
         let mut line = format!("Stage: {}  ·  {}", st.name, phase);
+        if let Some(n) = next {
+            line.push_str(&format!("  ·  next: {n}"));
+        }
         if sim.preempt_active {
             line.push_str("  ·  🚨 EMERGENCY PREEMPTION");
         }
@@ -1772,3 +1869,17 @@ pub fn hud(painter: &egui::Painter, rect: Rect, sim: &Sim, ctrl_name: &str, spee
 }
 
 pub const ASPHALT_COLOR: Color32 = ASPHALT_LIGHT;
+
+#[cfg(test)]
+mod tests {
+    use super::queue_text;
+
+    #[test]
+    fn a_queue_estimate_is_whole_when_it_is() {
+        for (q, want) in
+            [(0.0, "0"), (3.0, "3"), (2.97, "3"), (0.04, "0"), (0.06, "0.1"), (5.4, "5.4"), (1.26, "1.3")]
+        {
+            assert_eq!(queue_text(q), want, "{q}");
+        }
+    }
+}

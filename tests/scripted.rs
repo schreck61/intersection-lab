@@ -254,6 +254,24 @@ fn each_control_mode_can_be_chosen() {
 }
 
 #[test]
+fn manual_control_with_scripted_choices_in_the_sensor_view() {
+    // EW Through is chosen 20 s into the run and NS Through 27 s in, before EW Through's
+    // minimum green has run.
+    let s = scene_of(&[
+        ("TS_LAYOUT", "arterial4"),
+        ("TS_CTRL", "Manual"),
+        ("TS_VIEW", "sensors"),
+        ("TS_CHOOSE", "3@20, 1@27"),
+    ]);
+    assert_eq!(s.list("Controller"), CtrlKind::Manual.name());
+    assert!(s.shows("Manual control"), "{}", s.0);
+    assert!(s.status().ends_with("Manual  ·  what the sensors see"), "{}", s.status());
+    assert!(s.paints("Stage: EW Through") && s.paints("next: NS Through"), "{}", s.0);
+    assert!(s.shows("Next: NS Through, in "), "{}", s.0);
+    assert_eq!(s.lines().filter(|l| l.starts_with("painted queued: ")).count(), 4, "{}", s.0);
+}
+
+#[test]
 fn a_corridor_on_a_green_wave() {
     let s = scene_of(&[
         ("TS_LAYOUT", "arterial4"),

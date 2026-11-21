@@ -21,7 +21,7 @@ use intersection_lab::sim::LeftMode;
 use intersection_lab::sim::coop::{Fault, GapPolicy, Scheduling};
 use intersection_lab::sim::demand::{DemandConfig, Pattern};
 use intersection_lab::sim::geom::{V2, v2};
-use intersection_lab::sim::network::{LayoutKind, Movement, Network, Turn};
+use intersection_lab::sim::network::{Compass, LayoutKind, Movement, Network, Turn};
 use intersection_lab::sim::sensors::Conditions;
 use intersection_lab::sim::vtypes::{ALL_KINDS, VKind};
 use std::time::{Duration, Instant};
@@ -130,6 +130,28 @@ fn paints(w: &Window, text: &str) -> bool {
     painted(w).iter().any(|t| t.contains(text))
 }
 
+/// How many vehicles the map drew, while it labels each with its delay ("12s"), as it
+/// does with *delay labels* ticked and the map zoomed in.
+fn drawn(w: &Window) -> usize {
+    fn walk(shape: &Shape, rect: Rect, n: &mut usize) {
+        match shape {
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, rect, n)),
+            Shape::Text(t) if rect.contains(t.pos) => {
+                let delay = t.galley.text().strip_suffix('s').map(|d| d.trim_start_matches('-'));
+                if delay.is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit())) {
+                    *n += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    let (rect, mut n) = (map(w), 0);
+    for c in &w.output().shapes {
+        walk(&c.shape, rect, &mut n);
+    }
+    n
+}
+
 /// The status line at the top left of the map: clock, speed and strategy.
 #[track_caller]
 fn status(w: &Window) -> String {
@@ -209,6 +231,23 @@ fn click_at(w: &mut Window, pos: Pos2) {
             modifiers: Modifiers::NONE,
         });
     }
+    w.run_steps(2);
+}
+
+/// A click of the pointer at `pos` with Shift held.
+#[track_caller]
+fn shift_click_at(w: &mut Window, pos: Pos2) {
+    w.event(Event::PointerMoved(pos));
+    w.event(Event::ModifiersChanged(Modifiers::SHIFT));
+    for pressed in [true, false] {
+        w.event(Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::SHIFT,
+        });
+    }
+    w.event(Event::ModifiersChanged(Modifiers::NONE));
     w.run_steps(2);
 }
 
@@ -379,7 +418,7 @@ fn every_layout_control_mode_and_controller_runs() {
             }
             assert_eq!(chosen(&w, "Control"), mode.name());
             if mode == ControlMode::Signal {
-                for c in CtrlKind::ALL {
+                for c in CtrlKind::ALL.into_iter().chain([CtrlKind::Manual]) {
                     choose(&mut w, "Controller", c.name());
                     assert_eq!(chosen(&w, "Controller"), c.name());
                     assert!(shows(&w, c.description()));
@@ -1159,6 +1198,201 @@ fn the_map_pans_zooms_and_fits() {
     press(&mut w, "Fit view");
     click_at(&mut w, target);
     assert_eq!(count(&w, "waiting to enter"), before + 1);
+}
+
+#[test]
+fn a_person_chooses_stages_with_buttons_and_keys() {
+    let mut w = open();
+    pause(&mut w);
+    // Side B can't be run by hand: nobody would choose its stages.
+    tick(&mut w, "Compare side by side", true);
+    w.get_by_role_and_label(Role::ComboBox, "B controller").click_accesskit();
+    w.run_steps(2);
+    let list = w.get_by_role(Role::ListBox);
+    assert!(list.query_by_label(CtrlKind::Actuated.name()).is_some());
+    assert!(list.query_by_label(CtrlKind::Manual.name()).is_none(), "side B offers manual control");
+    w.key_press(egui::Key::Escape);
+    w.run_steps(2);
+    tick(&mut w, "Compare side by side", false);
+
+    // Manual control holds the stage that's green until a person chooses another.
+    let net = Network::build(LayoutKind::Arterial4);
+    choose(&mut w, "Controller", CtrlKind::Manual.name());
+    assert!(shows(&w, CtrlKind::Manual.description()));
+    assert!(has(&w, "Manual control"));
+    for (j, st) in net.stages.iter().enumerate() {
+        assert!(w.query_by_label(&format!("{} {}", j + 1, st.name)).is_some(), "no button for {}", st.name);
+    }
+    step(&mut w, 2);
+    assert!(has(&w, "NS Protected Left holds until you choose another stage."), "{:?}", texts(&w));
+    assert!(status(&w).ends_with("Manual"), "{}", status(&w));
+    assert_named(&w);
+
+    // A button chooses the next stage, which waits for the minimum green, then the
+    // yellow and all-red.
+    press(&mut w, "3 EW Through");
+    assert!(has(&w, "Next: EW Through, in 4 s, when the minimum green has run."), "{:?}", texts(&w));
+    assert!(paints(&w, "next: EW Through"), "the map says what comes next");
+    step(&mut w, 15);
+    assert!(paints(&w, "Stage: EW Through"));
+    assert!(!paints(&w, "next: "));
+    assert!(has(&w, "EW Through holds until you choose another stage."));
+
+    // With no control focused, N chooses the next stage in the usual order and the number
+    // keys choose by number.
+    w.key_press(egui::Key::N);
+    w.run_steps(2);
+    assert!(shows(&w, "Next: NS Protected Left, in "), "{:?}", texts(&w));
+    w.key_press(egui::Key::Num4);
+    w.run_steps(2);
+    assert!(shows(&w, "Next: EW Protected Left, in "), "{:?}", texts(&w));
+    // A key with a modifier, such as Cmd+1, is left to the system.
+    w.key_press_modifiers(Modifiers::COMMAND, egui::Key::Num1);
+    w.run_steps(2);
+    assert!(shows(&w, "Next: EW Protected Left, in "));
+    // While a control has keyboard focus, the keys are its own.
+    w.get_by_role_and_label(Role::SpinButton, "Seed").focus();
+    w.run_steps(2);
+    w.key_press(egui::Key::Num1);
+    w.run_steps(2);
+    assert!(shows(&w, "Next: EW Protected Left, in "));
+    // Escape leaves the control, and the keys choose again. Choosing the stage that's
+    // green cancels the choice.
+    w.key_press(egui::Key::Escape);
+    w.run_steps(2);
+    w.key_press(egui::Key::Num3);
+    w.run_steps(2);
+    assert!(has(&w, "EW Through holds until you choose another stage."), "{:?}", texts(&w));
+    // Next stage follows the usual order from the stage that's green.
+    press(&mut w, "Next stage");
+    assert!(shows(&w, "Next: NS Protected Left, in "));
+    step(&mut w, 30);
+    assert!(paints(&w, "Stage: NS Protected Left"));
+
+    // In a corridor, manual control runs the intersection in focus; the others keep an
+    // automatic controller.
+    slide(&mut w, "signals along main road", 3.0);
+    assert!(shows(&w, "Intersection 2 of 3 (west → east)"));
+    assert_eq!(chosen(&w, "Controller"), CtrlKind::Manual.name());
+    assert!(has(&w, "Manual control"));
+    press(&mut w, "◀");
+    assert_eq!(chosen(&w, "Controller"), CtrlKind::Predictive.name());
+    assert!(!has(&w, "Manual control"));
+    press(&mut w, "▶");
+    assert!(has(&w, "Manual control"));
+    assert_named(&w);
+}
+
+#[test]
+fn clicking_an_approach_gives_it_green() {
+    let mut w = open();
+    pause(&mut w);
+    let net = Network::build(LayoutKind::Arterial4);
+    choose(&mut w, "Controller", CtrlKind::Manual.name());
+    // Choosing manual control turns on Give green. The pointer says what a click on the
+    // east approach's through lane would choose.
+    let leg = net.leg_index(Compass::E).unwrap();
+    let path = &net.links[net.legs[leg].in_lanes[1]].path;
+    let east = on_map(&w, &net, path.point(path.length - 20.0), false);
+    w.hover_at(east);
+    w.run_steps(2);
+    assert!(paints(&w, "click: EW Through · shift-click: East Split"), "{:?}", painted(&w));
+    click_at(&mut w, east);
+    assert!(has(&w, "Next: EW Through"), "{:?}", texts(&w));
+    assert!(shows(&w, "Next: EW Through, in "));
+    // Shift chooses the stage that serves the approach alone.
+    shift_click_at(&mut w, east);
+    assert!(has(&w, "Next: East Split"), "{:?}", texts(&w));
+    step(&mut w, 15);
+    assert!(paints(&w, "Stage: East Split"));
+    shift_click_at(&mut w, east);
+    assert!(has(&w, "East Split is already green"));
+    // Off the approach lanes, a click says where to click.
+    let middle = on_map(&w, &net, v2(0.0, 0.0), false);
+    click_at(&mut w, middle);
+    assert!(has(&w, "Click an approach's lanes to give them green"));
+
+    // With Give green off, a click selects a vehicle again.
+    press(&mut w, "🚦 Give green");
+    step(&mut w, 30);
+    assert!(select_a_vehicle(&mut w, &net), "no vehicle where they queue");
+
+    // Side by side, side B runs its own controller.
+    tick(&mut w, "Compare side by side", true);
+    press(&mut w, "🚦 Give green");
+    let shift = vec2(map(&w).width() * 0.5 + 1.0, 0.0);
+    let on_b = on_map(&w, &net, path.point(path.length - 20.0), true) + shift;
+    w.hover_at(on_b);
+    w.run_steps(2);
+    assert!(paints(&w, "side B runs its own controller: give green on side A"));
+    click_at(&mut w, on_b);
+    assert!(has(&w, "Side B runs its own controller: give green on side A"));
+    let on_a = on_map(&w, &net, path.point(path.length - 20.0), true);
+    click_at(&mut w, on_a);
+    assert!(has(&w, "Next: EW Through"), "{:?}", texts(&w));
+
+    // Give green belongs to manual control and goes with it.
+    choose(&mut w, "Controller", CtrlKind::Actuated.name());
+    assert!(w.query_by_label("🚦 Give green").is_none());
+    assert!(!paints(&w, "click: "));
+}
+
+#[test]
+fn the_sensor_view_shows_only_what_the_sensors_see() {
+    let mut w = open();
+    pause(&mut w);
+    let net = Network::build(LayoutKind::Arterial4);
+    choose(&mut w, "Controller", CtrlKind::Manual.name());
+    press(&mut w, "🚦 Give green");
+    tick(&mut w, "delay labels", true);
+    w.hover_at(map(&w).center());
+    w.event(Event::Zoom(1.6));
+    w.run_steps(2);
+    step(&mut w, 60);
+    let everything = drawn(&w);
+    assert!(everything >= 10, "{everything} vehicles drawn");
+
+    // The sensors miss some vehicles: the map draws only those they detect, and at each
+    // approach what the controllers read there.
+    press(&mut w, "What the sensors see");
+    let sensed = drawn(&w);
+    assert!(0 < sensed && sensed < everything, "{sensed} of {everything} vehicles drawn");
+    assert!(status(&w).ends_with("Manual  ·  what the sensors see"), "{}", status(&w));
+    let queues: Vec<String> = painted(&w).into_iter().filter(|t| t.starts_with("queued: ")).collect();
+    assert_eq!(queues.len(), net.legs.len(), "{queues:?}");
+    assert!(queues.iter().any(|q| q.contains("\nlongest wait ")), "{queues:?}");
+    assert!(select_a_vehicle(&mut w, &net), "no detected vehicle where they queue");
+
+    // Without cameras and radar, the sensors detect no vehicle: once the last sightings
+    // fade, in half a second, the map draws none, and none can be selected.
+    tick(&mut w, "Intersection cameras (video analytics)", false);
+    tick(&mut w, "Advance radar (long range)", false);
+    step(&mut w, 1);
+    let fade = Instant::now();
+    while (drawn(&w) > 0 || has(&w, "doing")) && fade.elapsed() < Duration::from_secs(5) {
+        std::thread::sleep(Duration::from_millis(50));
+        w.step();
+    }
+    assert_eq!(drawn(&w), 0);
+    assert!(!has(&w, "doing"), "the selected vehicle is no longer in sight");
+    assert!(!select_a_vehicle(&mut w, &net), "an undetected vehicle was selected");
+    assert_eq!(painted(&w).iter().filter(|t| t.starts_with("queued: ")).count(), net.legs.len());
+
+    // Everything again: every vehicle, any of them selectable.
+    press(&mut w, "Everything");
+    assert!(drawn(&w) >= 10);
+    assert!(!status(&w).contains("what the sensors see"));
+    assert!(select_a_vehicle(&mut w, &net));
+    // Back to what the sensors see, which don't see the selected vehicle.
+    press(&mut w, "What the sensors see");
+    assert!(!has(&w, "doing"));
+    assert_eq!(drawn(&w), 0);
+    // The sensor view belongs to manual control: an automatic controller shows everything.
+    choose(&mut w, "Controller", CtrlKind::Actuated.name());
+    assert!(drawn(&w) >= 10);
+    assert!(!status(&w).contains("what the sensors see"));
+    assert!(!paints(&w, "queued: "));
+    assert_named(&w);
 }
 
 /// Let the in-app benchmark finish, drawing frames as a person would watch it.

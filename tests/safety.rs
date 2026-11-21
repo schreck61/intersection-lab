@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Jim Schreckengast
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Regression tests: every layout/control combination must run collision-free and
-//! serve (nearly) all demand at default volumes.
+//! Regression tests: every layout, control mode and automatic controller must run
+//! collision-free and serve (nearly) all demand at default volumes, and a person
+//! choosing stages at random must never cut an interval short.
 
 use intersection_lab::control::CtrlKind;
 use intersection_lab::sim::network::LayoutKind;
@@ -147,5 +148,96 @@ fn no_collision_between_late_yellow_and_clearing_turn() {
             format!("seed {seed}: {n} overlap ticks, first: {}", first.unwrap_or_default())
         })
         .collect();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// A person at the controls can slow traffic but never make it unsafe. A "person" who
+/// chooses stages at random moments, often during a change or while a minimum green or a
+/// pedestrian interval runs, and sometimes the stage that's already green, still gets no
+/// overlaps, no green shorter than the minimum, every yellow and all-red in full, and
+/// every WALK and flashing DON'T WALK in full.
+#[test]
+fn a_person_choosing_at_random_never_cuts_an_interval_short() {
+    use intersection_lab::sim::rng::Rng;
+    use intersection_lab::sim::signal::{PedSig, Phase};
+    use intersection_lab::sim::vtypes::VKind;
+
+    let handles: Vec<_> = (LayoutKind::ALL.into_iter().filter(|k| k.signalized()))
+        .map(|kind| {
+            common::spawn(move || {
+                let mut sim = Sim::new(kind, ControlMode::Signal, CtrlKind::Manual, 41);
+                sim.check_safety = true;
+                // Emergency preemption may end a green early by design: no emergency
+                // vehicles. More pedestrians than usual, with a leading interval, keep the
+                // pedestrian intervals busy.
+                sim.demand.mix[VKind::Emergency.index()] = 0.0;
+                sim.demand.ped_rate = 240.0;
+                sim.signal.lpi = 2.0;
+                let mut rng = Rng::new(9);
+                let (n, n_cw, dt) = (sim.net.stages.len(), sim.net.crosswalks.len(), sim.dt);
+                let mut problems = vec![];
+                // Each crosswalk's state, and when it began.
+                let mut prev: Vec<PedSig> = sim.signal.cw.iter().map(|c| c.state).collect();
+                let mut since = vec![0.0; n_cw];
+                while sim.t < 900.0 {
+                    // A choice every 5 s on average.
+                    if rng.f64() < 0.02 {
+                        let j = rng.below(n);
+                        let sig = &sim.signal;
+                        sim.controller.as_manual().unwrap().choose(j, sig);
+                    }
+                    sim.step();
+                    for c in 0..n_cw {
+                        let now = sim.signal.cw[c].state;
+                        if now == prev[c] {
+                            continue;
+                        }
+                        let need = match prev[c] {
+                            PedSig::Walk => sim.signal.walk_time,
+                            PedSig::Fdw => sim.net.crosswalks[c].length / sim.signal.ped_speed,
+                            PedSig::Dw => 0.0,
+                        };
+                        let held = sim.t - since[c];
+                        if (prev[c] == PedSig::Walk && now == PedSig::Dw) || held < need - dt - 1e-6 {
+                            problems.push(format!(
+                                "crosswalk {c}: {:?} lasted {held:.1} s, then {now:?} at {:.1} s",
+                                prev[c], sim.t
+                            ));
+                        }
+                        (prev[c], since[c]) = (now, sim.t);
+                    }
+                }
+                // Every interval but the one still running.
+                let spans: Vec<_> = sim.signal.history.iter().collect();
+                for h in &spans[..spans.len() - 1] {
+                    let len = h.end - h.start;
+                    let ok = match h.phase {
+                        Phase::Green => len >= sim.signal.min_green - dt - 1e-6,
+                        Phase::Yellow => (len - sim.net.yellow).abs() <= dt + 1e-6,
+                        Phase::AllRed => (len - sim.net.all_red).abs() <= dt + 1e-6,
+                    };
+                    if !ok {
+                        problems.push(format!(
+                            "{:?} of {} lasted {len:.1} s from {:.1} s",
+                            h.phase, sim.net.stages[h.stage].name, h.start
+                        ));
+                    }
+                }
+                (kind, sim.collisions, sim.signal.switches, problems)
+            })
+        })
+        .collect();
+    let mut failures = vec![];
+    for h in handles {
+        let (kind, collisions, switches, problems) = h.join().unwrap();
+        if collisions > 0 {
+            failures.push(format!("{}: {collisions} overlap ticks", kind.key()));
+        }
+        // The person was obeyed: the signal changed stage many times.
+        if switches < 20 {
+            failures.push(format!("{}: only {switches} stage changes", kind.key()));
+        }
+        failures.extend(problems.into_iter().map(|p| format!("{}: {p}", kind.key())));
+    }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
