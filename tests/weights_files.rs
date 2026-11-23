@@ -202,3 +202,33 @@ fn a_controller_records_the_file_it_loaded() {
     assert_eq!(RlController::new(&net, 1).loaded_fingerprint, None);
     assert_eq!(Hybrid::new(&net, 1).loaded_fingerprint, None);
 }
+
+/// A save replaces the file in one step. When it can't (here the temporary file it writes
+/// first can't be created), the file already there is left as it was, whichever
+/// controller is saving, and no temporary file is left behind.
+#[test]
+fn a_save_that_fails_leaves_the_old_file() {
+    fn check(dir: &std::path::Path, name: &str, save: impl Fn(&std::path::Path) -> std::io::Result<()>) {
+        let path = dir.join(name);
+        weights::write_atomic(&path, "the old file").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "the old file");
+        let tmp = weights::temp_path(&path).unwrap();
+        std::fs::create_dir(&tmp).unwrap();
+        assert!(save(&path).is_err(), "{name}: the save should fail");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "the old file", "{name}");
+        std::fs::remove_dir(&tmp).unwrap();
+        save(&path).unwrap();
+        assert!(std::fs::read_to_string(&path).unwrap().starts_with('{'), "{name}: saved over the old file");
+        assert!(!tmp.exists(), "{name}: the temporary file is gone");
+    }
+    let dir = scratch("atomic-save");
+    let net = Network::build(LayoutKind::Tee);
+    let (rl, hybrid) = (RlController::load_or_new(&net), Hybrid::load_or_new(&net));
+    check(&dir, "dqn_tee.json", |p| rl.save(p));
+    check(&dir, "hybrid_tee.json", |p| hybrid.save(p, None, true));
+    // Every file left is a finished one.
+    let mut left: Vec<String> =
+        std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+    left.sort();
+    assert_eq!(left, ["dqn_tee.json", "hybrid_tee.json"]);
+}

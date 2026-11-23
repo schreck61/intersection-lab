@@ -143,7 +143,7 @@ impl RlController {
             episodes: self.episodes,
             net: self.agent.online.clone(),
         };
-        std::fs::write(path, serde_json::to_string(&m).unwrap())
+        super::weights::write_atomic(path, &serde_json::to_string(&m).unwrap())
     }
 
     pub fn set_expert_predictive(&mut self, net: &Network) {
