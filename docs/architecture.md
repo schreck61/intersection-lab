@@ -3,8 +3,8 @@
 This document describes how Intersection Lab is put together. It covers what each Rust
 source file does, how the code is split into layers, and how those layers work together
 during a simulation step, a corridor run, a cooperative crossing, a benchmark and a
-training run. It describes the code on `main`: version 0.8.1 and the fixes made since,
-to the order at merges and to the roundabout's lock-ups.
+training run. It describes the code on `main`: version 0.8.1, the fixes made since to
+the order at merges and to the roundabout's lock-ups, and the stress example.
 Section 9.4 is an illustrated tour of the app's window, and Appendix A says how the
 screenshots were made.
 
@@ -226,7 +226,7 @@ src/
   bin/train.rs      headless training of the Deep RL and Hybrid networks
   bin/shared/       record.rs: what bench and train record about a run
 examples/           studies: cooperative, corridor, failures, fya, lpi, preempt, satflow,
-                    sweep, plus make_icons
+                    stress, sweep, plus make_icons
 tests/              safety, cooperative, failures, pedestrian_rule, weights_files,
                     green_wave, networks, gui, scripted, tools, and common/ (shared by the
                     tests)
@@ -249,7 +249,7 @@ docs/               this document, insights.md, cooperative-intersections.md (wi
 | `src/gui/` | 5 | 5,493 |
 | `src/bin/` | 3 | 1,127 |
 | `src/lib.rs`, `src/main.rs` | 2 | 97 |
-| `examples/` | 9 | 999 |
+| `examples/` | 10 | 1,305 |
 | `tests/` | 11 | 5,103 |
 | `fuzz/fuzz_targets/` | 1 | 61 |
 
@@ -768,11 +768,11 @@ this step. A stopped driver waits out their reaction time before pulling away.
     `stats::Done` record and, in a corridor, an `Exit` for `World` to hand over.
 * **Safety check (`check_overlaps`):** when `check_safety` is on, as it is in the app,
   `bench`'s strategy tables, the safety, cooperative, failures and green-wave tests, the
-  sweeps and the corridor, cooperative and failures studies, every step looks for
-  touching vehicles. Bodies are chains of oriented rectangles that bend through turns
-  (`body`, `obb_overlap`). It flags vehicles on the same lane that overlap by more than
-  0.3 m, and runs the rectangle test, with rectangles shrunk by 0.25 m, on pairs in or
-  just past the box. Each pair counts once per step in `collisions`.
+  sweeps, the stress runs and the corridor, cooperative and failures studies, every step
+  looks for touching vehicles. Bodies are chains of oriented rectangles that bend
+  through turns (`body`, `obb_overlap`). It flags vehicles on the same lane that overlap
+  by more than 0.3 m, and runs the rectangle test, with rectangles shrunk by 0.25 m, on
+  pairs in or just past the box. Each pair counts once per step in `collisions`.
 * **Drawing helpers (`body_lagged`, `lag`, `lc_offset`, `ped_pos_lerp`):** let the app
   draw positions *between* steps for smooth motion. The safety check and lane changes
   use the same functions with no lag.
@@ -3536,6 +3536,7 @@ The examples are the studies behind `docs/insights.md` and
 | `lpi` | The leading pedestrian interval and the blank-out NO TURN ON RED sign: near misses and delay | seeds |
 | `preempt` | Emergency vehicles, with and without preemption | none |
 | `satflow` | Calibration: saturation flow and start-up lost time of a queued through lane, against the HCM base of 1,900 vehicles per hour per lane | none |
+| `stress` | Half-hour runs of every layout × control mode × seed with `check_safety` on, with an emergency vehicle sent through every 90 s, four times the pedestrians or heavier traffic. Signals run every automatic controller. For each layout, control mode and controller it reports how many runs locked up (a vehicle standing still in the box for over 300 s) and how many had overlaps, the emergency vehicles that got through and the longest standstill, then lists the runs that locked up or overlapped | first and last seed, layout, demand scale, options (`ev`, `peds`, `both`) |
 | `sweep` | Every layout × control mode × seed with `check_safety` on, reporting in-box overlaps. Signals run the four automatic controllers that don't learn: fixed-time, actuated, max-pressure and predictive | seeds, demand scale, options |
 | `make_icons` | Renders the application icon at every size the installers need (run by `packaging/icons/build.sh`) | output folder |
 
@@ -3725,10 +3726,10 @@ while it is out of date.
    control is the one variant left out of `ALL`, since nobody would choose its stages in
    a benchmark or a test.
 3. Optionally implement `brain()` so the app can explain its decisions (§9.4).
-4. It then appears in the app, *Compare controllers*, `bench` and the safety tests,
-   which iterate over `CtrlKind::ALL`. The sensor studies, in `bin/bench.rs` and the
-   app's `start_bench`, and the `corridor`, `fya`, `lpi` and `sweep` examples list
-   their controllers, so add it there to include it.
+4. It then appears in the app, *Compare controllers*, `bench`, the safety tests and the
+   `stress` example, which iterate over `CtrlKind::ALL`. The sensor studies, in
+   `bin/bench.rs` and the app's `start_bench`, and the `corridor`, `fya`, `lpi` and
+   `sweep` examples list their controllers, so add it there to include it.
 
 ### 13.2 Add a layout
 

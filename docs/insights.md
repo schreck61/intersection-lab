@@ -248,16 +248,20 @@ vehicle was made to fail in the box, once per run, 400 runs per case, in batches
   Vehicles now stop for them. Over 30 seeds that changed person delay by 0.6 s at most,
   for any controller on any layout. On six seeds of the town layout it moved predictive
   control from 21.8 to 24.1 s, which shows how far six seeds can swing there.
-- **Frequent emergency vehicles find what ordinary traffic doesn't:** sending one through
-  every 90 s, on every layout and control mode, gave one overlap in 2,560 half-hour runs.
+- **Frequent emergency vehicles find what ordinary traffic doesn't:** 2,560 half-hour
+  runs on every layout and control mode, with and without one sent through every 90 s
+  and with and without four times the pedestrians, gave one overlap, in a run with both.
   Where two paths merge they run close together for up to 12 m before the merge point,
   and vehicles took turns only by when they would reach that point, so a fast vehicle
   going first could overtake a slow one alongside it there. Now the order has to hold
-  from where the paths come close as well. The same runs have no overlaps. Over 30
-  seeds, no signal controller's person delay moved by more than 0.4 s, the all-way stop
-  on major/minor moved most (by 2.6 s), and the roundabout's mean stayed at 23.4 s while
-  single seeds moved both ways. The same stress also locked up the single-lane
-  roundabout, in about 2% of runs, before that change and after it.
+  from where the paths come close as well. The same runs have no overlaps. Seven of
+  them, as before the change, have a vehicle that stands in the box for five to six and
+  a half minutes: one turning left from the major road at a two-way stop, waiting for a
+  gap in oncoming traffic and pedestrians. Two of the seven have no emergency vehicles.
+  Over 30 seeds, no signal controller's person delay moved by more than 0.4 s, the
+  all-way stop on major/minor moved most (by 2.6 s), and the roundabout's mean stayed at
+  23.4 s while single seeds moved both ways. The same stress also locked up the
+  single-lane roundabout, in about 2% of runs, before that change and after it.
 - **The roundabout needed a stress test of its own:** the long runs above cover only
   signals. With an emergency vehicle sent through every 90 s, the single-lane roundabout
   gridlocked in 11 of 500 half-hour runs, and without one in 1 of 200. An entering
@@ -311,6 +315,11 @@ cargo run --release --example cooperative p2 2 mix 1200 3 2000,4000,6000,8000,10
 cargo run --release --example cooperative p2 1 mix 1200 3 16000                     # section 8 (one left-turn lane)
 cargo run --release --example cooperative p2 2 mix 1200 8 18000 platoons            # section 8 (platoons)
 cargo run --release --example failures 400             # section 8 (failures)
+cargo run --release --example stress 1 20 all 1 ev,peds,both   # section 9 (emergency vehicles on every layout)
+cargo run --release --example stress 1 500 roundabout 1 ev     # section 9 (the roundabout with emergency vehicles)
+cargo run --release --example stress 1 200 roundabout 1        # section 9 (the roundabout without them)
+cargo run --release --example stress 1 200 roundabout 1.35     # section 9 (the roundabout at 1.35× traffic)
+cargo run --release --example stress 1 200 roundabout 1.6      # section 9 (the roundabout at 1.6× traffic)
 cargo run --release --example satflow                  # calibration
 cargo run --release --example sweep 4 1.35             # safety sweep
 ```

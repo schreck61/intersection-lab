@@ -654,7 +654,9 @@ src/bin/        bench (comparisons, sensor study), train (RL training and testin
 weights/        trained DQN and hybrid weights per layout
 tests/          regression tests: safety, throughput, the app (headless) and the tools
 examples/       corridor, lpi, fya, satflow, preempt, sweep (multi-seed safety sweep),
-                cooperative, failures (a vehicle fails at the cooperative crossing)
+                stress (half-hour runs with emergency vehicles or heavy traffic, checked for
+                overlaps and lock-ups), cooperative, failures (a vehicle fails at the
+                cooperative crossing)
 docs/           architecture.md (how the code fits together, with a tour of the app),
                 insights.md (every finding), cooperative-intersections.md (design notes for the
                 signal-free crossing, with the scripts behind its estimates and figures),
