@@ -360,11 +360,11 @@ those still queued, so a policy can't look good by starving an approach. Lower i
 | Hybrid (RL-tuned predictive) | **16.9** | **21.5** | **22.0** | 13.7 |
 | All-way stop | 142.2 | 107.0 | 61.9 | 28.8 |
 | Two-way stop | — | 157.4 | — | 45.3 |
-| Roundabout | 18.2 | | | |
+| Roundabout | 16.1 | | | |
 
 Zero vehicle overlaps in every run. The roundabout is a single-lane layout of its own,
 with less traffic than the arterial (about 1,540 vehicles an hour against 2,500), and
-its delay varies widely from seed to seed: over 30 seeds it averages 23.4 s. Bold marks
+its delay varies widely from seed to seed: over 30 seeds it averages 17.8 s. Bold marks
 the lowest signal-control figure on each layout, but six seeds rank the strategies only
 roughly. Beside each strategy `bench` prints its difference in person delay from
 predictive control on the same seeds, with the half-width of the difference's 95%
@@ -617,8 +617,8 @@ A fuller write-up of every finding, with the commands that reproduce it, is in
   for 3–5 s more person delay.
 * **Right tool for the job:** with realistic reaction times an all-way stop is only
   competitive at low volumes (town at 0.6×: 15.0 s vs 10.5 s actuated), the roundabout
-  usually does well at moderate volumes (a median of 17.7 s over 30 seeds) but not on
-  every seed, and a two-way stop fails once the major road is busy.
+  does well at moderate volumes (a median of 17.2 s over 30 seeds, and no seed worse
+  than 30.5 s), and a two-way stop fails once the major road is busy.
 * **Signal-free crossings still need phases.** With every vehicle automated, an
   intersection manager carries the design demand of 18,000 veh/h at 29 s average delay
   and saturates near 19,000 veh/h with fail-safe gaps (19,700 with nominal gaps, about
@@ -689,10 +689,6 @@ simulation step runs and how to add a controller, layout or sensor.
 * Drivers are well-behaved: no red-light running, distraction or crashes, so safety is
   measured with surrogates (overlaps, near-misses). The failures of the cooperative
   crossing are made on purpose.
-* With an emergency vehicle sent through every 90 s, the single-lane roundabout locks up
-  in about 2% of half-hour runs: entering vehicles stop behind a full ring where their
-  paths already run close to it, and the circulating vehicles wait for them. Default
-  traffic has no emergency vehicles, so the benchmarks don't include this.
 * Training is fast because the simulation runs thousands of times faster than real time
   per core: `RESUME=1 cargo run --release --bin train all 300 900 hybrid` fine-tunes the
   shipped weights.

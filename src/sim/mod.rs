@@ -207,6 +207,19 @@ impl Vehicle {
     pub fn persons(&self) -> f64 {
         self.spec().occupancy
     }
+    /// Waiting, or pulling up to wait: behind a waiting leader, or for the right of way,
+    /// someone crossing, a signal, a stop sign or a chance to change lanes.
+    fn waiting(&self) -> bool {
+        self.blocked
+            || matches!(
+                self.reason,
+                Reason::Yielding
+                    | Reason::Pedestrian
+                    | Reason::Signal
+                    | Reason::StopSign
+                    | Reason::LaneChange
+            )
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1130,13 +1143,43 @@ impl Sim {
         }
     }
 
+    /// How far vehicle `j`'s front can still move if the traffic ahead of it that is waiting
+    /// or slow comes to rest. Each vehicle that is waiting, yielding or slower than 2 m/s
+    /// brakes at 3 m/s², the others keep going, and none comes closer than its minimum gap
+    /// to the one ahead, looking up to `depth` vehicles ahead, each within 40 m of the next.
+    fn reach(&self, j: usize, depth: u8) -> f64 {
+        let w = &self.vehicles[j];
+        let own = if w.v < 2.0 || w.waiting() || w.yield_to.is_some() {
+            w.v * w.v / (2.0 * 3.0)
+        } else {
+            f64::INFINITY
+        };
+        if depth == 0 {
+            return own;
+        }
+        match self.leader(j) {
+            Some((gap, _, k)) if gap < 40.0 => {
+                own.min(gap - w.spec().min_gap + self.reach(k, depth - 1)).max(0.0)
+            }
+            _ => own,
+        }
+    }
+
     /// Does vehicle `i` have to yield at conflict `cid` (seen from its own route)?
     fn must_yield(&self, i: usize, cid: usize, d_a: f64, buf: &mut Vec<(usize, f64)>) -> Option<usize> {
         let a = &self.vehicles[i];
-        let sa = self.vstat[i];
+        let mut sa = self.vstat[i];
         let c = &self.net.conflicts[cid];
         let my_link = if Self::route_index(a, c.a).is_some() { c.a } else { c.b };
         let (_, other, s_other) = c.side(my_link);
+        // At a roundabout, rank goes by where a vehicle is: entering or circulating. One
+        // still entering will be circulating by the time it reaches a merge farther around
+        // the ring, so it ranks as circulating there, and doesn't wait for the vehicles
+        // entering at that merge. They still rank it by where it is, so they don't yield
+        // to it before it is on the ring.
+        if self.mode == ControlMode::Roundabout && a.kind != VKind::Emergency {
+            sa.rank = if self.net.links[my_link].kind == LinkKind::Ring { 2.0 } else { 1.0 };
+        }
         let ((za0, za1), (zv0, zv1)) = c.zones(my_link);
         let spec = a.spec();
         let vm = self.vmax_on(a, my_link);
@@ -1773,17 +1816,10 @@ impl Sim {
         // Where we will come to rest behind a leader that is waiting or pulling up to wait
         // (not just slow).
         let mut queue_gap = None;
-        if let Some((gap, vl, j)) = self.leader(i) {
+        let lead = self.leader(i);
+        if let Some((gap, vl, j)) = lead {
             let w = &self.vehicles[j];
-            let waiting = w.blocked
-                || matches!(
-                    w.reason,
-                    Reason::Yielding
-                        | Reason::Pedestrian
-                        | Reason::Signal
-                        | Reason::StopSign
-                        | Reason::LaneChange
-                );
+            let waiting = w.waiting();
             blocked = v.v < 0.5 && gap < 8.0 && w.v < 0.3 && waiting;
             if waiting || w.yield_to.is_some() {
                 queue_gap = Some(gap + vl * vl / (2.0 * 3.0) - spec.min_gap + 0.6);
@@ -1964,6 +2000,24 @@ impl Sim {
                 }
                 if d > look {
                     break;
+                }
+                // A vehicle entering a roundabout waits short of the merge until the ring
+                // has room for all of it beyond the merge, even if the traffic ahead that
+                // is waiting or slow comes to rest. Otherwise it could stop where its path
+                // already runs close to the ring, and hold up the circulating vehicles.
+                if c.merge
+                    && l.kind == LinkKind::Entry
+                    && d - zn > 0.3
+                    && let Some((ahead, _, j)) = lead
+                    && ahead - spec.min_gap + self.reach(j, 4) < d + zone + spec.length + 0.5
+                {
+                    let gap = d - zn - 0.8;
+                    if can_stop(gap) || v.v < 1.0 {
+                        yield_to = Some(self.vehicles[j].id);
+                        stop_gap = Some((gap, Reason::Yielding));
+                        yielded = true;
+                        break;
+                    }
                 }
                 if let Some(j) = self.must_yield(i, cid, d, buf) {
                     yield_to = Some(self.vehicles[j].id);
