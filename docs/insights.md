@@ -139,10 +139,11 @@ Six seeds of 20 minutes each (`bench all 20 6`). The comparisons below use 30 se
 
 ## 7. Choosing the intersection type
 
-- **Roundabout:** good at moderate traffic most of the time, but not every time. It
-  carries about 1,540 vehicles an hour, more than the single-lane town signals (about
-  1,120), at a median person delay of 17.7 s over 30 seeds; five seeds gave 35–43 s and
-  one 74 s, for a mean of 23.4 s.
+- **Roundabout:** good at moderate traffic. It carries about 1,540 vehicles an hour,
+  more than the single-lane town signals (about 1,120), at a median person delay of
+  17.2 s over 30 seeds and a mean of 17.8 s, with 30.5 s on the worst seed. Until
+  entering vehicles waited for room on the ring (§9), five seeds gave 35–43 s and one
+  74 s, for a mean of 23.4 s.
 - **Two-way stop:** fails once the major road is busy, because side-street drivers can't
   find gaps.
 - **All-way stop:** only competitive at low traffic once drivers take a realistic moment to
@@ -255,8 +256,25 @@ vehicle was made to fail in the box, once per run, 400 runs per case, in batches
   from where the paths come close as well. The same runs have no overlaps. Over 30
   seeds, no signal controller's person delay moved by more than 0.4 s, the all-way stop
   on major/minor moved most (by 2.6 s), and the roundabout's mean stayed at 23.4 s while
-  single seeds moved both ways. The same stress locks up the single-lane roundabout in
-  about 2% of runs, before the change and after it.
+  single seeds moved both ways. The same stress also locked up the single-lane
+  roundabout, in about 2% of runs, before that change and after it.
+- **The roundabout needed a stress test of its own:** the long runs above cover only
+  signals. With an emergency vehicle sent through every 90 s, the single-lane roundabout
+  gridlocked in 11 of 500 half-hour runs, and without one in 1 of 200. An entering
+  vehicle could stop where its path already runs close to the ring, behind circulating
+  traffic that had stopped, and the circulating vehicles behind it waited for it, until
+  each vehicle on the ring waited for another. Heavier traffic found more: at 1.35× half
+  the runs, and at 1.6× nine in ten, had a vehicle standing still for over five minutes
+  while traffic moved around it. A vehicle still on its entry ranked as entering at the
+  next merge around the ring as well, and gave way there to the vehicles entering, so a
+  truck, longer than the ring between two entries, had to wait at its entry until both
+  merges were clear. Now an entering vehicle waits at its entry until the ring has room
+  for all of it beyond the merge, and ranks as circulating at the merges it will reach on
+  the ring. Either change alone still leaves runs stuck; together, no vehicle in those
+  runs stands still on the roundabout for more than 68 s with emergency vehicles, or
+  129 s at 1.6× traffic, against over 26 minutes before. Over 30 seeds of default
+  traffic, the roundabout's person delay fell from 23.4 to 17.8 s and its worst seed's
+  from 74 to 30.5 s; five seeds got worse, by 3.8 s at most.
 - **Making things fail finds what normal running hides:** the cooperative crossing's
   monitors read zero through every failure-free run, and so could not show that the
   fail-safe gap falls a few decimeters short for a vehicle that is still slowing down.

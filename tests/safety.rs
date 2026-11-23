@@ -187,6 +187,75 @@ fn no_overlap_where_two_paths_merge() {
     assert_eq!(sim.collisions, 0, "overlaps:\n{}", sim.collision_log.join("\n"));
 }
 
+/// The single-lane roundabout used to lock up. An entering vehicle could stop where its
+/// path already runs close to the ring, behind circulating traffic that had stopped, and
+/// the circulating vehicles behind it then waited for it, until each vehicle on the ring
+/// waited for another. With an emergency vehicle sent through every 90 s, that happened
+/// in about one run in fifty. And a vehicle still on its entry ranked as entering at the
+/// next merge around the ring as well, and gave way there to the vehicles entering. A
+/// truck, longer than the ring between two entries, then had to wait at its entry until
+/// both merges were clear, which in heavy traffic could take many minutes. Before that
+/// was fixed, each of these cases left a vehicle standing still for over five minutes:
+/// the first with emergency vehicles, the others at 1.35× default demand. Either change
+/// alone still leaves one of them stuck.
+#[test]
+fn no_gridlock_on_the_roundabout() {
+    use intersection_lab::sim::demand::DemandConfig;
+    use intersection_lab::sim::network::{Network, Turn};
+    use intersection_lab::sim::vtypes::VKind;
+    use std::collections::HashMap;
+
+    // Seed, demand scale, and whether an emergency vehicle is sent through every 90 s.
+    let cases = [(29, 1.0, true), (148, 1.35, false), (155, 1.35, false)];
+    let handles: Vec<_> = cases
+        .into_iter()
+        .map(|(seed, scale, emergency)| {
+            common::spawn(move || {
+                let net = Network::build(LayoutKind::Roundabout);
+                let mut demand = DemandConfig::default_for(&net);
+                demand.scale = scale;
+                let mut sim = Sim::with_demand(net, ControlMode::Roundabout, CtrlKind::Fixed, demand, seed);
+                sim.check_safety = true;
+                let (mut sent, mut next) = (0, 60.0);
+                // How long each vehicle on the roundabout has been standing still.
+                let mut still: HashMap<u64, f64> = HashMap::new();
+                while sim.t < 1800.0 {
+                    if emergency && sim.t >= next {
+                        let leg = (sim.steps as usize / 7) % sim.net.legs.len();
+                        if sim.spawn_manual(leg, VKind::Emergency, Turn::T) {
+                            sent += 1;
+                        }
+                        next = sim.t + 90.0;
+                    }
+                    sim.step();
+                    for v in &sim.vehicles {
+                        let t = still.entry(v.id).or_insert(0.0);
+                        *t = if v.v < 0.05 && sim.net.links[v.link()].kind.in_box() {
+                            *t + sim.dt
+                        } else {
+                            0.0
+                        };
+                        if *t > 300.0 {
+                            return Some(format!(
+                                "seed {seed} ×{scale}: vehicle {} stuck on the roundabout at t={:.0}",
+                                v.id, sim.t
+                            ));
+                        }
+                    }
+                }
+                let through = sim.stats.done.iter().filter(|d| d.kind == VKind::Emergency).count();
+                if emergency && (through < 15 || sent < 15) {
+                    return Some(format!("seed {seed}: {through} of {sent} emergency vehicles got through"));
+                }
+                (sim.collisions > 0)
+                    .then(|| format!("seed {seed} ×{scale}: overlaps:\n{}", sim.collision_log.join("\n")))
+            })
+        })
+        .collect();
+    let failures: Vec<String> = handles.into_iter().filter_map(|h| h.join().unwrap()).collect();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
 /// A person at the controls can slow traffic but never make it unsafe. A "person" who
 /// chooses stages at random moments, often during a change or while a minimum green or a
 /// pedestrian interval runs, and sometimes the stage that's already green, still gets no
