@@ -192,7 +192,7 @@ fn no_overlap_where_two_paths_merge() {
 /// the circulating vehicles behind it then waited for it, until each vehicle on the ring
 /// waited for another. With an emergency vehicle sent through every 90 s, that happened
 /// in about one run in fifty. And a vehicle still on its entry ranked as entering at the
-/// next merge around the ring as well, and gave way there to the vehicles entering. A
+/// next merge around the ring as well, and yielded there to the vehicles entering. A
 /// truck, longer than the ring between two entries, then had to wait at its entry until
 /// both merges were clear, which in heavy traffic could take many minutes. Before that
 /// was fixed, each of these cases left a vehicle standing still for over five minutes:
@@ -249,6 +249,98 @@ fn no_gridlock_on_the_roundabout() {
                 }
                 (sim.collisions > 0)
                     .then(|| format!("seed {seed} ×{scale}: overlaps:\n{}", sim.collision_log.join("\n")))
+            })
+        })
+        .collect();
+    let failures: Vec<String> = handles.into_iter().filter_map(|h| h.join().unwrap()).collect();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// A truck turning left from the major road at a two-way stop could stop partway through
+/// its turn, across the oncoming lanes, and stand there for minutes. It accepted a gap only
+/// if the gap lasted for the whole turn, but it committed only to the first lane it
+/// crossed, so a vehicle that came into view after it set off, too far away to count
+/// before, made it stop short of the second lane while it stood in the first. From there
+/// it needed a gap longer than it could see. It also checked only vehicles, and someone
+/// already on the crosswalk it was turning into could stop it there just the same. Now it
+/// waits for the crosswalk as well, and once it accepts a gap it commits to the whole
+/// turn. A committed vehicle also stopped short of a crossing for anyone passing through
+/// it, even someone who would be gone well before it got there; it no longer does. The
+/// first case needs both of those last two changes. With an emergency vehicle sent through
+/// every 90 s, and in the last two cases four times the pedestrians, each of these runs
+/// left a truck standing across the oncoming lanes for over four minutes before.
+#[test]
+fn no_left_turn_stops_across_oncoming_lanes() {
+    use intersection_lab::sim::demand::DemandConfig;
+    use intersection_lab::sim::network::{Network, Turn};
+    use intersection_lab::sim::vtypes::VKind;
+    use std::collections::HashMap;
+
+    // Layout, seed, and pedestrians an hour on each crosswalk (60 by default).
+    let cases =
+        [(LayoutKind::Tee, 11, 60.0), (LayoutKind::MajorMinor4, 14, 240.0), (LayoutKind::Tee, 19, 240.0)];
+    let handles: Vec<_> = cases
+        .into_iter()
+        .map(|(kind, seed, ped_rate)| {
+            common::spawn(move || {
+                let net = Network::build(kind);
+                let demand = DemandConfig::default_for(&net);
+                let mut sim = Sim::with_demand(net, ControlMode::TwoWayStop, CtrlKind::Fixed, demand, seed);
+                sim.check_safety = true;
+                sim.demand.ped_rate = ped_rate;
+                let mut next = 60.0;
+                // How long each vehicle has been standing still in the box, and how long
+                // a left-turner from the major road (east-west on both layouts) has stood
+                // with its body where its path crosses the oncoming through lanes.
+                let mut still: HashMap<u64, (f64, f64)> = HashMap::new();
+                let (mut longest, mut longest_across) = (0.0f64, 0.0f64);
+                while sim.t < 1800.0 {
+                    if sim.t >= next {
+                        let leg = (sim.steps as usize / 7) % sim.net.legs.len();
+                        sim.spawn_manual(leg, VKind::Emergency, Turn::T);
+                        next = sim.t + 90.0;
+                    }
+                    sim.step();
+                    for v in &sim.vehicles {
+                        let l = v.link();
+                        let stopped = v.v < 0.05 && sim.net.links[l].kind.in_box();
+                        let oncoming = match sim.net.movements[v.movement].name.as_str() {
+                            "E_L" => "W_T",
+                            "W_L" => "E_T",
+                            _ => "",
+                        };
+                        let across = stopped
+                            && sim.net.links[l].conflicts.iter().any(|&cid| {
+                                let c = &sim.net.conflicts[cid];
+                                let (s_c, other, _) = c.side(l);
+                                let ((before, after), _) = c.zones(l);
+                                sim.net.links[other]
+                                    .movement
+                                    .is_some_and(|m| sim.net.movements[m].name == oncoming)
+                                    && v.s > s_c - before
+                                    && v.s - v.len() < s_c + after
+                            });
+                        let t = still.entry(v.id).or_insert((0.0, 0.0));
+                        t.0 = if stopped { t.0 + sim.dt } else { 0.0 };
+                        t.1 = if across { t.1 + sim.dt } else { 0.0 };
+                        longest = longest.max(t.0);
+                        longest_across = longest_across.max(t.1);
+                    }
+                }
+                if sim.collisions > 0 {
+                    return Some(format!(
+                        "{} seed {seed}: overlaps:\n{}",
+                        kind.key(),
+                        sim.collision_log.join("\n")
+                    ));
+                }
+                (longest > 300.0 || longest_across > 60.0).then(|| {
+                    format!(
+                        "{} seed {seed}: a vehicle stood still in the box for {longest:.0} s, and a left \
+                         turn across the oncoming lanes for {longest_across:.0} s",
+                        kind.key()
+                    )
+                })
             })
         })
         .collect();
