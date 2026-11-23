@@ -208,6 +208,12 @@ impl Vehicle {
     pub fn persons(&self) -> f64 {
         self.spec().occupancy
     }
+    /// Whether a commitment to a conflict zone whose near edge is `ahead` meters on has
+    /// lapsed: having stopped short of the zone, the vehicle must check it again before
+    /// moving, since others may have gone around it.
+    fn commitment_lapsed(&self, ahead: f64) -> bool {
+        self.v < 0.3 && self.a <= 0.05 && ahead > 0.3
+    }
     /// Waiting, or pulling up to wait: behind a waiting leader, or for the right of way,
     /// someone crossing, a signal, a stop sign or a chance to change lanes.
     fn waiting(&self) -> bool {
@@ -1303,7 +1309,8 @@ impl Sim {
     }
 
     /// Another vehicle committed to crossing zone `cid` that can no longer stop before it
-    /// and will get there while we would still be in it.
+    /// and will be in it while we are: it gets there less than 0.8 s after we would be out
+    /// of it, and won't be out of it 0.8 s before we get there.
     fn unstoppable_rival(
         &self,
         i: usize,
@@ -1318,17 +1325,24 @@ impl Sim {
         }
         let my_link = if Self::route_index(a, c.a).is_some() { c.a } else { c.b };
         let (_, other, s_other) = c.side(my_link);
-        let ((_, za1), (zv0, zv1)) = c.zones(my_link);
+        let ((za0, za1), (zv0, zv1)) = c.zones(my_link);
         let spec = a.spec();
-        let ta_out = Self::eta(d_a + za1 + spec.length, a.v, spec.accel * 0.7, self.vmax_on(a, my_link));
+        let vm = self.vmax_on(a, my_link);
+        let ta_in = Self::eta(d_a - za0, a.v, spec.accel, vm);
+        let ta_out = Self::eta(d_a + za1 + spec.length, a.v, spec.accel * 0.7, vm);
         self.threats(other, s_other, zv1, i, buf);
         buf.iter()
             .find(|&&(j, d_v)| {
                 let w = &self.vehicles[j];
+                let (wspec, wm) = (w.spec(), self.vmax_on(w, other));
+                // Its rear leaves the zone after `x` more meters, at no less than 3 m/s.
+                let x = d_v + zv1 + wspec.length;
+                let tv_out = Self::eta(x, w.v, wspec.accel, wm).max(x.max(0.0) / w.v.max(3.0));
                 w.commits.contains(&cid)
                     && w.v > 1.0
                     && w.v * w.v / (2.0 * (d_v - zv0).max(0.1)) > 4.5
-                    && Self::eta(d_v - zv0, w.v, w.spec().accel, self.vmax_on(w, other)) < ta_out + 0.8
+                    && Self::eta(d_v - zv0, w.v, wspec.accel, wm) < ta_out + 0.8
+                    && tv_out + 0.8 > ta_in
             })
             .map(|x| x.0)
     }
@@ -1345,8 +1359,10 @@ impl Sim {
     ) -> Option<usize> {
         let v = &self.vehicles[i];
         for &cid in &self.net.links[lid].conflicts {
-            let (s_c, _, _) = self.net.conflicts[cid].side(lid);
-            if s_c <= s_from + 0.01 || v.commits.contains(&cid) {
+            let c = &self.net.conflicts[cid];
+            let (s_c, _, _) = c.side(lid);
+            let ((zn, _), _) = c.zones(lid);
+            if s_c <= s_from + 0.01 || (v.commits.contains(&cid) && !v.commitment_lapsed(base + s_c - zn)) {
                 continue;
             }
             if let Some(j) = self.must_yield(i, cid, base + s_c, buf) {
@@ -1354,6 +1370,16 @@ impl Sim {
             }
         }
         None
+    }
+
+    /// Whether someone crossing, or about to cross, a crosswalk on link `lid` beyond
+    /// `s_from` would make us stop there.
+    fn rest_ped(&self, i: usize, lid: LinkId, s_from: f64, base: f64) -> bool {
+        let in_box = self.net.links[self.vehicles[i].link()].kind.in_box();
+        self.net.links[lid].ped_conflicts.iter().any(|&pci| {
+            let pc = &self.net.ped_conflicts[pci];
+            pc.s > s_from && self.ped_blocks(i, pc.cw, pc.u, base + pc.s, in_box)
+        })
     }
 
     /// Is anyone (not stopping for a sign) expected at conflict `cid` soon? Vehicles held
@@ -1978,10 +2004,7 @@ impl Sim {
                     continue;
                 }
                 if v.commits.contains(&cid) && !c.merge {
-                    // A stopped vehicle's commitment to a zone it hasn't entered is stale:
-                    // others may have gone around it, so it must re-check before moving.
-                    let stale = v.v < 0.3 && v.a <= 0.05 && d - zn > 0.3;
-                    if !stale {
+                    if !v.commitment_lapsed(d - zn) {
                         // A commitment grants priority, not room: if someone has stalled
                         // inside the zone since, or someone who committed in the same
                         // instant can no longer stop, stop short of it while we still can.
@@ -2043,22 +2066,41 @@ impl Sim {
                 } else {
                     let brake = v.v * v.v / (2.0 * 3.0) + 3.0;
                     if d - zn < brake || hold_line_mode {
-                        // Permissive movers accept a gap only for the rest of the turn.
-                        if st.rank <= 1.0
-                            && !hold_line_mode
-                            && let Some(j) = self.rest_blocker(i, lid, s_c, base, buf)
-                        {
-                            let gap = d - zn - 0.8;
-                            if can_stop(gap) || v.v < 1.0 {
-                                yield_to = Some(self.vehicles[j].id);
-                                stop_gap = Some((gap, Reason::Yielding));
-                                yielded = true;
-                                break;
+                        // Permissive movers accept a gap only if it lasts for the rest of the
+                        // turn, crosswalks included, and then commit to the rest of it:
+                        // whoever comes into view later yields to them, rather than leave
+                        // them stopped across its lane.
+                        let mut whole_turn = false;
+                        if st.rank <= 1.0 && !hold_line_mode {
+                            let wait = match self.rest_blocker(i, lid, s_c, base, buf) {
+                                Some(j) => Some((Some(self.vehicles[j].id), Reason::Yielding)),
+                                None if self.rest_ped(i, lid, s_c, base) => Some((None, Reason::Pedestrian)),
+                                None => None,
+                            };
+                            match wait {
+                                Some((who, r)) => {
+                                    let gap = d - zn - 0.8;
+                                    if can_stop(gap) || v.v < 1.0 {
+                                        yield_to = who;
+                                        stop_gap = Some((gap, r));
+                                        yielded = true;
+                                        break;
+                                    }
+                                }
+                                None => whole_turn = true,
                             }
                         }
                         // Merges are never locked: they are re-resolved every step.
                         if !c.merge {
                             commits.push(cid);
+                            if whole_turn {
+                                for &later in &l.conflicts {
+                                    let c2 = &self.net.conflicts[later];
+                                    if !c2.merge && c2.side(lid).0 > s_c + 0.01 && !commits.contains(&later) {
+                                        commits.push(later);
+                                    }
+                                }
+                            }
                         }
                     }
                     passing.push((cid, d, zone, zn));
