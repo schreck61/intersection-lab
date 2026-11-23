@@ -18,19 +18,23 @@ it, and what it doesn't protect against:
   and never asks for more.
 * **Only its own files.** The app reads trained-weights files: from a `weights` folder
   in the folder it's started from, then from its folder in your user data directory, and
-  otherwise from the copies built into it. It writes them only when you save weights. To
+  otherwise from the copies built into it. It writes them only when you save weights,
+  and replaces a file in one step, so a save cut short leaves the old copy whole. To
   draw its window, the desktop app also reads the fonts installed on your system and, on
   Linux, desktop settings such as the mouse-pointer theme, and it loads the system's
   windowing and graphics libraries. The `train` tool writes the weights it trains to a
-  `weights` folder in the folder it's run from, `bench` writes no files, and the app's
-  screenshot mode (`TS_SHOT`) writes only the image you name.
+  `weights` folder in the folder it's run from, in the same way, `bench` writes only the
+  results file you name with `--csv`, and the app's screenshot mode (`TS_SHOT`) writes
+  only the image you name. To record the commit they were built from, `bench` and
+  `train` run `git describe` on their source folder.
 * **Files are checked before use.** A weights file is parsed into typed data, and its
   network is checked against what its controller accepts (layer sizes, connections
   between layers, finite values). A file that doesn't parse is skipped for the next
   copy. A network that fails the check is never run: a Deep RL file with one is skipped
   too, and a Hybrid file loads without its network and runs only its saved base tuning.
-  CI fuzzes this loader on every pull request. A file that loads can still make its
-  controller manage traffic badly, so use weights only from sources you trust.
+  CI fuzzes this loader on every pull request, and a change merges only if the fuzzer
+  finds nothing. A file that loads can still make its controller manage traffic badly,
+  so use weights only from sources you trust.
 * **No code from data.** The app has no plugins, scripting or other way to run code
   from the files it reads, and its own code is safe Rust with no `unsafe` blocks.
 * **Verifiable releases.** Every release package comes with a signed build-provenance

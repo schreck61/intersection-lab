@@ -1629,6 +1629,9 @@ the closest emergency stop of the 400 runs came to rest.
   be seen by roadside sensors, which aren't built. A failed vehicle stops on its path:
   none leaves it sideways, and vehicles that touch simply stop where they touch.
 * **Messages.** Latency is in the gaps; loss, bursts and range are not modeled.
+* **Tracking.** Each vehicle drives its granted trajectory exactly: none runs early or
+  late, or strays from its path. Section 3.7 assumes vehicles track a speed profile to
+  about ±0.1 s, so how much of each gap tracking error would use is untested.
 * **Mixed traffic.** Every vehicle is automated and connected (section 9).
 * **Corridors.** The crossing stands alone, so slot waves, and coordination zones that
   overlap at urban spacing, are untested (section 5.8).

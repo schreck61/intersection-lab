@@ -3,7 +3,8 @@
 This document describes how Intersection Lab is put together. It covers what each Rust
 source file does, how the code is split into layers, and how those layers work together
 during a simulation step, a corridor run, a cooperative crossing, a benchmark and a
-training run. It describes the code on `main`: version 0.8.0.
+training run. It describes the code on `main`: version 0.8.0, with the benchmark record,
+atomic weight saves and vehicles keeping clear of people crossing added since.
 Section 9.4 is an illustrated tour of the app's window, and Appendix A says how the
 screenshots were made.
 
@@ -128,7 +129,8 @@ flowchart TB
     style CORE fill:transparent,stroke:#8b949e,stroke-dasharray:4 3
 ```
 
-Each front end uses only the library's public modules:
+Each front end uses only the library's public modules, and `bench` and `train` share
+`bin/shared/record.rs`, which says what produced their results:
 
 | Front end | Uses |
 |---|---|
@@ -159,7 +161,8 @@ the switch may happen yet, and the vehicles' behavior stays with `Sim`, so a con
 cannot:
 
 * skip the yellow or all-red clearance intervals;
-* cut a minimum green or a pedestrian interval short;
+* cut a minimum green or a pedestrian interval short (only `Sim`'s emergency preemption
+  may, §7.2);
 * cause a collision.
 
 This rule is what makes sensor studies meaningful. If a controller does better with
@@ -221,6 +224,7 @@ src/
   gui/              egui front end (5 files)
   bin/bench.rs      headless controller and sensor benchmarks
   bin/train.rs      headless training of the Deep RL and Hybrid networks
+  bin/shared/       record.rs: what bench and train record about a run
 examples/           studies: cooperative, corridor, failures, fya, lpi, preempt, satflow,
                     sweep, plus make_icons
 tests/              safety, cooperative, failures, pedestrian_rule, weights_files,
@@ -239,22 +243,22 @@ docs/               this document, insights.md, cooperative-intersections.md (wi
 
 | Directory | Files | Lines |
 |---|---:|---:|
-| `src/sim/` | 12 | 10,033 |
-| `src/control/` | 9 | 2,082 |
+| `src/sim/` | 12 | 10,185 |
+| `src/control/` | 9 | 2,144 |
 | `src/rl/` | 3 | 361 |
-| `src/gui/` | 5 | 5,407 |
-| `src/bin/` | 2 | 727 |
+| `src/gui/` | 5 | 5,493 |
+| `src/bin/` | 3 | 1,127 |
 | `src/lib.rs`, `src/main.rs` | 2 | 97 |
 | `examples/` | 9 | 999 |
-| `tests/` | 11 | 4,616 |
+| `tests/` | 11 | 5,000 |
 | `fuzz/fuzz_targets/` | 1 | 61 |
 
 | Target | Built from | Purpose |
 |---|---|---|
 | library `intersection_lab` | `src/lib.rs` | Everything below is built on it |
 | `intersection-lab` (the default) | `src/main.rs` | The desktop app (eframe, native) or the browser app (`wasm32-unknown-unknown`, built with Trunk and published to GitHub Pages) |
-| `bench` | `src/bin/bench.rs` | Print controller and sensor tables |
-| `train` | `src/bin/train.rs` | Train the Deep RL and Hybrid networks |
+| `bench` | `src/bin/bench.rs` | Print controller and sensor tables, saying what produced them, and with `--csv` write every run to a file |
+| `train` | `src/bin/train.rs` | Train the Deep RL and Hybrid networks, or score the weights the app would load (`train test`) |
 | examples | `examples/*.rs` | Studies behind `docs/insights.md` and `docs/cooperative-intersections.md`, plus the icon renderer |
 | tests | `tests/*.rs` | Regression tests, run by CI on Linux, macOS and Windows |
 | `weights` fuzz target | `fuzz/fuzz_targets/weights.rs` | Feeds arbitrary bytes to the weights loaders |
@@ -273,9 +277,11 @@ Platform differences are kept to a few places:
 * **`gui/mod.rs`:** `Instant` comes from `web-time` in the browser, and the `WEB`
   constant hides the buttons that save weights and the hints about training.
 * **`gui/bench.rs`:** benchmarks run on threads on the desktop and in slices of each
-  frame in the browser.
+  frame in the browser. A unit test runs the slices natively and checks that they give
+  the threads' results.
 * **`control/weights.rs`:** the per-user weights folder differs on macOS, Windows and
-  Linux.
+  Linux, and the browser, which has no processes and saves nothing, names a temporary
+  file without a process number.
 * **`Cargo.toml`:** the browser-only dependencies.
 
 The rest of the code has no platform-specific parts.
@@ -417,16 +423,16 @@ Three things about this ordering matter:
 
 | File | Lines | What it holds |
 |---|---:|---|
-| `mod.rs` | 2,544 | `Sim`, `Vehicle` and `Ped`: spawning, car following, right of way, lane changes, pedestrians and the safety check |
+| `mod.rs` | 2,624 | `Sim`, `Vehicle` and `Ped`: spawning, car following, right of way, lane changes, pedestrians and the safety check |
 | `coop.rs` | 2,282 | The cooperative crossing's intersection manager |
 | `coop/failures.rs` | 1,607 | What happens when a vehicle of the cooperative crossing fails: the reaction, contacts and recovery |
-| `network.rs` | 1,154 | The layouts: legs, lanes, paths, movements, stages and conflict points, and the lane under a point |
-| `sensors.rs` | 605 | Sensor models and `Sim::sense` |
+| `network.rs` | 1,159 | The layouts: legs, lanes, paths, movements, stages and conflict points, and the lane under a point |
+| `sensors.rs` | 607 | Sensor models and `Sim::sense` |
 | `world.rs` | 438 | One intersection or a corridor |
-| `signal.rs` | 347 | The signal state machine |
+| `signal.rs` | 349 | The signal state machine |
+| `stats.rs` | 319 | Measurement, and 95% confidence intervals |
 | `demand.rs` | 280 | Arrivals |
 | `geom.rs` | 268 | Vectors, paths and curves |
-| `stats.rs` | 256 | Measurement |
 | `vtypes.rs` | 167 | Vehicle classes |
 | `rng.rs` | 85 | Random numbers |
 
@@ -600,7 +606,12 @@ Then each vehicle runs `decide`, which uses these helpers:
     checks only crossing zones.
 * **`ped_blocks`:** whether a pedestrian on the crosswalk, or about to step onto it,
   would be within 1 s of the vehicle there. At a signal, waiting pedestrians count
-  only during WALK.
+  only during WALK. Each pedestrian is timed at the speed they walk now (`ped_speed`:
+  1.25 times faster once their WALK has ended).
+* **`ped_ahead`:** for a vehicle whose front is already on a crosswalk, whether someone
+  crossing is in front of it or will step there before its front has passed.
+* **`ped_beside`:** whether someone crossing is within 1 m (`PED_CLEAR`) of the
+  vehicle's body.
 
 `decide` works in two parts. The first decides whether the vehicle may go past its
 stop line at all:
@@ -634,8 +645,10 @@ flowchart TB
 
 The second walks the route ahead, link by link, up to 70 m or 5 s at the current
 speed plus 20 m, whichever is farther. On each link it checks the conflict points,
-nearest first, then the crosswalks. The first point where the vehicle has to stop
-ends the walk.
+nearest first, then the crosswalks, also nearest first. The first point where the
+vehicle has to stop ends the walk, except that a stop to yield to another vehicle
+still checks that link's crosswalks: the vehicle may have to cross one to reach the
+place where it waits.
 
 ```mermaid
 flowchart TB
@@ -678,11 +691,18 @@ would take less than 6.5 m/s², or the vehicle is already slower than 1 m/s.*
 Three more checks complete the walk:
 
 * **Crosswalks:** `ped_blocks` stops the vehicle short of a crosswalk in the same way.
+  A vehicle whose front is already on one goes on unless `ped_ahead` finds someone in
+  front of it, and then stops where it is. For a pedestrian it may brake at up to
+  8 m/s², harder than for a vehicle, if that still stops it short of where they walk.
 * **Holding the line:** a vehicle that is holding the line skips `unblock`. It gives
   back the commitments it made this step and waits at the line.
 * **Queues:** if the leader is waiting, the place where the vehicle will come to rest
   behind it gets the same `unblock` check, for crossings only, so a queue doesn't
   leave it standing across someone's path.
+
+Last, a vehicle slower than 0.8 m/s (`STEP_AROUND`) stops dead while `ped_beside`
+finds someone crossing next to it. Below that speed pedestrians step around a vehicle
+instead of waiting for it, so none may creep into them.
 
 Two details of the stop-line check:
 
@@ -718,7 +738,9 @@ this step. A stopped driver waits out their reaction time before pulling away.
   * At a signal they wait for WALK. Elsewhere they wait at least 1.5 s, until no
     vehicle near the crosswalk is still coming.
   * They cross at their own speed and hurry, at 1.25 times their speed, once WALK ends.
-  * They pause while a moving vehicle is about 1 m ahead of them.
+  * They pause while the body of a moving vehicle is about 1 m ahead of them, wherever
+    its front is: the back of a long vehicle can still be over the crosswalk after its
+    front has left the intersection. They step around one slower than 0.8 m/s.
 * **After moving (`after_integrate`):**
   * It computes `last_reward`, the person delay of the step, including people still
     queued at the edge of the map and pedestrians waiting.
@@ -918,7 +940,8 @@ it in. The cooperative crossing doesn't use it.
   * 80% of drivers using their turn signals;
   * no faulty loops, and the upstream link off.
 
-  `SensorConfig::ideal()` turns the errors off.
+  `SensorConfig::ideal()` turns the errors off. The error rates, here and below, are
+  plausible values, not fitted to field data.
 * **`SensorView`:**
   * per lane (`LaneObs`): stop-bar presence, advance-loop pulses, an input-output
     count and the fault diagnosis;
@@ -1047,7 +1070,8 @@ minutes; surges jump between five levels every 2 minutes">
 * The acceleration, comfortable deceleration, desired time headway and minimum gap are
   the Intelligent Driver Model's parameters. The headways are calibrated so a queue of
   cars leaves at about the HCM's base saturation flow, 1,900 vehicles per hour per
-  lane; `examples/satflow.rs` checks this.
+  lane; `examples/satflow.rs` checks this. The other values are typical of each class,
+  not fitted to data.
 * Occupancy, the average number of people on board, weights person delay.
 * `fuel_ml` is a power-based fuel model: an idle rate plus the tractive power for
   inertia, rolling resistance and drag, divided by the energy in a liter of gasoline
@@ -1077,6 +1101,9 @@ minutes; surges jump between five levels every 2 minutes">
   far. This keeps a controller that starves an approach from looking good.
 * `los` maps delay to the HCM's level of service, A to F. The thresholds are 10, 20, 35,
   55 and 80 s under signal control, and 10, 15, 25, 35 and 50 s otherwise.
+* `mean_ci95` gives the mean of a sample and the half-width of its 95% confidence
+  interval, from Student's t. `bench` and `train test` apply it to paired differences:
+  two strategies' results on the same seeds or scenarios.
 
 `Summary` is what every front end reports: the app's panels, the bench tables, the
 training evaluations and the tests.
@@ -1551,14 +1578,14 @@ controller passes the choice on (§7.3).
 | File | Lines | What it holds |
 |---|---:|---|
 | `manual.rs` | 458 | `Manual`, which passes on a person's choice of stage, and `stage_for`, the stage a click on a lane chooses |
-| `rl.rs` | 360 | `RlController`, the Deep RL controller, with its input features and safety shield |
+| `rl.rs` | 365 | `RlController`, the Deep RL controller, with its input features and safety shield |
+| `hybrid.rs` | 297 | `Hybrid`, the planner re-tuned by a network |
 | `predictive.rs` | 294 | `Predictive`, the rolling-horizon planner |
-| `hybrid.rs` | 292 | `Hybrid`, the planner re-tuned by a network |
 | `fixed.rs` | 185 | `FixedTime`: Webster's plan and corridor coordination |
 | `mod.rs` | 175 | The `Controller` trait, `Ctx`, `Brain`, `CtrlKind` and `make` |
 | `actuated.rs` | 146 | `Actuated`: gap-out and max-out control |
+| `weights.rs` | 126 | Where trained networks are loaded from and saved to, and each file's fingerprint (§8.7) |
 | `maxpressure.rs` | 98 | `MaxPressure` |
-| `weights.rs` | 74 | Where trained networks are loaded from and saved to (§8.7) |
 
 ### 7.1 `control/mod.rs`: the contract
 
@@ -1684,7 +1711,10 @@ flowchart TB
   already in the box. While such a vehicle is due, neither the max-wait guard nor the
   controller's wish is considered, even when no request is made. It is the only request
   that doesn't wait for `can_switch`: after 2 s of green it can cut a minimum green
-  short, and with it any WALK or flashing DON'T WALK. While it is active, the app adds
+  short, and with it any WALK or flashing DON'T WALK, which turn to steady DON'T WALK.
+  The yellow and all-red still run in full, and anyone already crossing finishes while
+  vehicles wait for them; `tests/safety.rs` checks all of this on every signalized
+  layout. While it is active, the app adds
   *EMERGENCY PREEMPTION* to the signal's status line.
 * **The max-wait guard** (`max_wait_guard`, 150 s by default, 0 turns it off) applies
   to the adaptive controllers only. It looks at the movements the current stage doesn't
@@ -1808,7 +1838,7 @@ Hybrid's major/minor and T-intersection files hold only its best static tuning
 
 | File | Lines | What it holds |
 |---|---:|---|
-| `src/bin/train.rs` | 475 | Training, model selection and the test report |
+| `src/bin/train.rs` | 568 | Training, model selection and the test report |
 | `rl/nn.rs` | 190 | `Mlp`, `Grads` and `Adam` |
 | `rl/dqn.rs` | 166 | `Dqn`, `Transition`, `SavedModel` and `argmax_masked` |
 | `rl/mod.rs` | 5 | The module list |
@@ -2096,7 +2126,11 @@ The schedules below are fractions of the run, so a longer run stretches them.
   the static tuning are scored on 24 more scenarios of the same kinds, with different
   seeds. Nothing is chosen on this set; it only reports. Before this split, the Hybrid
   was chosen and reported on the same 12 scenarios, where it looked 0.9 s better than
-  predictive control, and it then came out 1.0 s worse in the README's benchmark.
+  predictive control, and it then came out 1.0 s worse in the README's benchmark. The
+  report names the weights file each agent ran, with its fingerprint, and gives each
+  strategy's person delay against predictive control's on the same scenarios: the mean
+  difference and the half-width of its 95% interval. `train test` prints the same report
+  for the weights the app would load, and trains nothing.
 * **The pedestrian check in practice:** the Hybrid passed it on every layout, because
   the planner serves pedestrians itself. Deep RL retrained with the new reward passed
   on the town layout in all three seeds, but found a passing checkpoint in only 2 of 9
@@ -2134,9 +2168,10 @@ Three environment variables change a run:
 ### 8.6 Choosing the network size
 
 The original size, two hidden layers of 128, was a conventional starting point, not a
-measured choice. A later experiment tested it on Deep RL, using a held-out set of 24
-scenarios (12 at design demand, 12 randomized), not the §8.5 test set, that model
-selection never sees.
+measured choice. Most of the experiments below ran with the simulation of versions 0.3.0
+and 0.4.0, and their figures are from then. A later experiment tested it on Deep RL,
+using a held-out set of 24 scenarios (12 at design demand, 12 randomized), not the §8.5
+test set, that model selection never sees.
 
 First, five sizes on the arterial layout, three seeds each, 400 episodes:
 
@@ -2221,19 +2256,23 @@ difference worth measuring, so it uses one layer, like Deep RL, which is smaller
 trains faster. The shipped Hybrid networks are seed 0, which
 `train all 800 900 hybrid` reproduces; no seed was picked by its results.
 
-In the shipped Hybrid weights (validation score, then test score):
+In the shipped Hybrid weights (the validation score from training, then the test score
+`train test` gives today):
 
 | Layout | Best static tuning | Network |
 |---|---|---|
-| Arterial | fairness 0.004, bias +0.08, max green 60 s | Kept: validation 18.5 → 17.3 s, test 17.7 → 17.5 s |
+| Arterial | fairness 0.004, bias +0.08, max green 60 s | Kept: validation 18.5 → 17.3 s, test 17.8 → 17.5 s |
 | Major/minor | fairness 0, bias +0.08, max green 35 s | Not kept, so the Hybrid runs the static tuning |
-| Town | fairness 0.012, bias −0.05, max green 35 s | Kept: validation 25.4 → 25.2 s, test 25.8 → 24.3 s |
+| Town | fairness 0.012, bias −0.05, max green 35 s | Kept: validation 25.4 → 25.2 s, test 25.2 → 24.2 s |
 | T-intersection | fairness 0, bias +0.08, max green 60 s | Not kept |
 
 The two "not kept" files are 61 bytes long: they hold the static tuning and no network.
-On the test set the Hybrid beats predictive control on every layout, by 0.4 to 1.3 s.
-On the arterial, major/minor and T-intersection layouts most or all of that comes from
-the static tuning; on the town layout it all comes from the network.
+On the test set the Hybrid's person delay is 0.6 to 1.4 s lower than predictive
+control's on the arterial, major/minor and town layouts and 0.1 s higher on the
+T-intersection, each difference within its 95% interval over the 24 scenarios. On
+major/minor and the T-intersection it runs the static tuning alone. On the arterial and
+town layouts the network changes the static tuning's person delay by −0.3 ± 0.7 s and
+−1.0 ± 3.1 s, also within noise.
 
 ### 8.7 `control/weights.rs`: loading and saving
 
@@ -2312,6 +2351,11 @@ it doesn't turn to the user data directory when `weights/` is missing. It does w
 over files of the same name already in `weights/`, including ones saved there from the
 app. The next build embeds whatever `train` wrote.
 
+Both save through `write_atomic`: the text goes to a temporary file beside the target,
+named for the process (`temp_path`), which is synced to disk and then renamed over the
+target. A save that fails or is cut short leaves the old file whole, and a failed one
+removes its temporary file.
+
 A Hybrid file also records `base_score`, the validation person delay of what it
 holds, when there is one. The app's *Save weights* measures no score, and when no
 static tuning passes the pedestrian check, `train`'s score is infinite, which JSON
@@ -2334,11 +2378,13 @@ Weights files can be damaged or edited by hand, so their loading is tested and f
   `f32`), that a Hybrid whose network doesn't fit keeps its base tuning and says so,
   that a base tuning out of range is read as the last one, that Hybrid files saved
   with a score that isn't finite load again, that a copy that doesn't load is skipped
-  for the next one and that networks whose outputs overflow don't crash anything.
+  for the next one, that networks whose outputs overflow don't crash anything, that
+  each controller records the file it loaded and its fingerprint, and that a save that
+  fails leaves the old file and no temporary file behind.
 * The `weights` fuzz target reads each input as both kinds of file for the
   T-intersection. A file that is accepted gets a training step if it has a network,
   then 20 s of simulation. The CI job "Fuzz (weights)" runs it for 60 s, starting from
-  the three files in `fuzz/seeds/weights/`.
+  the three files in `fuzz/seeds/weights/`, and must pass before a change merges.
 
 ### 8.8 Hardware, design choices and limitations
 
@@ -2415,12 +2461,12 @@ Limitations:
 * **Single-intersection training.** In a corridor, each signal runs its own copy of the
   layout's network. Training included platoons from a simulated upstream signal, but
   never a real neighbor's releases or spillback. In the three-signal arterial corridor
-  with the upstream link on, the retrained Hybrid did 1.1 s worse than 0.3.0's (18.3 s
-  against 17.2 s).
+  with the upstream link on, the Hybrid retrained for version 0.4.0 did 1.1 s worse than
+  0.3.0's (18.3 s against 17.2 s, measured then).
 * **No refinements beyond Double DQN.** The code has no prioritized replay, multi-step
-  returns or dueling heads. Deep RL trails the best controller, the Hybrid, by about
-  4.5 s on the multi-lane layouts and trails fixed-time and actuated control on the town
-  layout (29.0 s of person delay), though it has the lowest delay on the T-intersection.
+  returns or dueling heads. Over 30 seeds Deep RL trails predictive control by
+  2.6 ± 0.8 s on the arterial and 3.9 ± 3.3 s on the town layout, is within noise of it
+  on major/minor, and beats it only on the T-intersection, by 1.7 ± 1.0 s.
 
 ---
 
@@ -3454,8 +3500,8 @@ The notices run to thousands of lines, so only the visible lines are laid out.
 |---|---|
 | `src/main.rs` | **Native:** opens a 1600 × 1000 window (at least 1100 × 700) with the embedded icon and runs `gui::App`. Release builds on Windows use the GUI subsystem, so no console window appears. **Browser:** finds `<canvas id="app">` in `web/index.html`, starts `eframe::WebRunner` and replaces the loading message with the outcome |
 | `src/lib.rs` | Declares the four modules. `scenario(kind, mode, ctrl, demand, sensors, seed) -> Sim` builds a headless simulation, and `run_scenario(sim, warmup, duration) -> (Summary, collisions)` runs it and summarizes everything after the warm-up. `bench` and the app's benchmarks use them; the browser's benchmark queue steps each `Sim` itself and calls `Stats::summary` the same way |
-| `src/bin/bench.rs` | `bench [layout\|all] [minutes] [seeds] [demand-scale] [pattern]` prints a table per layout: every automatic control strategy, averaged over seeds 1,000 and up after a 300 s warm-up, with delay, 95th percentile delay, throughput, stops, person delay including unserved vehicles, pedestrian wait and unserved vehicles. The `coll` column counts the overlaps found by the safety check (§6.1), which these runs turn on: a total over the seeds, warm-up included. `bench sensors <layout> [minutes] [seeds]` runs the command-line sensor study, without the safety check: the app's five sensor packages (§9.4) and an ideal version of loops, camera and radar, then weather and faulty loops |
-| `src/bin/train.rs` | Trains the Deep RL and Hybrid networks (§8.5) |
+| `src/bin/bench.rs` | `bench [layout\|all] [minutes] [seeds] [demand-scale] [pattern]` prints a table per layout: every automatic control strategy, averaged over seeds 1,000 and up after a 300 s warm-up, with delay, 95th percentile delay, throughput, stops, person delay including unserved vehicles, pedestrian wait and unserved vehicles. A `vs Pred*` column gives each strategy's person delay against predictive control's on the same seeds: the mean difference and, from two seeds up, the half-width of its 95% interval (Student's t). The `coll` column counts the overlaps found by the safety check (§6.1), which these runs turn on: a total over the seeds, warm-up included. `bench sensors <layout> [minutes] [seeds]` runs the command-line sensor study, without the safety check: the app's five sensor packages (§9.4) and an ideal version of loops, camera and radar, then weather and faulty loops. Both say what produced the results (`bin/shared/record.rs`): the output starts with the version and the commit as `git describe` gives it, then the warm-up and seeds, and for the strategy tables the sensors; each table ends with the weights file each learned controller loaded, with its FNV-1a fingerprint. `--csv FILE` also writes every run to FILE, one row per run |
+| `src/bin/train.rs` | Trains the Deep RL and Hybrid networks, or with `train test` scores the weights the app would load (§8.5) |
 
 ### 10.2 Studies
 
@@ -3478,29 +3524,33 @@ The examples are the studies behind `docs/insights.md` and
 ### 10.3 Tests
 
 `cargo test` runs ten integration test files and the unit tests in `bin/bench.rs`,
-`control/manual.rs`, `sim/network.rs`, `sim/coop.rs`, `sim/coop/failures.rs`,
-`sim/signal.rs`, `gui/mod.rs` and `gui/render.rs`. CI runs them in release mode on
+`control/manual.rs`, `control/weights.rs`, `sim/network.rs`, `sim/coop.rs`,
+`sim/coop/failures.rs`, `sim/signal.rs`, `sim/stats.rs`, `gui/mod.rs`, `gui/bench.rs`
+and `gui/render.rs`. CI runs them in release mode on
 Linux, macOS and Windows, and measures how much of the crate they cover (§11).
 
 | File | Tests | What they require |
 |---|---:|---|
-| `tests/safety.rs` | 5 | Every layout, control mode and automatic controller runs without collisions and serves at least 80% of arrivals at default volumes (65% under two-way stop and under all-way stop on the arterial, which are over capacity); different controllers receive identical arrivals; no gridlock in seeds that used to jam; no collision between a turn finishing late in the yellow and the next stage's traffic; a person choosing stages at random moments on every signal layout, often mid-change and mid-interval, gets no collision, no green shorter than the minimum, and every yellow, all-red, WALK and flashing DON'T WALK in full |
+| `tests/safety.rs` | 7 | Every layout, control mode and automatic controller runs without collisions and serves at least 80% of arrivals at default volumes (65% under two-way stop and under all-way stop on the arterial, which are over capacity); different controllers receive identical arrivals; no gridlock in seeds that used to jam; no collision between a turn finishing late in the yellow and the next stage's traffic; a person choosing stages at random moments on every signal layout, often mid-change and mid-interval, gets no collision, no green shorter than the minimum, and every yellow, all-red, WALK and flashing DON'T WALK in full; at every layout and control mode, with pedestrians arriving far more often than by default, no moving vehicle comes within half a meter of anyone on a crosswalk; emergency vehicles sent toward a red while pedestrians cross on a WALK end greens no sooner than 2 s, leave every yellow and all-red whole and get through, and everyone crossing when their interval is cut short finishes, with no moving vehicle within half a meter of them |
 | `tests/cooperative.rs` | 14 | The cooperative crossing: no signals, sensors or crosswalks; its geometry and phase order; every gap policy safe under heavy demand, bursts, heavy vehicles and live switching; about 18,000 vehicles per hour served at the design demand, about 19,000 oversaturated and less with single left lanes or first come, first served; reproducible runs; light traffic barely delayed; emergency vehicles first; hand-placed vehicles crossing every way. Every run, except those of the no-signals, single-left-lane and reproducibility tests, must show no overlap between vehicle bodies, no zone entered while occupied, no box entry without a reservation, no step off a granted trajectory, no crossing inside its required gap and no line or zone time off its reservation (both to within a microsecond), and at least one crossing measured |
 | `tests/failures.rs` | 20 | Failures at the cooperative crossing. When a vehicle stops dead at the worst moment, fail-safe gaps stop crossing traffic short of it under both schedules, mitigated gaps let it arrive at no more than 25 km/h and nominal gaps faster; a vehicle that brakes to a stop is survived; in batches a failure at a random place rarely reaches crossing traffic, though a dead stop is struck from behind; the crossing serves what a disabled vehicle leaves clear and recovers once it is cleared away; a failure outside the box only holds up its lane; a failure can be repeated at the same place on another run, and random failures are the same on runs with the same seed; twenty minutes of failures in heavy traffic leave nothing broken, and with fail-safe gaps no vehicles on crossing paths touch through some two hundred dead stops; a vehicle stopped in the box waits for one that passes it, one stopped behind a failure can fail in turn and one that fails at the edge of the map rolls off it; a failure only holds back the vehicles that leave their crossings for an emergency stop: none at rest is set going, none gets ahead of the trajectory it had, and one standing before its line loses its crossing instead; a vehicle that can't stop behind a dead stop is expected where it ends up, as is one that fails close behind it and one already on an emergency stop when the vehicle ahead stops short, and it stops by itself if the wreck is cleared away first; the log keeps the latest fifty failures; other layouts have none. Every run with a failure in it, except those of the test that repeats one, must show no vehicle off its trajectory, in the box without one, or overlapping another outside a recorded contact |
 | `tests/pedestrian_rule.rs` | 4 | Deep RL's shield serves a crosswalk whose pedestrians have waited longer than `PED_MAX_WAIT`, longest wait first, and leaves shorter waits to the controller; the reward counts waiting pedestrians |
-| `tests/weights_files.rs` | 6 | The shipped weights load, misshapen networks are rejected, a Hybrid without a fitting network keeps its base tuning and says so, a base tuning out of range is read as the last one, Hybrid files saved with a score that isn't finite load again, a copy that doesn't load is skipped for the next one and networks that overflow don't crash (§8.7) |
+| `tests/weights_files.rs` | 8 | The shipped weights load, misshapen networks are rejected, a Hybrid without a fitting network keeps its base tuning and says so, a base tuning out of range is read as the last one, Hybrid files saved with a score that isn't finite load again, a copy that doesn't load is skipped for the next one, networks that overflow don't crash, each controller records the file it loaded and its fingerprint, and a save that fails leaves the old file and no temporary file (§8.7) |
 | `tests/green_wave.rs` | 2 | The green wave runs every signal of a corridor fixed-time, and ending it gives back the controllers they ran before, except where another was chosen during the wave, without collisions; a single intersection isn't coordinated |
 | `tests/networks.rs` | 7 | Backpropagation agrees with the gradient measured numerically, Adam fits a line, the shape check rejects every malformed network (sizes whose product overflows included), the target network moves part way toward the online one, the action mask is respected, Double DQN learns which action pays in which state and the replay memory keeps the latest 60,000 transitions |
 | `tests/gui.rs` | 25 | The app, run without a window by `egui_kittest` and driven through its accessibility tree, the keyboard and the pointer: every panel opens and every control has a name; Space pauses and Step advances one second; every layout, control mode and controller runs, side by side too and along a corridor with the green wave; the demand, sensor and operations settings apply; the learning controllers show what they learn; every overlay and coloring draws; vehicles and pedestrians placed by hand, movements an approach lacks refused; a clicked vehicle's details; a vehicle of the cooperative crossing made to fail from the buttons and by a click, on both sides of a comparison; what *Stall one in the box* does on an empty crossing and once every lane with a vehicle on its way has a failure set; what a failed vehicle, one stopped behind it, one on its way out of the box and one whose crossing was withdrawn say when selected; pan, zoom and *Fit view*; both benchmark windows; *About*; manual control from the stage buttons, *Next stage* and the keys, which stand down while a control has focus; giving an approach green with a click and a Shift-click, refused on side B and off the approach lanes; side B offering no manual control and a corridor giving it only to the focused intersection; the sensor view, which draws and selects only the vehicles the sensors detect, labels each approach and ends with manual control |
-| `tests/scripted.rs` | 10 | Each `TS_*` variable of the scripted mode sets up its scene, a scripted screenshot stops the clock at its moment and screenshots are valid PNG files. The app reads the variables as it starts, so each scene opens in a process of its own |
-| `tests/tools.rs` | 10 | `bench` compares every automatic control strategy on every layout without collisions, takes each arrival pattern and runs the sensor study; `train` trains, saves and resumes both learning controllers, in a scratch directory with its own home directory, stops without touching the weights saved from the app when it can't make its `weights` folder, stops instead of reporting a result when it can't write the Hybrid's weights file, and stops with an error, making no folder, when no signalized layout has the name it is given |
-| `src/bin/bench.rs` | 1 | A run for a strategy table counts a vehicle placed on top of another, so the `coll` column can show an overlap |
+| `tests/scripted.rs` | 11 | Each `TS_*` variable of the scripted mode sets up its scene, a scripted screenshot stops the clock at its moment and screenshots are valid PNG files. The app reads the variables as it starts, so each scene opens in a process of its own |
+| `tests/tools.rs` | 14 | `bench` compares every automatic control strategy on every layout without collisions, takes each arrival pattern and runs the sensor study. It prints its version and commit, settings, seeds and each learned controller's weights file with its fingerprint, finding a file in the working directory before the built-in copy; gives each strategy's person delay against predictive control's on the same seeds; writes one CSV row per strategy and seed, whose means are the table's; and stops before it runs anything when it can't write the CSV. `train` trains, saves and resumes both learning controllers, in a scratch directory with its own home directory, stops without touching the weights saved from the app when it can't make its `weights` folder, stops instead of reporting a result when it can't write the Hybrid's weights file, and stops with an error, making no folder, when no signalized layout has the name it is given; `train test` scores the weights the app would load, against predictive control as well, and writes nothing |
+| `src/bin/bench.rs` | 3 | A run for a strategy table counts a vehicle placed on top of another, so the `coll` column can show an overlap; a CSV field is quoted only when it holds a comma or a quote, and a quote inside is doubled; a paired difference has an interval only with two seeds or more |
 | `src/control/manual.rs` | 9 | A choice waits for the minimum green, then the change runs in full; without a choice the stage holds, past the max-wait guard's limit; a choice can be replaced, canceled or refused; *Next stage* follows the usual order and wraps; the pedestrian intervals hold a choice back; preemption overrides a choice, which runs once it ends; the status line says what a choice waits for; a click chooses the stage that serves the lane, on four layouts; the brain shows the people waiting for each stage |
 | `src/sim/network.rs` | 1 | On every signal layout, points along each inbound lane, from the map edge to the stop line, map back to that lane, and the box, the exits, the roadside, the crosswalks and a bay before it opens map to none |
 | `src/sim/coop.rs` | 4 | Approach profiles arrive on time and at speed, a short run-up enters slower but on time, the gap policies give the gaps in §6.11 and the following law holds its time gap |
 | `src/sim/coop/failures.rs` | 6 | An emergency stop ends at rest after its braking distance, a trajectory holds the zones it rests in without end, a vehicle that can't stop behind another is expected at its rear and holds the zones it will stand in, a vehicle can be put anywhere along its route and passes clear of one at rest on another approach, a vehicle whose crossing was withdrawn brakes for its line while it doesn't yet respond to the vehicle ahead, and every gap allows the reaction time |
+| `src/control/weights.rs` | 1 | The fingerprint is 64-bit FNV-1a, checked against the algorithm's reference values |
 | `src/sim/signal.rs` | 1 | The signal history records a change's yellow and all-red between the two greens, with no gaps |
+| `src/sim/stats.rs` | 2 | The 95% interval follows Student's t, with no interval for one value, and its quantile carries on past the table toward the normal one |
 | `src/gui/mod.rs` | 3 | The safety monitors' margin over the gap keeps its sign, a failure reads as a sentence and a stage button's hover text says what the stage serves |
+| `src/gui/bench.rs` | 1 | The browser's benchmark, run in slices as uneven as frames, gives every row exactly as the threads do |
 | `src/gui/render.rs` | 1 | A queue estimate in the sensor view is whole when it is, otherwise to a tenth |
 
 The `weights` fuzz target (`fuzz/`, a workspace of its own) feeds arbitrary bytes to
@@ -3518,8 +3568,7 @@ permissions unless a job needs more.
 ```mermaid
 flowchart TB
     PR["<b>Pull request</b>"]
-    CI["<b>Checks</b><br/>CI, CodeQL and DCO;<br/>11 are required"]
-    FZ["Fuzz (weights), 60 s:<br/>reported, not required"]
+    CI["<b>Checks</b><br/>CI, CodeQL and DCO;<br/>12 are required"]
     M["<b>Merge to main</b><br/>branch up to date"]
     PG["<b>Pages</b>: the browser<br/>build, deployed"]
     SC["<b>Scorecard</b><br/>also weekly"]
@@ -3528,18 +3577,17 @@ flowchart TB
     P["<b>Publish the release</b><br/>by hand"]
     C["<b>publish-crate</b><br/>cargo publish to<br/>crates.io"]
     PR --> CI --> M --> T --> R --> P --> C
-    PR -.-> FZ
     M --> PG
     M --> SC
     classDef ui fill:#fff3e0,stroke:#c05621,color:#3b1d06
     classDef data fill:#f1f3f5,stroke:#5f6b7a,color:#1f2933
     classDef safe fill:#fdecec,stroke:#c53030,color:#4a0f0f
     class PR,M,T,P ui
-    class CI,FZ safe
+    class CI safe
     class PG,SC,R,C data
 ```
 
-The 11 checks that must pass before anything merges to `main`, with the branch up to
+The 12 checks that must pass before anything merges to `main`, with the branch up to
 date:
 
 | Check | Workflow | What it does |
@@ -3550,11 +3598,10 @@ date:
 | Clippy | `ci.yml` | `cargo fmt --check` on the crate and the fuzz target, then `cargo clippy` with warnings as errors, for the native targets and the browser app |
 | Crate package | `ci.yml` | `cargo package --locked`, which builds the crate from the files crates.io would get |
 | Licenses and advisories | `ci.yml` | `cargo deny check` (licenses, advisories, bans and sources), and that `THIRD_PARTY_LICENSES.md` is up to date |
+| Fuzz (weights) | `ci.yml` | Runs the `weights` fuzz target for 60 s from its seeds on the nightly toolchain, and uploads any crash |
 | Analyze (rust), Analyze (actions) | `codeql.yml` | CodeQL on the Rust code and on the workflows; also every Monday |
 | DCO | `dco.yml` | Every commit is signed off by its author |
 
-* **Fuzz (weights)** in `ci.yml` runs the fuzz target for 60 s from its seeds on the
-  nightly toolchain, and uploads any crash. It isn't required.
 * **`pages.yml`** builds the browser version with Trunk on every push to `main` and
   deploys it to GitHub Pages.
 * **`release.yml`** runs on a `v*` tag, or by hand to build unsigned packages:

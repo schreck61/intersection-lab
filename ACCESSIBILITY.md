@@ -5,7 +5,7 @@ and a set of live charts. That makes some of it hard or impossible to use withou
 and some of it hard to use without a mouse. This page says what works today, what
 doesn't, and which results are available without the visual app.
 
-Last reviewed: November 2026, for the browser version and version 0.8.0.
+Last reviewed: November 2026, for the browser version and the release after 0.8.0.
 
 ## Results available as text
 
@@ -23,8 +23,11 @@ cargo run --release --example failures           # failures at the cooperative c
 
 These commands print the average and 95th-percentile delay, throughput, stops, person
 delay, pedestrian waits and near misses, a corridor's end-to-end trips and the safety
-counts. The `failures` example prints how often vehicles touched after a failure and how
-fast, the emergency stops, the crossings withdrawn and the delay a failure adds. They
+counts. The first also gives each strategy's difference from predictive control, with
+its 95% interval. Given `--csv FILE`, both `bench` commands also write every run to a
+CSV file, which a spreadsheet or a screen reader can step through cell by cell. The
+`failures` example prints how often vehicles touched after a failure and how fast, the
+emergency stops, the crossings withdrawn and the delay a failure adds. These commands
 don't print everything the app shows. Some numbers appear only in the app, such as CO₂
 per vehicle, the level of service, the breakdowns by approach, movement and vehicle
 class, the charts and a selected vehicle's own figures, and only the `cooperative`

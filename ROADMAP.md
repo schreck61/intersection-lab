@@ -6,7 +6,7 @@ one-maintainer project, and plans can change with what the experiments find, wha
 ask for and the time available. The maintainer reviews it at least once a year and
 whenever plans change.
 
-Last reviewed: November 2026, after version 0.6.0.
+Last reviewed: November 2026, after version 0.8.0.
 
 ## Next
 
@@ -25,7 +25,7 @@ Last reviewed: November 2026, after version 0.6.0.
   `Controller` trait in your own crate and benchmark it against the built-in controllers
   on identical arrivals.
 * **Export results as CSV.** Key results, per-vehicle trips and benchmark tables, as a
-  download from the app and from `bench`.
+  download from the app. `bench --csv` already writes every run of its tables.
 
 ## Later in 2027
 
