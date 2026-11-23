@@ -254,3 +254,66 @@ pub fn los(delay: f64, signalized: bool) -> &'static str {
     }
     "F"
 }
+
+/// Two-sided 95% quantiles of Student's t distribution for 1 to 30 degrees of freedom.
+const T_975: [f64; 30] = [
+    12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228, 2.201, 2.179, 2.160, 2.145, 2.131,
+    2.120, 2.110, 2.101, 2.093, 2.086, 2.080, 2.074, 2.069, 2.064, 2.060, 2.056, 2.052, 2.048, 2.045, 2.042,
+];
+
+/// The 95% quantile of Student's t for `df` degrees of freedom: from the table up to 30,
+/// and beyond that from the Cornish-Fisher expansion around the normal quantile, which
+/// agrees with the table to 0.001 at 30.
+fn t_975(df: usize) -> f64 {
+    if let Some(&t) = T_975.get(df.wrapping_sub(1)) {
+        return t;
+    }
+    let (z, v): (f64, f64) = (1.959_964, df as f64);
+    let (z3, z5, z7) = (z.powi(3), z.powi(5), z.powi(7));
+    z + (z3 + z) / (4.0 * v)
+        + (5.0 * z5 + 16.0 * z3 + 3.0 * z) / (96.0 * v * v)
+        + (3.0 * z7 + 19.0 * z5 + 17.0 * z3 - 15.0 * z) / (384.0 * v * v * v)
+}
+
+/// The mean of `xs` and the half-width of its 95% confidence interval from Student's t
+/// distribution, which needs at least two values (NaN and `None` for none). To compare
+/// two strategies run on the same seeds or scenarios, pass the differences between their
+/// results: pairing them takes out the variation the traffic itself brings.
+pub fn mean_ci95(xs: &[f64]) -> (f64, Option<f64>) {
+    let n = xs.len();
+    let mean = xs.iter().sum::<f64>() / n as f64;
+    if n < 2 {
+        return (mean, None);
+    }
+    let var = xs.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1) as f64;
+    (mean, Some(t_975(n - 1) * (var / n as f64).sqrt()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_interval_follows_students_t() {
+        // Mean 2, standard deviation 1, three values: 4.303 / sqrt(3).
+        let (mean, half) = mean_ci95(&[1.0, 2.0, 3.0]);
+        assert_eq!(mean, 2.0);
+        assert!((half.unwrap() - 4.303 / 3f64.sqrt()).abs() < 1e-9);
+        // Identical differences: no doubt at all.
+        assert_eq!(mean_ci95(&[0.5; 6]), (0.5, Some(0.0)));
+        // One value has no interval, and none has no mean.
+        assert_eq!(mean_ci95(&[4.0]), (4.0, None));
+        assert!(mean_ci95(&[]).0.is_nan() && mean_ci95(&[]).1.is_none());
+    }
+
+    #[test]
+    fn the_quantile_continues_past_the_table() {
+        assert_eq!(t_975(1), 12.706);
+        assert_eq!(t_975(30), 2.042);
+        // The expansion meets the table, then falls toward the normal quantile.
+        assert!((t_975(31) - 2.0395).abs() < 5e-4, "{}", t_975(31));
+        assert!((t_975(60) - 2.0003).abs() < 5e-4, "{}", t_975(60));
+        assert!((t_975(120) - 1.9799).abs() < 5e-4, "{}", t_975(120));
+        assert!(t_975(10_000) > 1.96 && t_975(10_000) < 1.961);
+    }
+}

@@ -78,6 +78,8 @@ pub struct Hybrid {
     pub expert_prob: f64,
     pub episodes: u64,
     pub loaded_from: Option<String>,
+    /// The fingerprint of the weights file it loaded (`weights::fingerprint`).
+    pub loaded_fingerprint: Option<u64>,
     pub decisions: u64,
     /// Pin one tuning (baselines / experiments) instead of asking the agent.
     pub fixed_action: Option<usize>,
@@ -111,6 +113,7 @@ impl Hybrid {
             expert_prob: 0.0,
             episodes: 0,
             loaded_from: None,
+            loaded_fingerprint: None,
             decisions: 0,
             fixed_action: None,
             action: DEFAULT_ACTION,
@@ -127,10 +130,12 @@ impl Hybrid {
     /// keeps the planner's default tuning (it behaves exactly like the predictive
     /// controller).
     pub fn load_or_new(net: &Network) -> Self {
-        if let Some((mut h, source)) =
-            super::weights::load(&weights_file(net.kind.key()), |txt| Self::from_saved(net, txt))
-        {
+        let file = weights_file(net.kind.key());
+        if let Some(((mut h, fingerprint), source)) = super::weights::load(&file, |txt| {
+            Self::from_saved(net, txt).map(|h| (h, super::weights::fingerprint(txt)))
+        }) {
             h.loaded_from = Some(source);
+            h.loaded_fingerprint = Some(fingerprint);
             return h;
         }
         Self::new(net, 11)

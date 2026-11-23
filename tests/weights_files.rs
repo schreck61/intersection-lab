@@ -186,3 +186,19 @@ fn networks_that_overflow_do_not_crash() {
     let c = RlController::from_saved(&net, &dqn.to_string()).unwrap();
     run(Box::new(c), CtrlKind::DeepRl);
 }
+
+#[test]
+fn a_controller_records_the_file_it_loaded() {
+    // Run from the repository, the copies in `weights/` come first.
+    let net = Network::build(LayoutKind::Tee);
+    let rl = RlController::load_or_new(&net);
+    let dqn = PathBuf::from("weights").join("dqn_tee.json");
+    assert_eq!(rl.loaded_from.as_deref(), Some(dqn.display().to_string().as_str()));
+    assert_eq!(rl.loaded_fingerprint, Some(weights::fingerprint(DQN_TEE)));
+    let h = Hybrid::load_or_new(&net);
+    assert_eq!(h.loaded_fingerprint, Some(weights::fingerprint(HYBRID_TEE)));
+    // Different files, different fingerprints; an untrained controller has none.
+    assert_ne!(weights::fingerprint(DQN_TEE), weights::fingerprint(HYBRID_TEE));
+    assert_eq!(RlController::new(&net, 1).loaded_fingerprint, None);
+    assert_eq!(Hybrid::new(&net, 1).loaded_fingerprint, None);
+}

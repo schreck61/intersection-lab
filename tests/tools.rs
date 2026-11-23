@@ -7,7 +7,7 @@
 //! directory there too, so nothing reads or writes the repository's weights or the
 //! user's.
 
-use intersection_lab::control::CtrlKind;
+use intersection_lab::control::{CtrlKind, weights};
 use intersection_lab::sim::ControlMode;
 use intersection_lab::sim::network::LayoutKind;
 use intersection_lab::sim::sensors::Conditions;
@@ -119,6 +119,115 @@ fn bench_studies_the_sensor_packages() {
     {
         assert_eq!(out.lines().filter(|l| l.starts_with(&format!("{} ", c.short()))).count(), 2, "{out}");
     }
+}
+
+/// The fields of one CSV line, with quoted fields unquoted.
+fn csv_fields(line: &str) -> Vec<String> {
+    let (mut fields, mut f, mut quoted) = (vec![], String::new(), false);
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match (c, quoted) {
+            ('"', true) if chars.peek() == Some(&'"') => {
+                f.push('"');
+                chars.next();
+            }
+            ('"', _) => quoted = !quoted,
+            (',', false) => fields.push(std::mem::take(&mut f)),
+            _ => f.push(c),
+        }
+    }
+    fields.push(f);
+    fields
+}
+
+/// The built-in copy of weights file `file`, and its fingerprint as `bench` prints it.
+fn built_in(file: &str) -> String {
+    let txt = std::fs::read_to_string(Path::new("weights").join(file)).unwrap();
+    format!("built-in {file} (fnv1a {:016x})", weights::fingerprint(&txt))
+}
+
+#[test]
+fn bench_records_what_it_ran() {
+    let dir = scratch("bench_record");
+    let csv = dir.join("runs.csv");
+    let out = bench(&dir, &["tee", "0.2", "2", "0.5", "--csv", csv.to_str().unwrap()]);
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines[0].starts_with(&format!("intersection-lab {} (", env!("CARGO_PKG_VERSION"))), "{out}");
+    assert_eq!(
+        lines[1],
+        "5-minute warm-up before each run; seeds 1000 to 1001; sensors: loops + camera + radar, \
+         realistic errors, Clear day"
+    );
+    // Nothing in this directory or its per-user data directory: the built-in copies.
+    let used =
+        format!("weights: DeepRL {}; Hybrid {}", built_in("dqn_tee.json"), built_in("hybrid_tee.json"));
+    assert!(lines.contains(&used.as_str()), "{out}");
+    // Each row: the means, and person delay against predictive control's on the same seeds.
+    let rows: Vec<(&str, Vec<&str>)> = lines
+        .iter()
+        .filter(|l| l.ends_with("s)"))
+        .map(|l| (l[..34].trim(), l[34..].split_whitespace().collect()))
+        .collect();
+    for (name, fields) in &rows {
+        match *name {
+            "Predictive (schedule-driven MPC)" => assert_eq!(fields[5], "(base)"),
+            _ => assert!(fields[5].contains('±'), "{name}: {}", fields[5]),
+        }
+    }
+    // The CSV: one row per strategy and seed, whose means are the table's.
+    let text = std::fs::read_to_string(&csv).unwrap();
+    let table: Vec<Vec<String>> = text.lines().map(csv_fields).collect();
+    assert_eq!(table[0][15], "person_delay_s");
+    assert_eq!(table.len(), 1 + rows.len() * 2, "{text}");
+    for (name, fields) in &rows {
+        let runs: Vec<&Vec<String>> = table.iter().filter(|r| r[9] == *name).collect();
+        assert_eq!(runs.iter().map(|r| r[10].as_str()).collect::<Vec<_>>(), ["1000", "1001"], "{name}");
+        assert!(runs.iter().all(|r| r.len() == 20 && r[0] == lines[0] && r[2] == "tee" && r[5] == "0.5"));
+        let pd = runs.iter().map(|r| r[15].parse::<f64>().unwrap()).sum::<f64>() / 2.0;
+        assert_eq!(format!("{pd:.1}"), fields[4], "{name}");
+        assert_eq!(runs[0][18], "0", "{name}: overlaps");
+        let learned = matches!(*name, "AI: Deep RL (Double DQN)" | "AI: Hybrid (RL-tuned predictive)");
+        assert_eq!(runs[0][19].starts_with("built-in "), learned, "{name}: {}", runs[0][19]);
+    }
+}
+
+#[test]
+fn bench_says_which_weights_file_each_learned_controller_ran() {
+    // A Deep RL file in the working directory comes before the built-in copy.
+    let dir = scratch("bench_local_weights");
+    std::fs::create_dir_all(dir.join("weights")).unwrap();
+    let shipped = std::fs::read_to_string("weights/dqn_tee.json").unwrap();
+    let mut v: serde_json::Value = serde_json::from_str(&shipped).unwrap();
+    v["episodes"] = (v["episodes"].as_u64().unwrap() + 1).into();
+    let local = v.to_string();
+    std::fs::write(dir.join("weights").join("dqn_tee.json"), &local).unwrap();
+    let out = bench(&dir, &["tee", "0.2", "1"]);
+    let path = Path::new("weights").join("dqn_tee.json");
+    let used = format!(
+        "weights: DeepRL {} (fnv1a {:016x}); Hybrid {}",
+        path.display(),
+        weights::fingerprint(&local),
+        built_in("hybrid_tee.json")
+    );
+    assert!(out.lines().any(|l| l == used), "{out}");
+}
+
+/// A directory can't be written as a file, and `--csv` needs a file name. Either way
+/// `bench` stops with the reason before it runs or prints anything.
+#[test]
+fn bench_stops_when_it_cannot_write_the_csv() {
+    let dir = scratch("bench_no_csv");
+    for (args, reason, code) in [
+        (vec!["tee", "0.2", "1", "--csv", "."], "bench: can't write .: ", 1),
+        (vec!["tee", "--csv"], "bench: --csv needs a file name", 2),
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_bench")).args(&args).current_dir(&dir).output().unwrap();
+        assert_eq!(out.status.code(), Some(code), "bench {args:?}");
+        let said = String::from_utf8_lossy(&out.stderr);
+        assert!(said.starts_with(reason), "bench {args:?}: {said}");
+        assert!(out.stdout.is_empty(), "bench {args:?}: {}", String::from_utf8_lossy(&out.stdout));
+    }
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0, "bench left a file behind");
 }
 
 /// Train on the T-intersection: one short episode, small networks.
@@ -246,4 +355,24 @@ fn train_resumes_the_built_in_hybrid() {
     let out = train(&dir, "hybrid", &[("RESUME", "1")]);
     assert!(out.contains("[tee:hybrid] resumed from saved weights, validation pd "), "{out}");
     assert!(dir.join("weights/hybrid_tee.json").exists(), "{out}");
+}
+
+#[test]
+fn train_test_scores_the_saved_weights_and_writes_nothing() {
+    let dir = scratch("train_test");
+    let out = run(env!("CARGO_BIN_EXE_train"), &dir, &["test", "tee", "150", "hybrid"], &[]);
+    assert!(out.starts_with(&format!("intersection-lab {} (", env!("CARGO_PKG_VERSION"))), "{out}");
+    for said in [
+        "[tee:hybrid] TEST person delay / pedestrian wait (s): fixed ".to_string(),
+        format!("[tee:hybrid] weights: {}", built_in("hybrid_tee.json")),
+        "[tee:hybrid] TEST person delay against predictive, mean difference with 95% interval over 24 \
+         scenarios (s): fixed "
+            .to_string(),
+        "[tee:hybrid] TEST agent against the static tuning (s): ".to_string(),
+    ] {
+        assert!(out.contains(&said), "no {said:?} in:\n{out}");
+    }
+    assert!(!out.contains("[tee:dqn]") && !out.contains(" ep "), "{out}");
+    // No weights folder here, and nothing in the per-user data directory either.
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0, "train test wrote files");
 }
