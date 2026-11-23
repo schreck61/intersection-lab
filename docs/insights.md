@@ -133,7 +133,9 @@ Six seeds of 20 minutes each (`bench all 20 6`). The comparisons below use 30 se
 - **Under heavy traffic:** permissive lefts can collapse. Left-turners can't find gaps, the
   bay fills and blocks the through lane (fixed-time on major/minor at 1.3×: 170 s vs 99 s
   protected-only).
-- **Automatic switching by volume:** it lands in between.
+- **Automatic switching by volume:** it lands in between, except with predictive control
+  on major/minor at 1.3×, where it does worse than either (108.5 s, against 91.0 s
+  permissive and 104.8 s protected-only).
 
 ## 7. Choosing the intersection type
 
