@@ -191,7 +191,9 @@ impl SignalState {
             self.departing[m] = dep;
             any |= dep;
         }
-        // Pedestrian intervals end with the stage (min green already covered them).
+        // Pedestrian intervals end with the stage. The minimum green covered them, unless
+        // emergency preemption cut it short: then anyone still crossing finishes on
+        // steady DON'T WALK, and vehicles wait for them.
         for c in self.cw.iter_mut() {
             c.state = PedSig::Dw;
         }

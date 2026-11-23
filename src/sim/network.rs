@@ -1107,6 +1107,11 @@ impl Network {
                 self.movements[m].crosswalks.push(pc.cw);
             }
         }
+        // Nearest first, like the conflicts: a vehicle stops for the first crosswalk on
+        // its way that someone is crossing.
+        for l in self.links.iter_mut() {
+            l.ped_conflicts.sort_by(|&x, &y| pcs[x].s.total_cmp(&pcs[y].s));
+        }
         self.ped_conflicts = pcs;
     }
 }

@@ -275,6 +275,10 @@ const LOOK: f64 = 70.0;
 pub const LC_DUR: f64 = 2.5;
 /// Followers in the old lane keep treating a lane changer as a leader this long (s).
 const GHOST_T: f64 = 1.5;
+/// Pedestrians step around a vehicle slower than this (m/s) instead of waiting for it.
+const STEP_AROUND: f64 = 0.8;
+/// How close (m) a vehicle lets someone crossing come before it stops for them.
+const PED_CLEAR: f64 = 1.0;
 const HORIZON: f64 = 140.0;
 
 pub struct Sim {
@@ -1291,6 +1295,8 @@ impl Sim {
         })
     }
 
+    /// Whether someone crossing (or about to) would meet vehicle `i` at conflict `u_c` of
+    /// crosswalk `cw`, `d_a` meters ahead of its front.
     fn ped_blocks(&self, i: usize, cw: usize, u_c: f64, d_a: f64, in_box: bool) -> bool {
         let a = &self.vehicles[i];
         let spec = a.spec();
@@ -1315,8 +1321,9 @@ impl Sim {
                 continue;
             }
             let x = (u_c - p.u) * p.dir;
-            let tp_in = ((x - 2.6) / p.speed).max(0.0);
-            let tp_out = (x + 2.6) / p.speed;
+            let speed = self.ped_speed(p);
+            let tp_in = ((x - 2.6) / speed).max(0.0);
+            let tp_out = (x + 2.6) / speed;
             if tp_out < 0.0 {
                 continue;
             }
@@ -1325,6 +1332,35 @@ impl Sim {
             }
         }
         false
+    }
+
+    /// Whether someone crossing is in front of vehicle `i`, or will step there before its
+    /// front has passed. The vehicle's front is already on crosswalk `cw`, `d_a` meters
+    /// short of where its path crosses the middle of it (at `u_c` along the crosswalk).
+    fn ped_ahead(&self, i: usize, cw: usize, u_c: f64, d_a: f64) -> bool {
+        let a = &self.vehicles[i];
+        let spec = a.spec();
+        let band = spec.width / 2.0 + PED_CLEAR + 0.3;
+        let t_pass = Self::eta(d_a + 2.0, a.v, spec.accel, a.v0);
+        self.peds.iter().filter(|p| p.cw == cw && p.state == PedState::Crossing).any(|p| {
+            let x = (u_c - p.u) * p.dir;
+            x > -band && (x - band) / self.ped_speed(p) < t_pass + 0.5
+        })
+    }
+
+    /// Whether someone crossing is within [`PED_CLEAR`] of vehicle `v`'s body.
+    fn ped_beside(&self, v: &Vehicle) -> bool {
+        let near: Vec<V2> = (self.peds.iter().filter(|p| p.state == PedState::Crossing))
+            .map(|p| self.ped_pos(p))
+            .filter(|&at| self.front(v).dist(at) < v.len() + PED_CLEAR + 2.0)
+            .collect();
+        !near.is_empty() && self.body(v).iter().any(|&b| near.iter().any(|&at| within(b, at, PED_CLEAR)))
+    }
+
+    /// How fast pedestrian `p` walks: they hurry once their WALK has ended.
+    fn ped_speed(&self, p: &Ped) -> f64 {
+        let hurry = self.signalized() && self.signal.cw[p.cw].state != PedSig::Walk;
+        p.speed * if hurry { 1.25 } else { 1.0 }
     }
 
     // ---------------------------------------------------------------- driving
@@ -1859,6 +1895,9 @@ impl Sim {
             if base > look || l.kind == LinkKind::Outbound {
                 break;
             }
+            // Yielding to a vehicle on this link ends the search, but only after its
+            // crosswalks: the stop could leave us standing on one.
+            let mut yielded = false;
             for &cid in &l.conflicts {
                 let c = &self.net.conflicts[cid];
                 let ((zn, zone), _) = c.zones(lid);
@@ -1885,7 +1924,8 @@ impl Sim {
                                 yield_to = Some(self.vehicles[j].id);
                                 stale_drop.push(cid);
                                 stop_gap = Some((gap, Reason::Yielding));
-                                break 'outer;
+                                yielded = true;
+                                break;
                             }
                         }
                         passing.push((cid, d, zone, zn));
@@ -1901,7 +1941,8 @@ impl Sim {
                     let gap = if hold_line_mode { d_line } else { d - zn - 0.8 };
                     if can_stop(gap) || v.v < 1.0 {
                         stop_gap = Some((gap, Reason::Yielding));
-                        break 'outer;
+                        yielded = true;
+                        break;
                     }
                     if !c.merge {
                         // Merges are never locked: they are re-resolved every step.
@@ -1922,7 +1963,8 @@ impl Sim {
                             if can_stop(gap) || v.v < 1.0 {
                                 yield_to = Some(self.vehicles[j].id);
                                 stop_gap = Some((gap, Reason::Yielding));
-                                break 'outer;
+                                yielded = true;
+                                break;
                             }
                         }
                         // Merges are never locked: they are re-resolved every step.
@@ -1936,18 +1978,40 @@ impl Sim {
             for &pci in &l.ped_conflicts {
                 let pc = &self.net.ped_conflicts[pci];
                 let d = base + pc.s;
-                if d + 2.2 + spec.length < 0.0 || d - 2.2 < 0.0 {
+                // Once the front is past the walking line only the side of the body can
+                // meet someone crossing, and they keep clear of it while it moves.
+                if d < -PED_CLEAR {
                     continue;
                 }
-                if self.ped_blocks(i, pc.cw, pc.u, d, link.kind.in_box()) {
-                    let gap = if hold_line_mode { d_line } else { d - 2.6 };
-                    if can_stop(gap) || v.v < 1.0 {
+                // Don't enter a crosswalk without time to clear it ahead of anyone crossing.
+                // Already on it, go on unless someone is about to be in front of the vehicle.
+                let on_it = d - 2.2 < 0.0;
+                let blocks = if on_it {
+                    self.ped_ahead(i, pc.cw, pc.u, d)
+                } else {
+                    self.ped_blocks(i, pc.cw, pc.u, d, link.kind.in_box())
+                };
+                if blocks {
+                    let gap = if hold_line_mode {
+                        d_line
+                    } else if on_it {
+                        (d - 2.0).max(0.0)
+                    } else {
+                        d - 2.6
+                    };
+                    // Brake hard, if that still stops short of them, rather than pass
+                    // close by someone crossing.
+                    let hard = v.v * v.v / (2.0 * 8.0) < d - 1.2;
+                    if can_stop(gap) || v.v < 1.0 || hard {
                         if stop_gap.is_none_or(|g| gap < g.0) {
                             stop_gap = Some((gap, Reason::Pedestrian));
                         }
                         break 'outer;
                     }
                 }
+            }
+            if yielded {
+                break;
             }
             base += l.length();
             k += 1;
@@ -2029,6 +2093,15 @@ impl Sim {
                     acc = a2;
                     reason = Reason::Following;
                 }
+            }
+        }
+        // Pedestrians step around a vehicle this slow instead of waiting for it, so it
+        // doesn't move off while one is beside it.
+        if v.v < STEP_AROUND && self.ped_beside(v) {
+            let a2 = -v.v / self.dt;
+            if a2 < acc {
+                acc = a2;
+                reason = Reason::Pedestrian;
             }
         }
         (
@@ -2362,12 +2435,10 @@ impl Sim {
                     let dirv =
                         (self.net.crosswalks[cw].b - self.net.crosswalks[cw].a).norm() * self.peds[pi].dir;
                     let blocked = self.vehicle_at(pos + dirv * 1.0, 0.9);
+                    let speed = self.ped_speed(&self.peds[pi]);
                     let p = &mut self.peds[pi];
                     if !blocked {
-                        // Hurry up during flashing DON'T WALK.
-                        let hurry =
-                            if signal && self.signal.cw[cw].state != PedSig::Walk { 1.25 } else { 1.0 };
-                        p.u += p.dir * p.speed * hurry * dt;
+                        p.u += p.dir * speed * dt;
                         p.anim += dt * p.speed * 4.0;
                     }
                     if (p.dir > 0.0 && p.u > len + 1.0) || (p.dir < 0.0 && p.u < -1.0) {
@@ -2410,19 +2481,21 @@ impl Sim {
         cw.a + dir * u + dir.right() * lat
     }
 
-    /// A moving vehicle body within `r` of point `p` (pedestrians step around stopped ones).
+    /// A moving vehicle's body within `r` of point `p`, wherever its front is: the back of
+    /// a long one can still be over a crosswalk after its front has left the intersection.
+    /// Pedestrians step around one slower than [`STEP_AROUND`].
     fn vehicle_at(&self, p: V2, r: f64) -> bool {
         self.vehicles.iter().any(|v| {
-            if v.v < 0.8 {
-                return false;
-            }
-            let l = &self.net.links[v.link()];
-            if !(l.kind.in_box() || (l.kind == LinkKind::Inbound && l.length() - v.s < 8.0)) {
+            if v.v < STEP_AROUND {
                 return false;
             }
             let f = self.front(v);
+            if f.dist(p) > v.len() + v.spec().width + r {
+                return false;
+            }
             let b = self.point_behind(v, v.len());
             dist_point_seg(p, f, b) < v.spec().width / 2.0 + r
+                || self.body(v).iter().any(|&body| within(body, p, r))
         })
     }
 
@@ -2518,6 +2591,13 @@ pub(crate) fn integrate(v: f64, acc: f64, dt: f64) -> (f64, f64) {
     } else {
         (0.5 * (v + v_new) * dt, v_new)
     }
+}
+
+/// Whether point `p` is within `r` of an oriented rectangle (center, unit axis, half-length,
+/// half-width), with the corners counted square.
+fn within((c, axis, half_len, half_w): (V2, V2, f64, f64), p: V2, r: f64) -> bool {
+    let d = p - c;
+    d.dot(axis).abs() < half_len + r && d.cross(axis).abs() < half_w + r
 }
 
 pub fn dist_point_seg(p: V2, a: V2, b: V2) -> f64 {
