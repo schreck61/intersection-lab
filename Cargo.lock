@@ -1585,7 +1585,7 @@ dependencies = [
 
 [[package]]
 name = "intersection-lab"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "eframe",
  "egui",
