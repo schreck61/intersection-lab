@@ -25,6 +25,7 @@
 //! vehicles in bad weather, at night, at range and behind trucks and buses, and only
 //! learn intent from drivers who signal; loops fail stuck-on/stuck-off and miss
 //! motorcycles; radar and connected-vehicle reports are noisy (GPS error, latency).
+//! The rates are plausible values chosen for this model, not fitted to field data.
 //! The sensor layer runs the usual detector diagnostics (max presence / no activity)
 //! and flags lanes it believes are faulty.
 
@@ -35,7 +36,8 @@ use super::{PedState, Sim, Vehicle};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
-/// Weather / lighting, which mostly affects video detection.
+/// Weather / lighting, which mostly affects video detection. The detection rates for
+/// each are assumed, not measured.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Conditions {
     Clear,

@@ -44,9 +44,10 @@ signing services).
    risks*). The executable and the weights built into it are trusted, since the release
    signatures cover them.
 2. **The person running it → the app.** Command-line arguments and environment
-   variables (the `bench` and `train` settings, and the app's `TS_` settings such as the
-   screenshot mode) come from the person running the program, who already has the same
-   rights as the program. They're trusted, but still parsed as typed values.
+   variables (the `bench` and `train` settings, such as the file `bench --csv` writes,
+   and the app's `TS_` settings such as the screenshot mode) come from the person running
+   the program, who already has the same rights as the program. They're trusted, but
+   still parsed as typed values.
 3. **The browser sandbox.** The browser version runs inside the browser's sandbox, with
    no file access and no network requests after loading, and GitHub Pages serves it
    over HTTPS.
@@ -77,6 +78,8 @@ The design follows the principles set out by Saltzer and Schroeder:
   the network and runs only its saved base tuning. If no copy loads, Deep RL starts from
   a fresh network and the Hybrid runs the planner's default tuning (see
   [section 8.7 of the architecture document](architecture.md#87-controlweightsrs-loading-and-saving)).
+  A save replaces a weights file in one step, so one that fails leaves the old file
+  whole.
   Every workflow's token is read-only unless a job needs more, and packages are signed
   only on version-tag builds.
 * **Complete mediation.** Every weights file goes through the same loader and the same
@@ -103,7 +106,7 @@ The design follows the principles set out by Saltzer and Schroeder:
 | Integer overflow (CWE-190) | Sizes read from files are multiplied with checked arithmetic, and the fuzzer runs with overflow checks. |
 | Deserialization of untrusted data (CWE-502) | Files deserialize into plain data structures with serde_json; nothing in a file selects a type or code to run. |
 | Uncontrolled resource consumption (CWE-400) | Malformed networks are rejected before they run, and network outputs that overflow to NaN are sorted safely (`total_cmp`). A very large file is still read whole into memory (see *Remaining risks*). |
-| Injection: OS commands, SQL, cross-site scripting, path traversal (CWE-78, CWE-89, CWE-79, CWE-22) | Not applicable by construction: the app's own code starts no programs, has no database and generates no HTML, and it builds file paths only from fixed names, the platform's standard directories and paths the person running it supplies. The window libraries it depends on do start a few programs, and nothing from a weights file is part of what they run: the default browser (on Linux, the one the `BROWSER` variable or the desktop's settings name), given the project's fixed address, when the link in the *About* window is clicked, and, on Linux under Wayland when the app draws its own title bar, `gsettings`, `dbus-send` and `fc-match`, found on the `PATH`, to read the desktop's settings and find the title-bar font (`fc-match` is given the font name that `gsettings` reports). |
+| Injection: OS commands, SQL, cross-site scripting, path traversal (CWE-78, CWE-89, CWE-79, CWE-22) | Not applicable by construction: the app's own code starts no programs, has no database and generates no HTML, and it builds file paths only from fixed names, the platform's standard directories and paths the person running it supplies. The window libraries it depends on do start a few programs, and nothing from a weights file is part of what they run: the default browser (on Linux, the one the `BROWSER` variable or the desktop's settings name), given the project's fixed address, when the link in the *About* window is clicked, and, on Linux under Wayland when the app draws its own title bar, `gsettings`, `dbus-send` and `fc-match`, found on the `PATH`, to read the desktop's settings and find the title-bar font (`fc-match` is given the font name that `gsettings` reports). The `bench` and `train` tools, which no release package includes, start `git`, found on the `PATH`, with fixed arguments, to record the commit they were built from. |
 | Hard-coded or leaked credentials (CWE-798) | The app has no credentials, and the repository holds none: the macOS signing settings are GitHub environment secrets, and everything else signs in with short-lived OIDC credentials. |
 | Vulnerable and outdated components (OWASP A06) | `cargo deny` checks every change against the RustSec advisory database and fails on a locked version that has been yanked, Dependabot proposes weekly updates to the dependencies named in `Cargo.toml` and a security update for a locked version that GitHub has an advisory for, when a fixed version exists, and the OpenSSF Scorecard's vulnerability check runs weekly. Advisories that don't apply are recorded with the reason. |
 | Untrusted code in the build (CWE-829) | Every GitHub Action is pinned to a commit hash, CodeQL analyzes the workflows, and no workflow runs pull-request code with write access or secrets. |

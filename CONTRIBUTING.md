@@ -83,9 +83,9 @@ If you add or update a dependency, also regenerate the third-party license list 
 CI also checks that every commit in the pull request is
 [signed off](#sign-off-your-commits).
 
-CI also fuzzes the loading of weights files for a minute, since the app reads them from
-disk (see [fuzz/](fuzz/)). If you change how weights are loaded or used, run it locally
-too. It needs nightly Rust and
+The app reads weights files from disk, so CI also fuzzes their loading for a minute, and
+a change merges only if the fuzzer finds nothing (see [fuzz/](fuzz/)). If you change how
+weights are loaded or used, run it locally too. It needs nightly Rust and
 [cargo-fuzz](https://rust-fuzz.github.io/book/cargo-fuzz.html):
 
 ```bash
@@ -124,7 +124,10 @@ pass that file's path in place of the two folders.
   and after numbers from `cargo run --release --bin bench all 20 6` (and the corridor or
   sensor study where relevant), and update the tables in the README and
   [docs/insights.md](docs/insights.md) to match. Results from a single seed are noisy;
-  use several.
+  use several. Beside each strategy, `bench` prints its difference from predictive
+  control on the same seeds with the half-width of a 95% interval; a change smaller
+  than that is within noise. It also prints the commit it was built from and the weights
+  files it loaded, and `--csv FILE` saves every run.
 * **Retrained weights:** say which command produced them (for example
   `cargo run --release --bin train all 800 900 dqn`) and include the held-out `TEST` lines
   that `train` prints, which compare the new networks with the baselines. Training is
