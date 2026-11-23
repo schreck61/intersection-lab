@@ -64,6 +64,13 @@ pub fn load_from<T>(
     parse(txt).map(|v| (v, format!("built-in {file}")))
 }
 
+/// The 64-bit FNV-1a hash of a weights file's text. `bench` and `train` print it beside
+/// the file each learned controller loaded, so a result can be traced to the network
+/// that produced it. It tells copies apart; it isn't a security check.
+pub fn fingerprint(txt: &str) -> u64 {
+    txt.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3))
+}
+
 /// Where to save weights file `file` (the directory may still need creating).
 pub fn save_path(file: &str) -> PathBuf {
     let local = PathBuf::from("weights");
@@ -71,4 +78,17 @@ pub fn save_path(file: &str) -> PathBuf {
         return local.join(file);
     }
     user_dir().map(|d| d.join("weights")).unwrap_or(local).join(file)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_fingerprint_is_fnv_1a() {
+        // The FNV reference test vectors.
+        assert_eq!(fingerprint(""), 0xcbf2_9ce4_8422_2325);
+        assert_eq!(fingerprint("a"), 0xaf63_dc4c_8601_ec8c);
+        assert_eq!(fingerprint("foobar"), 0x8594_4171_f739_67e8);
+    }
 }

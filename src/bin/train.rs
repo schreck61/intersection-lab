@@ -12,12 +12,22 @@
 //!   tuning is the decaying expert.
 //!
 //! usage: train [layout|all] [episodes] [episode-seconds] [dqn|hybrid|both]
+//!        train test [layout|all] [episode-seconds] [dqn|hybrid|both]
 //!
 //! Environment: `RESUME=1` fine-tunes the saved weights, `SEED=n` changes the random
 //! seed, and `HIDDEN=128,128` overrides the hidden layer sizes of a new network.
 //!
 //! Weights are written to `weights/` in the working directory and nowhere else. If that
 //! folder can't be made, or a file in it can't be written, `train` stops with the error.
+//!
+//! `train test` trains nothing and writes nothing: it scores the weights the app would
+//! load (`control::weights`) on the test set, as a training run does at its end. The
+//! test report gives each strategy's means, the weights file the agent loaded with its
+//! fingerprint, and each strategy's person delay against the predictive controller's on
+//! the same scenarios: the mean difference and the half-width of its 95% interval.
+
+#[path = "shared/record.rs"]
+mod record;
 
 use intersection_lab::control::hybrid::{self, Hybrid};
 use intersection_lab::control::rl::{self, RlController};
@@ -157,6 +167,13 @@ impl Agent {
             }
         }
     }
+    /// The weights file this agent loaded, with its fingerprint (see `record`).
+    fn weights(&mut self) -> Option<String> {
+        match self {
+            Agent::Dqn(a) => record::weights(a.as_mut()),
+            Agent::Hybrid(a) => record::weights(a.as_mut()),
+        }
+    }
     fn loss(&self) -> f32 {
         let l = match self {
             Agent::Dqn(a) => a.agent.losses.back(),
@@ -183,41 +200,67 @@ impl Agent {
     }
 }
 
-/// Mean person delay and pedestrian wait over a scenario set (greedy policy).
-fn evaluate(net: &Network, agent: Agent, set: &[Scenario], secs: f64) -> ((f64, f64), Agent) {
+/// Person delay and pedestrian wait in each scenario of a set (greedy policy).
+fn evaluate_each(net: &Network, agent: Agent, set: &[Scenario], secs: f64) -> (Vec<(f64, f64)>, Agent) {
     let mut agent = agent;
     let saved = agent.schedule();
     agent.set(false, 0.0, 0.0);
     let had_model =
         if let Agent::Hybrid(h) = &mut agent { std::mem::replace(&mut h.has_model, true) } else { false };
-    let (mut pd, mut pw) = (0.0, 0.0);
+    let mut each = vec![];
     for sc in set {
         agent.new_episode(net);
         let (r, back) = agent.run(net, sc, secs);
-        pd += r.0;
-        pw += r.1;
+        each.push(r);
         agent = back;
     }
     agent.set(saved.0, saved.1, saved.2);
     if let Agent::Hybrid(h) = &mut agent {
         h.has_model = had_model;
     }
-    let n = set.len() as f64;
-    ((pd / n, pw / n), agent)
+    (each, agent)
+}
+
+/// Mean person delay and pedestrian wait over a scenario set (greedy policy).
+fn evaluate(net: &Network, agent: Agent, set: &[Scenario], secs: f64) -> ((f64, f64), Agent) {
+    let (each, agent) = evaluate_each(net, agent, set, secs);
+    (mean(&each), agent)
+}
+
+/// The means of per-scenario results.
+fn mean(each: &[(f64, f64)]) -> (f64, f64) {
+    let (mut pd, mut pw) = (0.0, 0.0);
+    for r in each {
+        pd += r.0;
+        pw += r.1;
+    }
+    let n = each.len() as f64;
+    (pd / n, pw / n)
+}
+
+/// Person delay and pedestrian wait in each scenario of a set under a controller that
+/// doesn't learn.
+fn baseline_each(net: &Network, kind: CtrlKind, set: &[Scenario], secs: f64) -> Vec<(f64, f64)> {
+    set.iter()
+        .map(|sc| {
+            let mut sim =
+                Sim::with_demand(net.clone(), ControlMode::Signal, kind, sc.demand.clone(), sc.seed);
+            sim.sensors = sc.sensors.clone();
+            sim.run_for(secs);
+            let s = sim.stats.summary(120.0, sim.t, &sim.vehicles, &sim.queues);
+            (s.person_delay_all, s.ped_avg_wait)
+        })
+        .collect()
 }
 
 fn baseline(net: &Network, kind: CtrlKind, set: &[Scenario], secs: f64) -> (f64, f64) {
-    let (mut pd, mut pw) = (0.0, 0.0);
-    for sc in set {
-        let mut sim = Sim::with_demand(net.clone(), ControlMode::Signal, kind, sc.demand.clone(), sc.seed);
-        sim.sensors = sc.sensors.clone();
-        sim.run_for(secs);
-        let s = sim.stats.summary(120.0, sim.t, &sim.vehicles, &sim.queues);
-        pd += s.person_delay_all;
-        pw += s.ped_avg_wait;
-    }
-    let n = set.len() as f64;
-    (pd / n, pw / n)
+    mean(&baseline_each(net, kind, set, secs))
+}
+
+/// Person delay in `a` against `b`, scenario by scenario (see `record::paired`).
+fn against(a: &[(f64, f64)], b: &[(f64, f64)]) -> String {
+    let diffs: Vec<f64> = a.iter().zip(b).map(|(a, b)| a.0 - b.0).collect();
+    record::paired(&diffs)
 }
 
 /// A hybrid pinned to one tuning, with no network.
@@ -375,7 +418,9 @@ fn train(kind: LayoutKind, episodes: u64, secs: f64, which: &str) {
     report_test(kind, &net, hybrid, base.1, saved_any, secs);
 }
 
-/// Score the saved weights, and the baselines, on the held-out test set.
+/// Score the saved weights, and the baselines, on the held-out test set: the means, the
+/// weights file the agent loaded, and person delay against the predictive controller's
+/// on the same scenarios.
 fn report_test(
     kind: LayoutKind,
     net: &Network,
@@ -385,35 +430,69 @@ fn report_test(
     secs: f64,
 ) {
     let test = test_set(net);
+    let tag = format!("[{}:{}]", kind.key(), if hybrid { "hybrid" } else { "dqn" });
     let fmt = |r: (f64, f64)| format!("{:.1} / {:.1}", r.0, r.1);
+    let fixed = baseline_each(net, CtrlKind::Fixed, &test, secs);
+    let mp = baseline_each(net, CtrlKind::MaxPressure, &test, secs);
+    let pred = baseline_each(net, CtrlKind::Predictive, &test, secs);
     let mut line = format!(
-        "[{}:{}] TEST person delay / pedestrian wait (s): fixed {}  max-pressure {}  predictive {}",
-        kind.key(),
-        if hybrid { "hybrid" } else { "dqn" },
-        fmt(baseline(net, CtrlKind::Fixed, &test, secs)),
-        fmt(baseline(net, CtrlKind::MaxPressure, &test, secs)),
-        fmt(baseline(net, CtrlKind::Predictive, &test, secs))
+        "{tag} TEST person delay / pedestrian wait (s): fixed {}  max-pressure {}  predictive {}",
+        fmt(mean(&fixed)),
+        fmt(mean(&mp)),
+        fmt(mean(&pred))
     );
+    let mut vs = format!(
+        "{tag} TEST person delay against predictive, mean difference with 95% interval over {} scenarios (s): fixed {}  max-pressure {}",
+        test.len(),
+        against(&fixed, &pred),
+        against(&mp, &pred)
+    );
+    let fixed_tuning =
+        if hybrid { evaluate_each(net, static_hybrid(net, base_action), &test, secs).0 } else { Vec::new() };
     if hybrid {
-        line += &format!("  static {}", fmt(evaluate(net, static_hybrid(net, base_action), &test, secs).0));
+        line += &format!("  static {}", fmt(mean(&fixed_tuning)));
+        vs += &format!("  static {}", against(&fixed_tuning, &pred));
     }
-    let agent = match (hybrid, saved_any) {
+    let (agent, weights) = match (hybrid, saved_any) {
         (_, false) => {
             println!("{line}  agent: no checkpoint met the pedestrian limit, weights not written");
+            println!("{vs}");
             return;
         }
         (true, true) => {
-            let h = Hybrid::load_or_new(net);
-            if h.has_model {
-                Agent::Hybrid(Box::new(h))
-            } else {
-                line += "  (no network kept)";
-                static_hybrid(net, h.base_action)
+            let mut h = Agent::Hybrid(Box::new(Hybrid::load_or_new(net)));
+            let weights = h.weights();
+            match h {
+                Agent::Hybrid(h) if !h.has_model => {
+                    line += "  (no network kept)";
+                    (static_hybrid(net, h.base_action), weights)
+                }
+                h => (h, weights),
             }
         }
-        (false, true) => Agent::Dqn(Box::new(RlController::load_or_new(net))),
+        (false, true) => {
+            let mut a = Agent::Dqn(Box::new(RlController::load_or_new(net)));
+            let weights = a.weights();
+            (a, weights)
+        }
     };
-    println!("{line}  agent {}", fmt(evaluate(net, agent, &test, secs).0));
+    let (runs, _) = evaluate_each(net, agent, &test, secs);
+    println!("{line}  agent {}", fmt(mean(&runs)));
+    if let Some(w) = weights {
+        println!("{tag} weights: {w}");
+    }
+    println!("{vs}  agent {}", against(&runs, &pred));
+    if hybrid {
+        println!("{tag} TEST agent against the static tuning (s): {}", against(&runs, &fixed_tuning));
+    }
+}
+
+/// `train test`: score the weights the app would load, and write nothing.
+fn test_only(kind: LayoutKind, secs: f64, which: &str) {
+    let net = Network::build(kind);
+    let hybrid = which == "hybrid";
+    let base_action = if hybrid { Hybrid::load_or_new(&net).base_action } else { hybrid::DEFAULT_ACTION };
+    report_test(kind, &net, hybrid, base_action, true, secs);
 }
 
 /// Where `train` writes: `weights/` in the working directory. It doesn't use the app's
@@ -442,8 +521,11 @@ fn seed() -> u64 {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let which = args.get(1).map(|s| s.as_str()).unwrap_or("all");
-    let episodes: u64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(200);
+    // `train test` puts its layout where training has the episodes, and the rest of the
+    // arguments stay in their places.
+    let test = args.get(1).is_some_and(|a| a == "test");
+    let which = args.get(if test { 2 } else { 1 }).map(|s| s.as_str()).unwrap_or("all");
+    let episodes: u64 = if test { 0 } else { args.get(2).and_then(|s| s.parse().ok()).unwrap_or(200) };
     let secs: f64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(900.0);
     let what = args.get(4).cloned().unwrap_or_else(|| "both".into());
     let agents: Vec<&'static str> = match what.as_str() {
@@ -459,6 +541,17 @@ fn main() {
     if kinds.is_empty() {
         eprintln!("train: no signalized layout is named {which}");
         std::process::exit(1);
+    }
+    println!("{}", record::source());
+    if test {
+        let hs: Vec<_> = kinds
+            .into_iter()
+            .flat_map(|k| agents.iter().map(move |&a| std::thread::spawn(move || test_only(k, secs, a))))
+            .collect();
+        for h in hs {
+            h.join().unwrap();
+        }
+        return;
     }
     // Before any training, so a run doesn't work for minutes only to find the folder can't be made.
     if let Err(e) = std::fs::create_dir_all(weights_dir()) {

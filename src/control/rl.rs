@@ -34,6 +34,8 @@ pub struct RlController {
     pub expert: Option<Box<dyn Controller>>,
     pub episodes: u64,
     pub loaded_from: Option<String>,
+    /// The fingerprint of the weights file it loaded (`weights::fingerprint`).
+    pub loaded_fingerprint: Option<u64>,
     pub decisions: u64,
     pub reward_sum: f64,
     pub train_every: u32,
@@ -86,6 +88,7 @@ impl RlController {
             expert: None,
             episodes: 0,
             loaded_from: None,
+            loaded_fingerprint: None,
             decisions: 0,
             reward_sum: 0.0,
             train_every: 1,
@@ -105,10 +108,12 @@ impl RlController {
     }
 
     pub fn load_or_new(net: &Network) -> Self {
-        if let Some((mut c, source)) =
-            super::weights::load(&weights_file(net.kind.key()), |txt| Self::from_saved(net, txt))
-        {
+        let file = weights_file(net.kind.key());
+        if let Some(((mut c, fingerprint), source)) = super::weights::load(&file, |txt| {
+            Self::from_saved(net, txt).map(|c| (c, super::weights::fingerprint(txt)))
+        }) {
             c.loaded_from = Some(source);
+            c.loaded_fingerprint = Some(fingerprint);
             return c;
         }
         let mut c = Self::new(net, 7);
