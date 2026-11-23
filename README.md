@@ -56,8 +56,10 @@ remove it.
 cargo run --release                               # the interactive app
 cargo run --release --bin bench                   # headless controller comparison (all layouts)
 cargo run --release --bin bench sensors all       # sensor study: packages, weather, failed loops
+cargo run --release --bin bench all 20 30 --csv runs.csv  # 30 seeds; every run also saved to runs.csv
 cargo run --release --bin train all 800 900 dqn   # train the Deep-RL agents (writes weights/)
 cargo run --release --bin train all 800 900 hybrid  # train the hybrid agents (writes weights/)
+cargo run --release --bin train test all 900 both  # score the weights the app loads (writes nothing)
 cargo run --release --example corridor            # corridor study (green wave, adaptive, upstream link)
 cargo run --release --example lpi                 # pedestrian safety treatments
 cargo run --release --example fya                 # left-turn phasing modes
