@@ -4,7 +4,9 @@
 //! Benchmark runs behind *Compare controllers* and *Sensor study*: every automatic
 //! strategy on the same arrival streams, averaged over a few seeds. The desktop app
 //! runs the strategies in parallel on threads; a browser page has a single thread, so
-//! there they run one after another, a slice of each frame at a time.
+//! there they run one after another, a slice of each frame at a time ([`Sliced`]). The
+//! sliced runner is built for native tests too, which check that it gives the threaded
+//! runner's results.
 
 use crate::control::CtrlKind;
 use crate::sim::coop::{GapPolicy, Scheduling};
@@ -14,10 +16,16 @@ use crate::sim::sensors::SensorConfig;
 use crate::sim::stats::Summary;
 use crate::sim::{ControlMode, Sim};
 
-/// Arrival streams (seeds) per strategy, and the length of each run.
-const SEEDS: u64 = 3;
-const WARMUP: f64 = 300.0;
-const DURATION: f64 = 1200.0;
+/// How many arrival streams (seeds) each strategy runs on, and how long each run is.
+#[derive(Clone, Copy, Debug)]
+pub struct Plan {
+    pub seeds: u64,
+    pub warmup: f64,
+    pub duration: f64,
+}
+
+/// The plan the app runs.
+pub const PLAN: Plan = Plan { seeds: 3, warmup: 300.0, duration: 1200.0 };
 
 /// One strategy to benchmark.
 pub struct Job {
@@ -43,6 +51,16 @@ impl Job {
         }
         sim
     }
+
+    /// This strategy's row, run straight through: what each of the desktop app's
+    /// threads computes.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn row(self, kind: LayoutKind, demand: &DemandConfig, plan: Plan) -> BenchRow {
+        let runs = (0..plan.seeds)
+            .map(|seed| crate::run_scenario(self.sim(kind, demand, seed), plan.warmup, plan.duration).0)
+            .collect();
+        BenchRow { label: self.label, summary: average(runs) }
+    }
 }
 
 pub struct BenchRow {
@@ -57,7 +75,7 @@ pub struct Bench {
     #[cfg(not(target_arch = "wasm32"))]
     rx: std::sync::mpsc::Receiver<(usize, BenchRow)>,
     #[cfg(target_arch = "wasm32")]
-    queue: web::Queue,
+    queue: Sliced,
 }
 
 /// The mean of each run's summary (maximum delay: the worst run).
@@ -94,10 +112,7 @@ impl Bench {
             let tx = tx.clone();
             let demand = demand.clone();
             std::thread::spawn(move || {
-                let runs = (0..SEEDS)
-                    .map(|seed| crate::run_scenario(job.sim(kind, &demand, seed), WARMUP, DURATION).0)
-                    .collect();
-                tx.send((i, BenchRow { label: job.label, summary: average(runs) })).ok();
+                tx.send((i, job.row(kind, &demand, PLAN))).ok();
             });
         }
         Bench { title, total, rows: (0..total).map(|_| None).collect(), rx }
@@ -112,62 +127,71 @@ impl Bench {
 }
 
 #[cfg(target_arch = "wasm32")]
-mod web {
-    use super::*;
-
-    pub struct Queue {
-        pub kind: LayoutKind,
-        pub demand: DemandConfig,
-        pub jobs: std::collections::VecDeque<(usize, Job)>,
-        pub current: Option<Run>,
-    }
-
-    /// One seed of one strategy, part way through.
-    pub struct Run {
-        pub index: usize,
-        pub job: Job,
-        pub seed: u64,
-        pub sim: Sim,
-        pub steps_left: usize,
-        /// Summaries of the strategy's earlier seeds.
-        pub done: Vec<Summary>,
-    }
-
-    impl Run {
-        pub fn new(q: &Queue, index: usize, job: Job, seed: u64, done: Vec<Summary>) -> Self {
-            let sim = job.sim(q.kind, &q.demand, seed);
-            // The same number of steps as `Sim::run_for`, so results match the desktop app.
-            let steps_left = ((WARMUP + DURATION) / sim.dt).round() as usize;
-            Run { index, job, seed, sim, steps_left, done }
-        }
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
 impl Bench {
     /// Milliseconds of each frame given to the benchmark.
     const SLICE_MS: u128 = 12;
 
     pub fn start(title: String, kind: LayoutKind, demand: &DemandConfig, jobs: Vec<Job>) -> Self {
         let total = jobs.len();
-        let queue = web::Queue {
-            kind,
-            demand: demand.clone(),
-            jobs: jobs.into_iter().enumerate().collect(),
-            current: None,
-        };
+        let queue = Sliced::new(kind, demand, jobs, PLAN);
         Bench { title, total, rows: (0..total).map(|_| None).collect(), queue }
     }
 
     /// Advance the benchmark for a slice of this frame.
     pub fn poll(&mut self, ctx: &egui::Context) {
         let t0 = web_time::Instant::now();
-        while t0.elapsed().as_millis() < Self::SLICE_MS {
-            if self.queue.current.is_none() {
-                let Some((index, job)) = self.queue.jobs.pop_front() else { return };
-                self.queue.current = Some(web::Run::new(&self.queue, index, job, 0, Vec::new()));
+        if !self.queue.advance(&mut self.rows, || t0.elapsed().as_millis() < Self::SLICE_MS) {
+            ctx.request_repaint();
+        }
+    }
+}
+
+/// The strategies run one after another, a few steps at a time, as a browser page runs
+/// them between frames.
+#[cfg(any(target_arch = "wasm32", test))]
+pub struct Sliced {
+    kind: LayoutKind,
+    demand: DemandConfig,
+    plan: Plan,
+    jobs: std::collections::VecDeque<(usize, Job)>,
+    current: Option<Run>,
+}
+
+/// One seed of one strategy, part way through.
+#[cfg(any(target_arch = "wasm32", test))]
+struct Run {
+    index: usize,
+    job: Job,
+    seed: u64,
+    sim: Sim,
+    steps_left: usize,
+    /// Summaries of the strategy's earlier seeds.
+    done: Vec<Summary>,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+impl Sliced {
+    pub fn new(kind: LayoutKind, demand: &DemandConfig, jobs: Vec<Job>, plan: Plan) -> Self {
+        let jobs = jobs.into_iter().enumerate().collect();
+        Sliced { kind, demand: demand.clone(), plan, jobs, current: None }
+    }
+
+    fn run(&self, index: usize, job: Job, seed: u64, done: Vec<Summary>) -> Run {
+        let sim = job.sim(self.kind, &self.demand, seed);
+        // The same number of steps as `Sim::run_for`, so results match the desktop app.
+        let steps_left = ((self.plan.warmup + self.plan.duration) / sim.dt).round() as usize;
+        Run { index, job, seed, sim, steps_left, done }
+    }
+
+    /// Step the strategies 50 steps at a time for as long as `more` says to, putting each
+    /// one that finishes in its place in `rows`. True once every strategy has finished.
+    pub fn advance(&mut self, rows: &mut [Option<BenchRow>], mut more: impl FnMut() -> bool) -> bool {
+        while more() {
+            if self.current.is_none() {
+                let Some((index, job)) = self.jobs.pop_front() else { return true };
+                self.current = Some(self.run(index, job, 0, Vec::new()));
             }
-            let run = self.queue.current.as_mut().expect("a run in progress");
+            let run = self.current.as_mut().expect("a run in progress");
             let n = run.steps_left.min(50);
             for _ in 0..n {
                 run.sim.step();
@@ -176,15 +200,77 @@ impl Bench {
             if run.steps_left > 0 {
                 continue;
             }
-            let run = self.queue.current.take().expect("a run in progress");
+            let run = self.current.take().expect("a run in progress");
             let mut done = run.done;
-            done.push(run.sim.stats.summary(WARMUP, run.sim.t, &run.sim.vehicles, &run.sim.queues));
-            if run.seed + 1 < SEEDS {
-                self.queue.current = Some(web::Run::new(&self.queue, run.index, run.job, run.seed + 1, done));
+            done.push(run.sim.stats.summary(self.plan.warmup, run.sim.t, &run.sim.vehicles, &run.sim.queues));
+            if run.seed + 1 < self.plan.seeds {
+                self.current = Some(self.run(run.index, run.job, run.seed + 1, done));
             } else {
-                self.rows[run.index] = Some(BenchRow { label: run.job.label, summary: average(done) });
+                rows[run.index] = Some(BenchRow { label: run.job.label, summary: average(done) });
             }
         }
-        ctx.request_repaint();
+        self.current.is_none() && self.jobs.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sim::network::Network;
+
+    /// A browser page runs a benchmark a slice of each frame at a time, the desktop app on
+    /// threads. However the slices fall, every row comes out the same to the last bit,
+    /// in its own place.
+    #[test]
+    fn slices_give_the_threaded_results() {
+        let plan = Plan { seeds: 2, warmup: 30.0, duration: 90.0 };
+        let kind = LayoutKind::Tee;
+        let demand = DemandConfig::default_for(&Network::build(kind));
+        let jobs = || {
+            [
+                (ControlMode::Signal, CtrlKind::Actuated),
+                (ControlMode::Signal, CtrlKind::Hybrid),
+                (ControlMode::AllWayStop, CtrlKind::Fixed),
+            ]
+            .map(|(mode, ctrl)| Job {
+                label: format!("{} {}", mode.name(), ctrl.short()),
+                mode,
+                ctrl,
+                sensors: SensorConfig::default(),
+                coop: None,
+            })
+        };
+        let threaded: Vec<String> = jobs()
+            .into_iter()
+            .map(|j| {
+                let r = j.row(kind, &demand, plan);
+                format!("{} {:?}", r.label, r.summary)
+            })
+            .collect();
+        let mut sliced = Sliced::new(kind, &demand, jobs().into(), plan);
+        let mut rows: Vec<Option<BenchRow>> = (0..3).map(|_| None).collect();
+        // Slices of 1 to 7 rounds of 50 steps, as uneven as frames.
+        let mut frames = 0;
+        loop {
+            let mut left = 1 + frames % 7;
+            let finished = sliced.advance(&mut rows, || {
+                left -= 1;
+                left + 1 > 0
+            });
+            frames += 1;
+            if finished {
+                break;
+            }
+            assert!(frames < 10_000, "the benchmark never finished");
+        }
+        let sliced: Vec<String> = rows
+            .into_iter()
+            .map(|r| {
+                let r = r.expect("every row filled");
+                format!("{} {:?}", r.label, r.summary)
+            })
+            .collect();
+        assert_eq!(sliced, threaded);
+        assert!(frames > 10, "the runs were spread over many frames");
     }
 }
