@@ -36,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use signal::{PedSig, Phase, Sig, SignalState};
 use stats::{Done, Stats};
 use std::collections::{HashMap, VecDeque};
+use std::sync::LazyLock;
 use vtypes::{VKind, VSpec, fuel_ml};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -293,6 +294,11 @@ const STEP_AROUND: f64 = 0.8;
 /// How close (m) a vehicle lets someone crossing come before it stops for them.
 const PED_CLEAR: f64 = 1.0;
 const HORIZON: f64 = 140.0;
+/// Whether `TS_DEBUG` is set, which makes release builds log the conflicts two vehicles
+/// have committed to at once, as debug builds always do. It is read only once: each read
+/// of the environment takes a lock the whole process shares, and reading it for every
+/// vehicle on every step would make simulations running on many threads queue on it.
+static TS_DEBUG: LazyLock<bool> = LazyLock::new(|| std::env::var_os("TS_DEBUG").is_some());
 
 pub struct Sim {
     pub net: Network,
@@ -1662,7 +1668,7 @@ impl Sim {
             if ydec.is_some() {
                 v.yellow_dec = ydec;
             }
-            if cfg!(debug_assertions) || std::env::var_os("TS_DEBUG").is_some() {
+            if cfg!(debug_assertions) || *TS_DEBUG {
                 for c in fresh {
                     for w in &self.vehicles {
                         if w.id != vid
