@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Regression tests: every layout, control mode and automatic controller must run
-//! collision-free and serve (nearly) all demand at default volumes, and a person
-//! choosing stages at random must never cut an interval short.
+//! collision-free and serve (nearly) all demand at default volumes, no moving vehicle
+//! may come within half a meter of anyone on a crosswalk, a person choosing stages at
+//! random must never cut an interval short, and emergency preemption may cut a green
+//! short but never a clearance interval or a pedestrian's crossing.
 
 use intersection_lab::control::CtrlKind;
 use intersection_lab::sim::network::LayoutKind;
@@ -239,5 +241,212 @@ fn a_person_choosing_at_random_never_cuts_an_interval_short() {
         }
         failures.extend(problems.into_iter().map(|p| format!("{}: {p}", kind.key())));
     }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Whether vehicle `v`'s body comes within `r` of point `p`.
+fn touches(
+    sim: &Sim,
+    v: &intersection_lab::sim::Vehicle,
+    p: intersection_lab::sim::geom::V2,
+    r: f64,
+) -> bool {
+    sim.body(v).iter().any(|&(c, axis, half_len, half_width)| {
+        let d = p - c;
+        d.dot(axis).abs() < half_len + r && d.cross(axis).abs() < half_width + r
+    })
+}
+
+/// Each moving vehicle within half a meter of someone on a crosswalk (off the curb, so
+/// in the road) right now. Pedestrians step around a stopped vehicle.
+fn close_calls(sim: &Sim) -> Vec<String> {
+    use intersection_lab::sim::PedState;
+    let mut out = vec![];
+    for p in sim.peds.iter().filter(|p| p.state == PedState::Crossing) {
+        if !(0.0..=sim.net.crosswalks[p.cw].length).contains(&p.u) {
+            continue;
+        }
+        let at = sim.ped_pos(p);
+        if let Some(v) = sim.vehicles.iter().find(|v| v.v > 0.0 && touches(sim, v, at, 0.5)) {
+            out.push(format!(
+                "a {} came within 0.5 m of pedestrian {} at {:.1} s",
+                v.kind.name(),
+                p.id,
+                sim.t
+            ));
+        }
+    }
+    out
+}
+
+/// At every layout and control mode with crosswalks, and with pedestrians arriving far
+/// more often than by default, no moving vehicle comes within half a meter of anyone on
+/// a crosswalk. Among the ways that can go wrong: a turning vehicle already on the
+/// crosswalk driving on into someone in front of it, a vehicle stopping on a crosswalk
+/// to yield to traffic just past it, someone stepping out beside the back of a long
+/// vehicle whose front has left the intersection, and a vehicle that could still brake
+/// hard driving past someone instead.
+#[test]
+fn no_vehicle_drives_into_anyone_crossing() {
+    let mut handles = vec![];
+    for kind in LayoutKind::ALL {
+        for mode in ControlMode::options(kind) {
+            for seed in [2, 5, 6, 41] {
+                handles.push(common::spawn(move || {
+                    let mut sim = Sim::new(kind, mode, CtrlKind::Fixed, seed);
+                    sim.demand.ped_rate = 240.0;
+                    let mut calls = vec![];
+                    while sim.t < 1200.0 {
+                        sim.step();
+                        calls.extend(close_calls(&sim));
+                    }
+                    let name = format!("{} / {} / seed {seed}", kind.key(), mode.name());
+                    (name, sim.net.crosswalks.len(), sim.stats.ped_waits.len(), calls)
+                }));
+            }
+        }
+    }
+    let mut failures = vec![];
+    for h in handles {
+        let (name, crosswalks, crossings, calls) = h.join().unwrap();
+        // Enough people crossed for the test to mean something.
+        if crosswalks > 0 && crossings < 40 {
+            failures.push(format!("{name}: only {crossings} people crossed"));
+        }
+        failures.extend(calls.into_iter().map(|c| format!("{name}: {c}")));
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Emergency preemption is the one request that doesn't wait for `can_switch`. Again and
+/// again on every signalized layout, an emergency vehicle is sent toward a red while
+/// pedestrians cross on a WALK. Preemption may end the green it finds after 2 s, before
+/// its minimum, and end a WALK or flashing DON'T WALK with it: those turn to steady
+/// DON'T WALK at once. The yellow and all-red still run in full, the pedestrians already
+/// crossing finish, no moving vehicle comes within half a meter of one, and the emergency
+/// vehicle gets through.
+#[test]
+fn preemption_cuts_a_green_short_but_never_a_clearance_or_a_crossing() {
+    use intersection_lab::sim::PedState;
+    use intersection_lab::sim::network::Turn;
+    use intersection_lab::sim::signal::{PedSig, Phase};
+    use intersection_lab::sim::vtypes::VKind;
+
+    let handles: Vec<_> = (LayoutKind::ALL.into_iter().filter(|k| k.signalized()))
+        .flat_map(|kind| [23, 24].map(|seed| (kind, seed)))
+        .map(|(kind, seed)| {
+            common::spawn(move || {
+                let mut sim = Sim::new(kind, ControlMode::Signal, CtrlKind::Fixed, seed);
+                sim.check_safety = true;
+                sim.demand.ped_rate = 240.0;
+                let (n_cw, dt) = (sim.net.crosswalks.len(), sim.dt);
+                let mut problems = vec![];
+                let (mut sent, mut next) = (0, 60.0);
+                // Each crosswalk's state, and when it began.
+                let mut prev: Vec<PedSig> = sim.signal.cw.iter().map(|c| c.state).collect();
+                let mut since = vec![0.0; n_cw];
+                // Pedestrians who were crossing when their WALK or flashing DON'T WALK was
+                // cut short, each with when.
+                let mut cut_off: Vec<(u64, f64)> = vec![];
+                while sim.t < 1800.0 {
+                    let walking = (0..n_cw).any(|c| {
+                        sim.signal.cw[c].state == PedSig::Walk
+                            && sim.peds.iter().any(|p| p.cw == c && p.state == PedState::Crossing)
+                    });
+                    // The last 5 minutes leave everyone time to get through.
+                    if sim.t >= next && sim.t < 1500.0 && walking && !sim.preempt_active {
+                        let red = (0..sim.net.legs.len()).find(|&leg| {
+                            sim.net
+                                .movement_for(leg, Turn::T)
+                                .is_some_and(|m| !sim.signal.status(&sim.net, m).is_green())
+                        });
+                        if let Some(leg) = red {
+                            assert!(sim.spawn_manual(leg, VKind::Emergency, Turn::T));
+                            (sent, next) = (sent + 1, sim.t + 90.0);
+                        }
+                    }
+                    let crossing: Vec<(u64, usize)> = sim
+                        .peds
+                        .iter()
+                        .filter(|p| p.state == PedState::Crossing)
+                        .map(|p| (p.id, p.cw))
+                        .collect();
+                    sim.step();
+                    for c in 0..n_cw {
+                        let now = sim.signal.cw[c].state;
+                        if now == prev[c] {
+                            continue;
+                        }
+                        let need = match prev[c] {
+                            PedSig::Walk => sim.signal.walk_time,
+                            PedSig::Fdw => sim.net.crosswalks[c].length / sim.signal.ped_speed,
+                            PedSig::Dw => 0.0,
+                        };
+                        if now == PedSig::Dw && sim.t - since[c] < need - dt - 1e-6 {
+                            if !sim.preempt_active {
+                                problems.push(format!(
+                                    "crosswalk {c}: {:?} cut short without preemption",
+                                    prev[c]
+                                ));
+                            }
+                            cut_off.extend(crossing.iter().filter(|p| p.1 == c).map(|p| (p.0, sim.t)));
+                        }
+                        (prev[c], since[c]) = (now, sim.t);
+                    }
+                    problems.extend(close_calls(&sim));
+                }
+                // Everyone cut off finished crossing (the state after crossing is Leaving,
+                // and then the pedestrian is gone).
+                for &(id, t) in &cut_off {
+                    if sim.peds.iter().any(|p| p.id == id && p.state == PedState::Crossing) {
+                        problems
+                            .push(format!("pedestrian {id}, cut off at {t:.1} s, never finished crossing"));
+                    }
+                }
+                // Every interval but the one still running.
+                let spans: Vec<_> = sim.signal.history.iter().collect();
+                let mut short_greens = 0;
+                for h in &spans[..spans.len() - 1] {
+                    let len = h.end - h.start;
+                    let ok = match h.phase {
+                        Phase::Green => {
+                            short_greens += usize::from(len < sim.signal.min_green - dt - 1e-6);
+                            len >= 2.0 - 1e-6
+                        }
+                        Phase::Yellow => (len - sim.net.yellow).abs() <= dt + 1e-6,
+                        Phase::AllRed => (len - sim.net.all_red).abs() <= dt + 1e-6,
+                    };
+                    if !ok {
+                        problems.push(format!(
+                            "{:?} of {} lasted {len:.1} s from {:.1} s",
+                            h.phase, sim.net.stages[h.stage].name, h.start
+                        ));
+                    }
+                }
+                let delays: Vec<f64> =
+                    sim.stats.done.iter().filter(|d| d.kind == VKind::Emergency).map(|d| d.delay).collect();
+                let name = format!("{} seed {seed}", kind.key());
+                (name, sim.collisions, sent, delays, short_greens, cut_off.len(), problems)
+            })
+        })
+        .collect();
+    let mut failures = vec![];
+    let (mut short_greens, mut cut_off) = (0, 0);
+    for h in handles {
+        let (key, collisions, sent, delays, greens, cut, problems) = h.join().unwrap();
+        eprintln!("{key}: {sent} sent, delays {delays:.1?}, {greens} short greens, {cut} cut off");
+        if collisions > 0 {
+            failures.push(format!("{key}: {collisions} overlap ticks"));
+        }
+        if sent < 10 || delays.len() < sent {
+            failures.push(format!("{key}: {} of {sent} emergency vehicles got through", delays.len()));
+        }
+        short_greens += greens;
+        cut_off += cut;
+        failures.extend(problems.into_iter().map(|p| format!("{key}: {p}")));
+    }
+    // The cases this test is about came up: greens ended before their minimum, and
+    // pedestrians still crossing when their interval ended.
+    assert!(short_greens > 0 && cut_off > 0, "{short_greens} short greens, {cut_off} pedestrians cut off");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
