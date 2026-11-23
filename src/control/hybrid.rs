@@ -180,7 +180,7 @@ impl Hybrid {
             base_score: base_score.filter(|s| s.is_finite()),
             model,
         };
-        std::fs::write(path, serde_json::to_string(&sv).unwrap())
+        super::weights::write_atomic(path, &serde_json::to_string(&sv).unwrap())
     }
 
     pub fn new_episode(&mut self, net: &Network) {

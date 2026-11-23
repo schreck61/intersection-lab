@@ -8,7 +8,8 @@
 //! the copies built into the binary, so an installed app works anywhere. A copy that
 //! can't be read or doesn't load is skipped, so a damaged file doesn't hide a good copy
 //! further down the list. Saving goes to `weights/` when that directory exists in the
-//! working directory, otherwise to the per-user data directory.
+//! working directory, otherwise to the per-user data directory, and replaces a file in
+//! one step ([`write_atomic`]), so a save cut short leaves the old file as it was.
 
 use std::path::{Path, PathBuf};
 
@@ -69,6 +70,37 @@ pub fn load_from<T>(
 /// that produced it. It tells copies apart; it isn't a security check.
 pub fn fingerprint(txt: &str) -> u64 {
     txt.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3))
+}
+
+/// Writes `text` to `path` without ever leaving it half-written: the text goes to a
+/// temporary file beside it, which then takes its place in one step. If anything fails,
+/// `path` is as it was before and the temporary file is removed.
+pub fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let tmp = temp_path(path)?;
+    let written = std::fs::File::create(&tmp).and_then(|mut f| {
+        f.write_all(text.as_bytes())?;
+        f.sync_all()
+    });
+    let result = written.and_then(|()| std::fs::rename(&tmp, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
+/// The temporary file [`write_atomic`] writes before it replaces `path`: in the same
+/// directory, so the replacement is a rename, and named for this process, so two
+/// programs saving the same file don't write into one temporary file.
+pub fn temp_path(path: &Path) -> std::io::Result<PathBuf> {
+    let name = path.file_name().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("{} names no file", path.display()))
+    })?;
+    // A browser page has no processes (and saves nothing).
+    let id = if cfg!(target_arch = "wasm32") { 0 } else { std::process::id() };
+    let mut tmp = name.to_os_string();
+    tmp.push(format!(".{id}.tmp"));
+    Ok(path.with_file_name(tmp))
 }
 
 /// Where to save weights file `file` (the directory may still need creating).
