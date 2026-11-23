@@ -3,7 +3,8 @@
 This document describes how Intersection Lab is put together. It covers what each Rust
 source file does, how the code is split into layers, and how those layers work together
 during a simulation step, a corridor run, a cooperative crossing, a benchmark and a
-training run. It describes the code on `main`: version 0.8.1.
+training run. It describes the code on `main`: version 0.8.1 and the merge-order fix
+made since.
 Section 9.4 is an illustrated tour of the app's window, and Appendix A says how the
 screenshots were made.
 
@@ -242,14 +243,14 @@ docs/               this document, insights.md, cooperative-intersections.md (wi
 
 | Directory | Files | Lines |
 |---|---:|---:|
-| `src/sim/` | 12 | 10,185 |
+| `src/sim/` | 12 | 10,214 |
 | `src/control/` | 9 | 2,144 |
 | `src/rl/` | 3 | 361 |
 | `src/gui/` | 5 | 5,493 |
 | `src/bin/` | 3 | 1,127 |
 | `src/lib.rs`, `src/main.rs` | 2 | 97 |
 | `examples/` | 9 | 999 |
-| `tests/` | 11 | 5,000 |
+| `tests/` | 11 | 5,034 |
 | `fuzz/fuzz_targets/` | 1 | 61 |
 
 | Target | Built from | Purpose |
@@ -422,7 +423,7 @@ Three things about this ordering matter:
 
 | File | Lines | What it holds |
 |---|---:|---|
-| `mod.rs` | 2,624 | `Sim`, `Vehicle` and `Ped`: spawning, car following, right of way, lane changes, pedestrians and the safety check |
+| `mod.rs` | 2,653 | `Sim`, `Vehicle` and `Ped`: spawning, car following, right of way, lane changes, pedestrians and the safety check |
 | `coop.rs` | 2,282 | The cooperative crossing's intersection manager |
 | `coop/failures.rs` | 1,607 | What happens when a vehicle of the cooperative crossing fails: the reaction, contacts and recovery |
 | `network.rs` | 1,159 | The layouts: legs, lanes, paths, movements, stages and conflict points, and the lane under a point |
@@ -581,8 +582,13 @@ Then each vehicle runs `decide`, which uses these helpers:
   or has a higher rank, or else if it wins the tie-break. Vehicles that will stop at
   their line are ignored unless they have committed, are inside the zone or can no
   longer stop. Stopped vehicles that are themselves waiting are ignored unless they are
-  inside the zone. If the other vehicle has priority, the two vehicles' times in the
-  zone must be at least 0.8 s apart at a crossing or 1.2 s at a merge, and 2.0 s when a
+  inside the zone. If the other vehicle has priority, this one may still go first or
+  second if their times in the zone will be at least 0.8 s apart at a crossing. At a
+  merge, where the second then just follows the first, the times compared are those at
+  the merge point, at least 1.2 s apart. The paths already run close together before
+  it, so until this vehicle reaches the start of its zone, the two must also pass that
+  start in the same order, 1.2 s apart, or a fast vehicle could overtake a slow one
+  alongside it. The margins at a crossing and at the merge point become 2.0 s when a
   vehicle of rank 1 or lower yields to a higher rank.
 * **Commitment:** once a vehicle that need not yield is within v²/6 + 3 m of a
   conflict zone (its stopping distance at 3 m/s², plus 3 m), it *commits* to it, and
@@ -788,12 +794,14 @@ protected-only, `Sim::update_left_phasing` rewrites the stages (§6.1).
 | `Crosswalk` | The two ends of a crosswalk and its length |
 
 `compute_conflicts` intersects every pair of paths in the box. It skips pairs that are
-adjacent or that leave the same lane and diverge. Merges become conflicts at the merge
-point. Paths that never cross but pass within `CLEAR` (2.7 m) of each other still get a
-conflict, and `zone_along` works out each zone by walking along the paths, so a wide
-truck turning beside another vehicle is protected even where the center lines never
-cross. The cooperative crossing replaces these zones with tighter ones of its own
-(§6.11).
+adjacent or that leave the same lane and diverge. Paths that never cross but pass within
+`CLEAR` (2.7 m) of each other still get a conflict, and `zone_along` works out each zone
+by walking along the paths for as long as they stay that close, so a wide truck turning
+beside another vehicle is protected even where the center lines never cross. Merges
+become conflicts at the merge point, where both links end. The zone before it covers
+the stretch where the paths run close together, up to 12 m on major/minor, and the zone
+after it is 1 m long, since from there the vehicles share a lane and simply follow. The
+cooperative crossing replaces these zones with tighter ones of its own (§6.11).
 
 #### Stages
 
@@ -2260,18 +2268,18 @@ In the shipped Hybrid weights (the validation score from training, then the test
 
 | Layout | Best static tuning | Network |
 |---|---|---|
-| Arterial | fairness 0.004, bias +0.08, max green 60 s | Kept: validation 18.5 → 17.3 s, test 17.8 → 17.5 s |
+| Arterial | fairness 0.004, bias +0.08, max green 60 s | Kept: validation 18.5 → 17.3 s, test 17.9 → 17.5 s |
 | Major/minor | fairness 0, bias +0.08, max green 35 s | Not kept, so the Hybrid runs the static tuning |
-| Town | fairness 0.012, bias −0.05, max green 35 s | Kept: validation 25.4 → 25.2 s, test 25.2 → 24.2 s |
+| Town | fairness 0.012, bias −0.05, max green 35 s | Kept: validation 25.4 → 25.2 s, test 25.1 → 24.3 s |
 | T-intersection | fairness 0, bias +0.08, max green 60 s | Not kept |
 
 The two "not kept" files are 61 bytes long: they hold the static tuning and no network.
-On the test set the Hybrid's person delay is 0.6 to 1.4 s lower than predictive
-control's on the arterial, major/minor and town layouts and 0.1 s higher on the
+On the test set the Hybrid's person delay is 0.5 to 1.3 s lower than predictive
+control's on the arterial, major/minor and town layouts and 0.2 s higher on the
 T-intersection, each difference within its 95% interval over the 24 scenarios. On
 major/minor and the T-intersection it runs the static tuning alone. On the arterial and
-town layouts the network changes the static tuning's person delay by −0.3 ± 0.7 s and
-−1.0 ± 3.1 s, also within noise.
+town layouts the network changes the static tuning's person delay by −0.4 ± 0.7 s and
+−0.8 ± 3.0 s, also within noise.
 
 ### 8.7 `control/weights.rs`: loading and saving
 
@@ -2464,8 +2472,8 @@ Limitations:
   0.3.0's (18.3 s against 17.2 s, measured then).
 * **No refinements beyond Double DQN.** The code has no prioritized replay, multi-step
   returns or dueling heads. Over 30 seeds Deep RL trails predictive control by
-  2.6 ± 0.8 s on the arterial and 3.9 ± 3.3 s on the town layout, is within noise of it
-  on major/minor, and beats it only on the T-intersection, by 1.7 ± 1.0 s.
+  2.7 ± 0.7 s on the arterial and 4.1 ± 3.3 s on the town layout, is within noise of it
+  on major/minor, and beats it only on the T-intersection, by 1.6 ± 1.0 s.
 
 ---
 
@@ -3530,7 +3538,7 @@ Linux, macOS and Windows, and measures how much of the crate they cover (§11).
 
 | File | Tests | What they require |
 |---|---:|---|
-| `tests/safety.rs` | 7 | Every layout, control mode and automatic controller runs without collisions and serves at least 80% of arrivals at default volumes (65% under two-way stop and under all-way stop on the arterial, which are over capacity); different controllers receive identical arrivals; no gridlock in seeds that used to jam; no collision between a turn finishing late in the yellow and the next stage's traffic; a person choosing stages at random moments on every signal layout, often mid-change and mid-interval, gets no collision, no green shorter than the minimum, and every yellow, all-red, WALK and flashing DON'T WALK in full; at every layout and control mode, with pedestrians arriving far more often than by default, no moving vehicle comes within half a meter of anyone on a crosswalk; emergency vehicles sent toward a red while pedestrians cross on a WALK end greens no sooner than 2 s, leave every yellow and all-red whole and get through, and everyone crossing when their interval is cut short finishes, with no moving vehicle within half a meter of them |
+| `tests/safety.rs` | 8 | Every layout, control mode and automatic controller runs without collisions and serves at least 80% of arrivals at default volumes (65% under two-way stop and under all-way stop on the arterial, which are over capacity); different controllers receive identical arrivals; no gridlock in seeds that used to jam; no collision between a turn finishing late in the yellow and the next stage's traffic; on major/minor, with an emergency vehicle sent through every 90 s and pedestrians arriving far more often than by default, no overlap where two paths merge; a person choosing stages at random moments on every signal layout, often mid-change and mid-interval, gets no collision, no green shorter than the minimum, and every yellow, all-red, WALK and flashing DON'T WALK in full; at every layout and control mode, with pedestrians arriving far more often than by default, no moving vehicle comes within half a meter of anyone on a crosswalk; emergency vehicles sent toward a red while pedestrians cross on a WALK end greens no sooner than 2 s, leave every yellow and all-red whole and get through, and everyone crossing when their interval is cut short finishes, with no moving vehicle within half a meter of them |
 | `tests/cooperative.rs` | 14 | The cooperative crossing: no signals, sensors or crosswalks; its geometry and phase order; every gap policy safe under heavy demand, bursts, heavy vehicles and live switching; about 18,000 vehicles per hour served at the design demand, about 19,000 oversaturated and less with single left lanes or first come, first served; reproducible runs; light traffic barely delayed; emergency vehicles first; hand-placed vehicles crossing every way. Every run, except those of the no-signals, single-left-lane and reproducibility tests, must show no overlap between vehicle bodies, no zone entered while occupied, no box entry without a reservation, no step off a granted trajectory, no crossing inside its required gap and no line or zone time off its reservation (both to within a microsecond), and at least one crossing measured |
 | `tests/failures.rs` | 20 | Failures at the cooperative crossing. When a vehicle stops dead at the worst moment, fail-safe gaps stop crossing traffic short of it under both schedules, mitigated gaps let it arrive at no more than 25 km/h and nominal gaps faster; a vehicle that brakes to a stop is survived; in batches a failure at a random place rarely reaches crossing traffic, though a dead stop is struck from behind; the crossing serves what a disabled vehicle leaves clear and recovers once it is cleared away; a failure outside the box only holds up its lane; a failure can be repeated at the same place on another run, and random failures are the same on runs with the same seed; twenty minutes of failures in heavy traffic leave nothing broken, and with fail-safe gaps no vehicles on crossing paths touch through some two hundred dead stops; a vehicle stopped in the box waits for one that passes it, one stopped behind a failure can fail in turn and one that fails at the edge of the map rolls off it; a failure only holds back the vehicles that leave their crossings for an emergency stop: none at rest is set going, none gets ahead of the trajectory it had, and one standing before its line loses its crossing instead; a vehicle that can't stop behind a dead stop is expected where it ends up, as is one that fails close behind it and one already on an emergency stop when the vehicle ahead stops short, and it stops by itself if the wreck is cleared away first; the log keeps the latest fifty failures; other layouts have none. Every run with a failure in it, except those of the test that repeats one, must show no vehicle off its trajectory, in the box without one, or overlapping another outside a recorded contact |
 | `tests/pedestrian_rule.rs` | 4 | Deep RL's shield serves a crosswalk whose pedestrians have waited longer than `PED_MAX_WAIT`, longest wait first, and leaves shorter waits to the controller; the reward counts waiting pedestrians |

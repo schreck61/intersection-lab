@@ -1140,12 +1140,23 @@ impl Sim {
         let ((za0, za1), (zv0, zv1)) = c.zones(my_link);
         let spec = a.spec();
         let vm = self.vmax_on(a, my_link);
-        // Merges compare arrival at the merge point (then the follower just follows);
-        // crossings compare occupancy of the whole conflict zone.
-        let (za0, za1, zv0m, zv1m) = if c.merge { (0.0, 0.0, 0.0, 0.0) } else { (za0, za1, zv0, zv1) };
-        let ta_in = Self::eta(d_a - za0, a.v, spec.accel, vm);
+        // Crossings compare occupancy of the whole conflict zone. Merges compare arrival
+        // at the merge point (then the follower just follows), but the two paths already
+        // run close together before it, over the first part of the zone: the order has to
+        // hold from where they come close as well, or a fast vehicle could overtake a slow
+        // one alongside it. Until our front gets there, we can still wait short of it.
+        let (za0m, za1m, zv0m, zv1m) = if c.merge { (0.0, 0.0, 0.0, 0.0) } else { (za0, za1, zv0, zv1) };
+        let ta_in = Self::eta(d_a - za0m, a.v, spec.accel, vm);
         // Conservative: our own clearing assumes sluggish acceleration...
-        let ta_out = Self::eta(d_a + za1 + spec.length, a.v, spec.accel * 0.7, vm);
+        let ta_out = Self::eta(d_a + za1m + spec.length, a.v, spec.accel * 0.7, vm);
+        // At a merge, when our front reaches the point where the paths come close, and when
+        // our rear passes it.
+        let near = (c.merge && d_a > za0).then(|| {
+            (
+                Self::eta(d_a - za0, a.v, spec.accel, vm),
+                Self::eta(d_a - za0 + spec.length, a.v, spec.accel * 0.7, vm),
+            )
+        });
         self.threats(other, s_other, zv1, i, buf);
         for &(j, d_v) in buf.iter() {
             let w = &self.vehicles[j];
@@ -1173,13 +1184,10 @@ impl Sim {
             // (or, at a crossing, still creeping up to wherever it is yielding: going in
             // behind it would leave us stopped across its path).
             let react = if w.v < 0.1 { (w.reaction - w.go_t).max(0.0) } else { 0.0 };
-            let tv_out = if occupying && (idle || (w.yield_to.is_some() && !c.merge)) {
-                f64::INFINITY
-            } else {
-                react
-                    + Self::eta(d_v + zv1m + wspec.length, w.v, wspec.accel, wm)
-                        .max((d_v + zv1m + wspec.length).max(0.0) / w.v.max(3.0))
-            };
+            let held = occupying && (idle || (w.yield_to.is_some() && !c.merge));
+            // How long it takes to travel `x` meters.
+            let travel = |x: f64| react + Self::eta(x, w.v, wspec.accel, wm).max(x.max(0.0) / w.v.max(3.0));
+            let tv_out = if held { f64::INFINITY } else { travel(d_v + zv1m + wspec.length) };
             let w_priority = if committed || sw.rank > sa.rank {
                 true
             } else if sw.rank < sa.rank {
@@ -1196,11 +1204,32 @@ impl Sim {
             if !w_priority {
                 continue;
             }
-            let mut margin = if c.merge { 1.2 } else { 0.8 };
+            let base = if c.merge { 1.2 } else { 0.8 };
+            let mut margin = base;
             if sa.rank <= 1.0 && sw.rank > sa.rank {
                 margin += if c.merge { 0.8 } else { 1.2 };
             }
-            if ta_in < tv_out + margin && tv_in < ta_out + margin {
+            // We can go second, once its rear has left, or first, gone before its front
+            // arrives.
+            let mut second = ta_in >= tv_out + margin;
+            let mut first = tv_in >= ta_out + margin;
+            if let Some((ta_near, ta_near_out)) = near {
+                // The same order where a merge's paths come close, with the plain margin:
+                // the extra room a lower rank leaves is for the merge point. If its rear is
+                // past that point already, it passed as long ago as its present speed says.
+                let margin = base;
+                let x = d_v - zv0 + wspec.length;
+                let tv_near_out = if x <= 0.0 {
+                    x / w.v.max(0.1)
+                } else if held {
+                    f64::INFINITY
+                } else {
+                    travel(x)
+                };
+                second &= ta_near >= tv_near_out + margin;
+                first &= Self::eta(d_v - zv0, w.v, wspec.accel, wm) >= ta_near_out + margin;
+            }
+            if !second && !first {
                 return Some(j);
             }
         }

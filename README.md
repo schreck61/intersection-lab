@@ -353,14 +353,14 @@ those still queued, so a policy can't look good by starving an approach. Lower i
 | Person delay\* (s) | Arterial | Major/minor | Town | T-intersection |
 |---|---|---|---|---|
 | Fixed-time (Webster) | 30.5 | 37.9 | 28.1 | 21.2 |
-| Actuated (NEMA) | 37.5 | 57.5 | 26.6 | 18.3 |
-| Max-Pressure | 20.5 | 23.2 | 30.8 | 15.8 |
-| Predictive MPC | **16.9** | 25.4 | 24.1 | 14.7 |
-| Deep RL | 20.9 | 26.0 | 31.0 | **12.2** |
-| Hybrid (RL-tuned predictive) | **16.9** | **21.5** | **21.8** | 13.7 |
-| All-way stop | 142.2 | 103.7 | 61.9 | 28.7 |
-| Two-way stop | — | 157.4 | — | 42.2 |
-| Roundabout | 16.2 | | | |
+| Actuated (NEMA) | 37.5 | 57.5 | 26.8 | 18.3 |
+| Max-Pressure | 20.4 | 23.2 | 30.8 | 15.8 |
+| Predictive MPC | **16.9** | 25.4 | 24.1 | 14.8 |
+| Deep RL | 20.7 | 25.3 | 31.2 | **12.5** |
+| Hybrid (RL-tuned predictive) | **16.9** | **21.5** | **22.0** | 13.7 |
+| All-way stop | 142.2 | 107.0 | 61.9 | 28.8 |
+| Two-way stop | — | 157.4 | — | 45.3 |
+| Roundabout | 18.2 | | | |
 
 Zero vehicle overlaps in every run. The roundabout is a single-lane layout of its own,
 with less traffic than the arterial (about 1,540 vehicles an hour against 2,500), and
@@ -372,11 +372,11 @@ interval. Over 30 seeds (`bench all 20 30`):
 
 | Against predictive control (s) | Arterial | Major/minor | Town | T-intersection |
 |---|---|---|---|---|
-| Fixed-time (Webster) | +13.1 ± 1.1 | +14.4 ± 3.3 | +5.1 ± 2.8 | +8.1 ± 1.4 |
-| Actuated (NEMA) | +19.6 ± 1.0 | +29.7 ± 6.4 | +6.9 ± 3.5 | +3.3 ± 1.0 |
-| Max-Pressure | +2.6 ± 0.6 | +0.1 ± 1.5 | +9.2 ± 2.8 | +0.7 ± 0.6 |
-| Deep RL | +2.6 ± 0.8 | +1.2 ± 2.1 | +3.9 ± 3.3 | **−1.7 ± 1.0** |
-| Hybrid (RL-tuned predictive) | +0.7 ± 0.7 | **−2.9 ± 1.5** | +0.3 ± 2.6 | −0.6 ± 0.7 |
+| Fixed-time (Webster) | +13.0 ± 1.1 | +14.1 ± 3.3 | +5.2 ± 2.8 | +8.1 ± 1.4 |
+| Actuated (NEMA) | +19.6 ± 1.0 | +29.5 ± 6.2 | +7.0 ± 3.5 | +3.3 ± 1.0 |
+| Max-Pressure | +2.5 ± 0.7 | −0.3 ± 1.5 | +9.3 ± 2.7 | +0.7 ± 0.7 |
+| Deep RL | +2.7 ± 0.7 | +0.7 ± 2.3 | +4.1 ± 3.3 | **−1.6 ± 1.0** |
+| Hybrid (RL-tuned predictive) | +0.6 ± 0.7 | **−3.2 ± 1.6** | +0.2 ± 2.4 | −0.6 ± 0.7 |
 
 Only two differences favor a strategy over predictive control by more than their
 interval: the Hybrid's on major/minor and Deep RL's on the T-intersection. Elsewhere the
@@ -398,19 +398,19 @@ set, person delay / pedestrian wait (s):
 
 | | Predictive | Best static tuning | Hybrid | Deep RL |
 |---|---|---|---|---|
-| Arterial | 18.1 / 13.6 | 17.8 / 12.8 | **17.5 / 12.3** (network kept) | 19.7 / 18.5 |
-| Major/minor | 22.6 / 11.7 | **21.2 / 10.3** | **21.2 / 10.3** (static tuning) | 22.9 / 15.7 |
-| Town | 25.6 / 9.5 | 25.2 / 9.5 | **24.2 / 8.7** (network kept) | 26.8 / 11.2 |
-| T-intersection | 14.1 / 20.8 | 14.2 / 20.2 | 14.2 / 20.2 (static tuning) | **12.8 / 19.7** |
+| Arterial | 18.1 / 13.6 | 17.9 / 12.8 | **17.5 / 12.3** (network kept) | 19.7 / 18.5 |
+| Major/minor | 22.6 / 11.7 | **21.4 / 10.1** | **21.4 / 10.1** (static tuning) | 23.6 / 15.4 |
+| Town | 25.6 / 9.5 | 25.1 / 9.5 | **24.3 / 8.5** (network kept) | 26.6 / 11.0 |
+| T-intersection | 14.1 / 20.8 | 14.3 / 20.2 | 14.3 / 20.2 (static tuning) | **13.1 / 19.6** |
 
 `train test all 900 both` scores the shipped weights this way. Against predictive control
-on the same 24 scenarios, the Hybrid's person delay is lower by 0.6 ± 0.9 s on the
-arterial, 1.3 ± 1.8 s on major/minor and 1.4 ± 2.7 s on the town layout, and higher by
-0.1 ± 0.8 s on the T-intersection: no difference is larger than its 95% interval. Its
-network, against the static tuning it adjusts, changes person delay by −0.3 ± 0.7 s on
-the arterial and −1.0 ± 3.1 s on the town layout. Deep RL is 1.3 ± 1.0 s lower than
-predictive control on the T-intersection and 1.6 ± 1.1 s higher on the arterial, and
-within noise of it on the other two layouts.
+on the same 24 scenarios, the Hybrid's person delay is lower by 0.5 ± 0.9 s on the
+arterial, 1.2 ± 1.8 s on major/minor and 1.3 ± 2.8 s on the town layout, and higher by
+0.2 ± 0.8 s on the T-intersection: no difference is larger than its 95% interval. Its
+network, against the static tuning it adjusts, changes person delay by −0.4 ± 0.7 s on
+the arterial and −0.8 ± 3.0 s on the town layout. Deep RL is 1.7 ± 1.1 s higher than
+predictive control on the arterial and within noise of it on the other three layouts,
+including the T-intersection (−1.0 ± 1.1 s).
 
 Counting each waiting pedestrian like one vehicle occupant wasn't enough to protect
 pedestrians, who are a small share of the people at an intersection: Deep RL trained that
@@ -444,36 +444,36 @@ Arterial, person delay\* (s):
 
 | | loops | + camera | + radar | + 30% CV | 100% CV only | ideal sensors |
 |---|---|---|---|---|---|---|
-| Max-Pressure | 21.3 | 21.5 | 21.3 | 21.3 | 20.9 | 20.6 |
-| Predictive | 20.4 | 17.6 | 17.3 | 17.5 | 17.3 | 18.0 |
-| Hybrid | 20.9 | 19.0 | 17.5 | 18.0 | 17.5 | 19.0 |
-| Deep RL | 30.3 | 20.8 | 21.9 | 21.6 | 21.6 | 21.4 |
+| Max-Pressure | 22.0 | 21.5 | 21.3 | 21.3 | 20.9 | 20.6 |
+| Predictive | 20.5 | 17.7 | 17.2 | 17.5 | 17.3 | 18.0 |
+| Hybrid | 22.7 | 19.1 | 17.5 | 18.0 | 17.5 | 19.0 |
+| Deep RL | 30.3 | 20.8 | 21.4 | 22.3 | 21.6 | 21.4 |
 
 Weather and failed loops (loops + camera + radar unless noted), predictive control:
 
 | | Clear | Night | Rain | Fog | Snow | loops only, 25% failed |
 |---|---|---|---|---|---|---|
-| Arterial | 17.3 | 18.1 | 17.8 | 18.4 | 17.1 | 22.6 |
-| Major/minor | 26.4 | 27.2 | 24.4 | 28.3 | 27.5 | 31.4 |
-| Town | 26.5 | 30.2 | 26.3 | 22.7 | 27.5 | 46.9 |
+| Arterial | 17.2 | 18.1 | 17.8 | 18.4 | 17.1 | 22.6 |
+| Major/minor | 26.4 | 27.4 | 24.3 | 28.5 | 27.6 | 31.5 |
+| Town | 26.6 | 30.2 | 26.3 | 22.7 | 27.6 | 46.9 |
 
 ### Corridor (`examples/corridor.rs`, 8 seeds)
 
 | 3 × arterial | Person delay\* | Through-trip time | Stops / trip |
 |---|---|---|---|
-| Fixed (isolated Webster) | 30.5 | 198 s | 2.27 |
-| Fixed (coordinated green wave) | 26.6 | 166 s | 1.93 |
-| Actuated | 36.4 | 211 s | 2.10 |
-| Max-Pressure | 19.4 | 144 s | 1.84 |
-| Predictive | 18.4 | **139 s** | **1.50** |
-| Predictive + upstream link | **17.8** | 143 s | 1.68 |
-| Hybrid + upstream link | 18.4 | 143 s | 1.66 |
-| Deep RL + upstream link | 19.8 | 142 s | **1.50** |
+| Fixed (isolated Webster) | 30.6 | 198 s | 2.28 |
+| Fixed (coordinated green wave) | 26.6 | 166 s | 1.92 |
+| Actuated | 36.9 | 210 s | 2.09 |
+| Max-Pressure | 19.6 | 143 s | 1.75 |
+| Predictive | **17.6** | **140 s** | **1.51** |
+| Predictive + upstream link | 18.0 | 143 s | 1.65 |
+| Hybrid + upstream link | 18.6 | 145 s | 1.69 |
+| Deep RL + upstream link | 20.7 | 144 s | 1.59 |
 
-On a 4-signal major/minor corridor the green wave cuts through-trip stops from 3.21 to
-**1.46** (time 250 s → 194 s). Predictive control is best overall (15.3 s); the upstream
-link *hurts* there (16.1 s). On the arterial it changes little: 18.4 → 17.8 s at normal
-demand and 36.2 → 35.7 s at 1.3×.
+On a 4-signal major/minor corridor the green wave cuts through-trip stops from 3.23 to
+**1.41** (time 250 s → 192 s). Predictive control is best overall (15.6 s); the upstream
+link *hurts* there (16.5 s). On the arterial it changes little: 17.6 → 18.0 s at normal
+demand and 36.1 → 35.1 s at 1.3×.
 
 ### Signal-free cooperative crossing (`examples/cooperative.rs`, 3 seeds)
 
@@ -563,8 +563,8 @@ nominal gaps.
 Near-misses = vehicles crossing within ~1.5 s of a walking pedestrian, per hour, over
 12 runs of 30 minutes (6 hours) per row. At 240 pedestrians/h on the arterial, predictive
 control has 2.0 an hour untreated; the no-turn-on-red-with-pedestrians sign cuts that to
-**0.3**, alone or with LPI (4 s), for 3–5 s more person delay. LPI alone helps little
-(1.8): most conflicts come from right turns on red. Fixed-time signals have 0.8 an hour
+0.5 alone and **0.3** with LPI (4 s), for 3–5 s more person delay. LPI alone helps little
+(1.7): most conflicts come from right turns on red. Fixed-time signals have 0.8 an hour
 untreated, about five in six hours, too few for the treatments to show a clear effect,
 and the same is true on the single-lane town layout.
 
@@ -573,9 +573,9 @@ and the same is true on the single-lane town layout.
 Protected + permissive (flashing yellow arrow) gives the least delay at normal volumes on
 the arterial; protected-only costs 21–67% more there. On the major/minor road fixed-time
 and actuated control still prefer permissive lefts, but predictive control does better
-protected-only (24.4 vs 28.7 s). At 1.3× demand on the major/minor road, fixed-time with
-permissive lefts collapses (165 s) as bays fill and spill into the through lane;
-protected-only holds at 99 s and *Auto* (volume cross-product) at 127 s.
+protected-only (24.4 vs 28.5 s). At 1.3× demand on the major/minor road, fixed-time with
+permissive lefts collapses (170 s) as bays fill and spill into the through lane;
+protected-only holds at 99 s and *Auto* (volume cross-product) at 124 s.
 
 ## What the experiments say
 
@@ -587,13 +587,13 @@ A fuller write-up of every finding, with the commands that reproduce it, is in
   multi-lane layouts, and cut pedestrian waits there by 30–53%.
 * **RL helps most tuning a planner rather than replacing it, and then only a little.**
   Over 30 seeds the Hybrid is reliably ahead of predictive control only on major/minor
-  (2.9 ± 1.5 s) and within noise of it on the other layouts. On the held-out test set it
-  is 0.6 to 1.4 s lower on three layouts, each within its 95% interval. What it gains
+  (3.2 ± 1.6 s) and within noise of it on the other layouts. On the held-out test set it
+  is 0.5 to 1.3 s lower on three layouts, each within its 95% interval. What it gains
   comes mostly from a better *static* tuning of the planner, which a one-off search
   finds; the state-dependent network's own effect is within noise. Pure Deep RL cuts
   person delay by about 30% against fixed-time on the multi-lane layouts, but it is
-  ahead of predictive control only on the T-intersection (1.7 ± 1.0 s) and trails it on
-  the arterial (2.6 ± 0.8 s) and the single-lane town layout (3.9 ± 3.3 s).
+  ahead of predictive control only on the T-intersection (1.6 ± 1.0 s) and trails it on
+  the arterial (2.7 ± 0.7 s) and the single-lane town layout (4.1 ± 3.3 s).
 * **Pedestrians need a hard rule, not just a share of the reward.** Counting waiting
   pedestrians in Deep RL's reward left their waits long; a 40 s maximum wait in its
   shield fixed that on every layout, and on the three four-way layouts it lowered
@@ -603,21 +603,21 @@ A fuller write-up of every finding, with the commands that reproduce it, is in
   the hybrid, one and two layers did the same.
 * **Coverage matters more than per-sensor accuracy.** With realistic errors, a camera is
   still the most valuable single upgrade (intent and queues; town 48.8 → 22.5 s for
-  predictive). Weather costs adaptive control at most 2.4 s on the multi-lane layouts,
+  predictive). Weather costs adaptive control at most 2.5 s on the multi-lane layouts,
   because radar backs up the camera; on the single-lane town layout four seeds can't
   separate the conditions. Failed loops matter a lot when loops are the only source.
   Diagnostics plus a volume-based fallback turn a collapse (~200 s) into graceful
   degradation (23–47 s).
 * **Corridors:** a coordinated green wave is worth having for fixed-time signals (stops
-  per trip −15% to −55%). Adaptive control beats it without coordination. Naively sharing
+  per trip −16% to −56%). Adaptive control beats it without coordination. Naively sharing
   the upstream signal's outflow barely changes the arterial and hurts on the major/minor
   road; real gains need coordinated schedules, not just more lookahead.
 * **Pedestrian safety:** with predictive control, a no-turn-on-red-with-pedestrians sign
-  cut near-misses at busy arterial crosswalks from 2.0 to 0.3 an hour, with or without
-  LPI, for 3–5 s more person delay.
+  cut near-misses at busy arterial crosswalks from 2.0 to 0.5 an hour, or 0.3 with LPI,
+  for 3–5 s more person delay.
 * **Right tool for the job:** with realistic reaction times an all-way stop is only
   competitive at low volumes (town at 0.6×: 15.0 s vs 10.5 s actuated), the roundabout
-  usually does well at moderate volumes (a median of 18.4 s over 30 seeds) but not on
+  usually does well at moderate volumes (a median of 17.7 s over 30 seeds) but not on
   every seed, and a two-way stop fails once the major road is busy.
 * **Signal-free crossings still need phases.** With every vehicle automated, an
   intersection manager carries the design demand of 18,000 veh/h at 29 s average delay
@@ -689,11 +689,10 @@ simulation step runs and how to add a controller, layout or sensor.
 * Drivers are well-behaved: no red-light running, distraction or crashes, so safety is
   measured with surrogates (overlaps, near-misses). The failures of the cooperative
   crossing are made on purpose.
-* Where two paths merge, vehicles go in the order they will reach the merge point, though
-  the paths already run close together before it. In about 1,700 stress runs with
-  frequent emergency vehicles, this once let an emergency vehicle on a green touch a
-  truck still clearing the intersection, for 0.4 s. The benchmarks and
-  `examples/sweep.rs` have no overlaps.
+* With an emergency vehicle sent through every 90 s, the single-lane roundabout locks up
+  in about 2% of half-hour runs: entering vehicles stop behind a full ring where their
+  paths already run close to it, and the circulating vehicles wait for them. Default
+  traffic has no emergency vehicles, so the benchmarks don't include this.
 * Training is fast because the simulation runs thousands of times faster than real time
   per core: `RESUME=1 cargo run --release --bin train all 300 900 hybrid` fine-tunes the
   shipped weights.
