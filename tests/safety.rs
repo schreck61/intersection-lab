@@ -153,6 +153,40 @@ fn no_collision_between_late_yellow_and_clearing_turn() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// Where two paths merge they run close together before they join: on major/minor, a
+/// left turn and the through path it joins come within 2.7 m of each other 12 m before
+/// the merge point. Merges used to be ordered by arrival at the merge point alone, so a
+/// fast vehicle going first there could overtake a slow one alongside it, inside that
+/// stretch. Emergency vehicles sent through again and again make that likely: with this
+/// seed, one going through on a green touched a truck still clearing the intersection,
+/// for 0.4 s, until the order had to hold from where the paths come that close as well.
+#[test]
+fn no_overlap_where_two_paths_merge() {
+    use intersection_lab::sim::network::Turn;
+    use intersection_lab::sim::vtypes::VKind;
+
+    let mut sim = Sim::new(LayoutKind::MajorMinor4, ControlMode::Signal, CtrlKind::Fixed, 2);
+    sim.check_safety = true;
+    sim.demand.ped_rate = 240.0;
+    let (mut sent, mut next) = (0, 60.0);
+    while sim.t < 1800.0 {
+        // Every 90 s, an emergency vehicle through from whichever approach the clock picks.
+        if sim.t >= next {
+            let leg = (sim.steps as usize / 7) % sim.net.legs.len();
+            if sim.net.movement_for(leg, Turn::T).is_some()
+                && sim.spawn_manual(leg, VKind::Emergency, Turn::T)
+            {
+                sent += 1;
+            }
+            next = sim.t + 90.0;
+        }
+        sim.step();
+    }
+    let through = sim.stats.done.iter().filter(|d| d.kind == VKind::Emergency).count();
+    assert!(through >= 15 && sent >= 15, "{through} of {sent} emergency vehicles got through");
+    assert_eq!(sim.collisions, 0, "overlaps:\n{}", sim.collision_log.join("\n"));
+}
+
 /// A person at the controls can slow traffic but never make it unsafe. A "person" who
 /// chooses stages at random moments, often during a change or while a minimum green or a
 /// pedestrian interval runs, and sometimes the stage that's already green, still gets no
