@@ -6,9 +6,9 @@ during a simulation step, a corridor run, a cooperative crossing, a benchmark an
 training run. It describes the code on `main`: version 0.8.2, with the stress example,
 a speedup for simulations running on many threads, a fix for left turns that stopped
 across the oncoming lanes, gap acceptance calibrated against the Highway Capacity
-Manual, a faster coverage check and preemption that holds for an emergency vehicle
-stopped in a queue added since, and the Deep RL and Hybrid networks retrained on the
-calibrated model.
+Manual, a faster, stricter coverage check and preemption that holds for an emergency
+vehicle stopped in a queue added since, and the Deep RL and Hybrid networks retrained
+on the calibrated model.
 Section 9.4 is an illustrated tour of the app's window, and Appendix A says how the
 screenshots were made.
 
@@ -2640,11 +2640,13 @@ on the other at the same place, by the next vehicle to get there (§6.11).
 
 This section goes through every part of the window: what it shows, how to read it and
 which code produces it. The screenshots come from the desktop app in its default
-1600 × 1000 window (the smallest it allows is 1100 × 700). Most show version 0.5.1;
-those of parts that changed since, such as the signal timing chart, which now draws
-yellow and all-red, were retaken with the code released as 0.6.0, those of the failures
-at the cooperative crossing come from the code that added them, as do those of manual
-control, and the About window comes from version 0.8.2. They were taken with the
+1600 × 1000 window (the smallest it allows is 1100 × 700). Most show version 0.5.1.
+Those of parts that changed since, such as the signal timing chart, which now draws
+yellow and all-red, were retaken with the code released as 0.6.0. Those of the failures
+at the cooperative crossing and of manual control come from the code that added them,
+and those of the *AI (Deep RL)* panel, the Deep RL and Hybrid controller brains and the
+controller comparison window from the code that retrained the networks on the
+calibrated model. The About window comes from version 0.8.2. They were taken with the
 scripted-screenshot settings of Appendix A, two simulated minutes into the default
 scenario unless a caption says otherwise. The browser version looks the same, without
 the *Save weights* buttons and training commands of the learning panels.
@@ -3661,7 +3663,7 @@ date:
 | Check | Workflow | What it does |
 |---|---|---|
 | Test (ubuntu-22.04), Test (macos-15), Test (windows-latest) | `ci.yml` | `cargo build --locked --release --all-targets`, then `cargo test --locked --release` |
-| Coverage | `ci.yml` | Runs the tests on Linux with [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) and fails if they run less than 80% of the crate's lines, every file counted (CONTRIBUTING.md says how to measure it locally). [cargo-nextest](https://nexte.st) runs each test in a process of its own, several at once, and under `cfg(coverage)` the tests that run many simulations at once run them in turn, because code built for coverage slows down many times over when several threads of one process run it at once |
+| Coverage | `ci.yml` | Runs the tests on Linux with [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) and fails if they run less than 96% of the crate's lines, every file counted (CONTRIBUTING.md says how to measure it locally). [cargo-nextest](https://nexte.st) runs each test in a process of its own, several at once, and under `cfg(coverage)` the tests that run many simulations at once run them in turn, because code built for coverage slows down many times over when several threads of one process run it at once |
 | Web (wasm32) | `ci.yml` | Builds the app for `wasm32-unknown-unknown` |
 | Clippy | `ci.yml` | `cargo fmt --check` on the crate and the fuzz target, then `cargo clippy` with warnings as errors, for the native targets and the browser app |
 | Crate package | `ci.yml` | `cargo package --locked`, which builds the crate from the files crates.io would get |

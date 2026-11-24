@@ -61,13 +61,13 @@ cargo deny --locked check
 
 CI also measures how much of the crate the tests run, with
 [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov), and fails if they run less
-than 80% of its lines. Every file counts, including the app's panels and the developer
+than 96% of its lines. Every file counts, including the app's panels and the developer
 tools in `src/bin`, so new code needs tests that reach it. To measure locally:
 
 ```bash
 rustup component add llvm-tools-preview
 cargo install cargo-llvm-cov cargo-nextest --locked
-cargo llvm-cov nextest --locked --release --fail-under-lines 80
+cargo llvm-cov nextest --locked --release --fail-under-lines 96
 ```
 
 As in CI, [cargo-nextest](https://nexte.st) runs each test in a process of its own,
@@ -82,7 +82,7 @@ Without cargo-nextest, this runs the tests one at a time instead, which takes se
 times as long:
 
 ```bash
-cargo llvm-cov --locked --release --fail-under-lines 80 -- --test-threads=1
+cargo llvm-cov --locked --release --fail-under-lines 96 -- --test-threads=1
 ```
 
 If you add or update a dependency, also regenerate the third-party license list with

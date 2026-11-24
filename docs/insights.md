@@ -68,7 +68,9 @@ Six seeds of 20 minutes each (`bench all 20 6`). The comparisons below use 30 se
   Two more training seeds (`SEED=1` and `SEED=2`) give the same answer: on major/minor
   their Hybrids trail predictive control by 0.2 ± 0.9 and 0.3 ± 1.0 s, and on the
   T-intersection their Deep RL networks are within noise of it (−0.1 ± 0.7 and
-  +0.3 ± 0.8 s). The training experiments below date from before the calibration.
+  +0.3 ± 0.8 s). With loops alone, though, the shipped Deep RL networks do much worse
+  than the ones they replaced (§3). The training experiments below date from before the
+  calibration.
 - **Network size:** for Deep RL, one hidden layer of 128 units beat two on every layout,
   by 1.8 to 4.5 s on held-out scenarios, and doubling the training didn't close the gap.
   Switching to it cut Deep RL's delay by 10–12 s on the four-way layouts. For the hybrid,
@@ -106,8 +108,17 @@ Six seeds of 20 minutes each (`bench all 20 6`). The comparisons below use 30 se
   16.6 s at night to 18.4 s in heavy rain and in snow, against 18.0 s in clear weather.
 - **Failed loops:** they matter a great deal when loops are the only sensor. Without
   failure detection, a quarter of the loops failing pushed delay to about 200 s. With
-  standard failure detection and a fallback to historical volumes, it degrades gracefully
-  to 18–23 s, depending on the layout.
+  standard failure detection and a fallback to historical volumes, predictive control
+  and the Hybrid degrade gracefully, to 18–23 s depending on the layout.
+- **Deep RL can't work from loops alone:** its networks were trained with loops, camera
+  and radar, sometimes in bad weather or with a quarter of the loops failed, but never
+  with loops alone. With loops alone its person delay reaches 62.8 s on major/minor and
+  44.4 s on the town layout, against 21.9 and 19.8 s with all three, and 68.6 and
+  70.8 s with a quarter of the loops failed. The Hybrid, whose network only tunes the
+  predictive planner, degrades about as predictive control does. Retraining on the
+  calibrated model made this worse: over 30 seeds with loops alone, Deep RL's person
+  delay went from 32.0 to 69.2 s on major/minor and from 38.4 to 47.7 s on the town
+  layout.
 - **Connected vehicles:** at 30% of vehicles they add little on top of camera and radar.
   With every vehicle connected they could replace the other sensors for adaptive control,
   but not for actuated control, which depends on loops.

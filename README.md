@@ -137,7 +137,7 @@ the next one. Mouse wheel zooms, drag pans.
 | Piece | Model |
 |---|---|
 | Car following | Intelligent Driver Model, per-class parameters, desired-speed spread, 0.6–1.2 s driver reaction when pulling away from a stop |
-| Calibration | A saturated through lane of cars discharges at **1,863 veh/h/ln** with **2.2 s** start-up lost time (HCM base: 1,900 and ~2 s); the default mix (8% heavy vehicles) gives 1,698, in line with HCM's heavy-vehicle factor (`examples/satflow.rs`). Drivers who must yield at a two-way stop or on a permissive indication leave margins calibrated against the HCM's **critical headways**: 5.9–7.5 s from the minor street of a two-way stop (HCM: 6.5–7.5 s), 5.5 s for a left turn from the major road (HCM: 4.1 s) and 5.7–7.5 s for a permissive left turn (HCM: 4.5 s) (`examples/gaps.rs`). Nothing else is fitted to field data ([notes and limitations](#notes-and-limitations)) |
+| Calibration | A saturated through lane of cars discharges at **1,863 veh/h/ln** with **2.2 s** start-up lost time (HCM base: 1,900 and ~2 s); the default mix (8% heavy vehicles) gives 1,698, in line with HCM's heavy-vehicle factor (`examples/satflow.rs`). Drivers who must yield at a two-way stop or on a permissive indication leave margins calibrated against the HCM's **critical headways**: 5.9–7.5 s from the minor street of a two-way stop (HCM: 6.5–7.5 s), 5.5 s for a left turn from the major road (HCM: 4.1 s) and 5.7–7.5 s for a permissive left turn, or 9.7 s from the minor street of major/minor (HCM: 4.5 s) (`examples/gaps.rs`). Nothing else is fitted to field data ([notes and limitations](#notes-and-limitations)) |
 | Yellow | Dilemma-zone behavior: drivers under ~2 s from the line (or facing hard braking) continue; the all-red covers them |
 | Turning speed | Curvature of each connector → comfortable lateral acceleration |
 | Lanes | Left-turn bays are 75 m storage lanes carved out of the median; left-turners arrive in the next lane and merge in, and wait behind the bay queue when it is full (bay spillback). Discretionary lane changes use **MOBIL** (safety criterion + politeness-weighted incentive), never across the solid line in the last 25 m |
@@ -618,7 +618,11 @@ A fuller write-up of every finding, with the commands that reproduce it, is in
   because radar backs up the camera, and predictive control less than 1 s on the
   single-lane town layout.
   Failed loops matter a lot when loops are the only source. Diagnostics plus a
-  volume-based fallback turn a collapse (~200 s) into graceful degradation (18–23 s).
+  volume-based fallback turn a collapse (~200 s) into graceful degradation for
+  predictive control and the Hybrid (18–23 s). Deep RL doesn't degrade gracefully: its
+  networks were trained with the camera and radar always on, and with loops alone its
+  person delay reaches 62.8 s on major/minor and 44.4 s on the town layout (68.6 and
+  70.8 s with a quarter of them failed).
 * **Corridors:** a coordinated green wave is worth having for fixed-time signals (stops
   per trip −14% to −56%). Adaptive control beats it without coordination. Naively sharing
   the upstream signal's outflow doesn't help the arterial consistently and hurts on the

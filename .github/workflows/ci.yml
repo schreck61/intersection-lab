@@ -36,7 +36,7 @@ jobs:
       - run: cargo test --locked --release
 
   # The share of the crate's lines the tests run, every file counted: the app's panels
-  # and the developer tools in src/bin too. Fails below 80%.
+  # and the developer tools in src/bin too. Fails below 96%.
   coverage:
     name: Coverage
     runs-on: ubuntu-22.04
@@ -55,7 +55,7 @@ jobs:
       # for coverage counts what it runs in counters every thread of a process updates, so
       # threads running the same code at once slow one another down many times over
       # (tests/common/mod.rs), but each process has counters of its own.
-      - run: cargo llvm-cov nextest --locked --release --fail-under-lines 80
+      - run: cargo llvm-cov nextest --locked --release --fail-under-lines 96
 
   web:
     name: Web (wasm32)
