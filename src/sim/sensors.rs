@@ -219,6 +219,8 @@ pub struct SensorView {
     pub ped_waiting: Vec<u32>,
     pub ped_max_wait: Vec<f64>,
     pub ped_call: Vec<bool>,
+    /// (movement, predicted arrival in s) for each emergency vehicle within 300 m of the
+    /// stop line, at its speed taken as at least 3 m/s, or 0 for one in the box.
     pub emergency: Vec<(usize, f64)>,
     /// (vehicle id, best source) for visualization.
     pub detections: Vec<(u64, Source)>,

@@ -183,9 +183,9 @@ holds until the person chooses another. With the map showing only what the senso
 the person has what the controllers have.
 
 Safety layers sit on top of the controllers: emergency **preemption** (emergency-vehicle
-delay 22.1 s → 4.0 s, `examples/preempt.rs`) on every one, manual control included, and
-a **max-wait guard** on the four adaptive ones (Max-Pressure, Predictive, Deep RL and
-Hybrid).
+delay 22.1 s → 4.0 s, or 117.6 s → 36.8 s behind a queue, `examples/preempt.rs`) on
+every one, manual control included, and a **max-wait guard** on the four adaptive ones
+(Max-Pressure, Predictive, Deep RL and Hybrid).
 
 ## Sensors and their failure modes
 
@@ -202,7 +202,10 @@ The error rates are plausible values, not measurements of any product.
 Pedestrians and emergency vehicles reach the `SensorView` straight from ground truth,
 whichever sensors are on. Controllers use the push-button calls and the number of people
 waiting at each crosswalk, with the longest wait. Only preemption reads the emergency
-vehicles within 300 m of the stop line; controllers see them only through their sensors.
+vehicles within 300 m of the stop line, which covers the whole approach, or in the box;
+controllers see them only through their sensors. Preemption starts as soon as one
+appears and lasts until none is left, however long one waits in a queue, and it serves
+first the one that will arrive first.
 
 ## The signal-free cooperative crossing
 
@@ -712,6 +715,10 @@ simulation step runs and how to add a controller, layout or sensor.
 * Drivers are well-behaved: no red-light running, distraction or crashes, so safety is
   measured with surrogates (overlaps, near-misses). The failures of the cooperative
   crossing are made on purpose.
+* Drivers don't pull over for emergency vehicles. One behind a queue waits until the
+  queue ahead has moved off on the green its preemption brings. On a single-lane
+  approach that can include a driver turning left who waits for a gap in oncoming
+  traffic, because that green lets the oncoming traffic go too.
 * Training is fast because the simulation runs thousands of times faster than real time
   per core: `RESUME=1 cargo run --release --bin train all 300 900 hybrid` fine-tunes the
   shipped weights.

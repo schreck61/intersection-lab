@@ -6,8 +6,9 @@ during a simulation step, a corridor run, a cooperative crossing, a benchmark an
 training run. It describes the code on `main`: version 0.8.2, with the stress example,
 a speedup for simulations running on many threads, a fix for left turns that stopped
 across the oncoming lanes, gap acceptance calibrated against the Highway Capacity
-Manual and a faster coverage check added since, and the Deep RL and Hybrid networks
-retrained on the calibrated model.
+Manual, a faster coverage check and preemption that holds for an emergency vehicle
+stopped in a queue added since, and the Deep RL and Hybrid networks retrained on the
+calibrated model.
 Section 9.4 is an illustrated tour of the app's window, and Appendix A says how the
 screenshots were made.
 
@@ -246,14 +247,14 @@ docs/               this document, insights.md, cooperative-intersections.md (wi
 
 | Directory | Files | Lines |
 |---|---:|---:|
-| `src/sim/` | 13 | 10,799 |
+| `src/sim/` | 13 | 10,803 |
 | `src/control/` | 9 | 2,144 |
 | `src/rl/` | 3 | 361 |
 | `src/gui/` | 5 | 5,493 |
 | `src/bin/` | 3 | 1,127 |
 | `src/lib.rs`, `src/main.rs` | 2 | 97 |
-| `examples/` | 11 | 1,492 |
-| `tests/` | 12 | 5,268 |
+| `examples/` | 11 | 1,522 |
+| `tests/` | 12 | 5,391 |
 | `fuzz/fuzz_targets/` | 1 | 61 |
 
 | Target | Built from | Purpose |
@@ -427,11 +428,11 @@ Three things about this ordering matter:
 
 | File | Lines | What it holds |
 |---|---:|---|
-| `mod.rs` | 2,898 | `Sim`, `Vehicle` and `Ped`: spawning, car following, right of way, lane changes, pedestrians and the safety check |
+| `mod.rs` | 2,900 | `Sim`, `Vehicle` and `Ped`: spawning, car following, right of way, lane changes, pedestrians and the safety check |
 | `coop.rs` | 2,282 | The cooperative crossing's intersection manager |
 | `coop/failures.rs` | 1,607 | What happens when a vehicle of the cooperative crossing fails: the reaction, contacts and recovery |
 | `network.rs` | 1,159 | The layouts: legs, lanes, paths, movements, stages and conflict points, and the lane under a point |
-| `sensors.rs` | 607 | Sensor models and `Sim::sense` |
+| `sensors.rs` | 609 | Sensor models and `Sim::sense` |
 | `world.rs` | 438 | One intersection or a corridor |
 | `signal.rs` | 349 | The signal state machine |
 | `gaps.rs` | 340 | Gap acceptance measured as a field study measures it: `GapStudy` and `critical_headway` |
@@ -1734,7 +1735,7 @@ them. Then:
 ```mermaid
 flowchart TB
     A["<b>wish</b> =<br/>controller.step(ctx)"]
-    B{{"Preemption on, and<br/>an emergency vehicle<br/>due within 30 s?"}}
+    B{{"Preemption on, and<br/>an emergency vehicle<br/>within 300 m or in<br/>the box?"}}
     B2["If the green has run 2 s<br/>and its stage doesn't<br/>serve the vehicle, request<br/>the stage that protects<br/>its movement, else one<br/>that serves it"]
     C{{"can_switch?"}}
     D{{"Adaptive, and an<br/>unserved movement<br/>waited over 150 s?"}}
@@ -1759,17 +1760,21 @@ flowchart TB
     class C,E,E1,Z sim
 ```
 
-* **Emergency preemption** (`preemption`, on by default) follows the emergency vehicle
-  that the sensor view says will arrive first: one on an approach lane within 300 m of
-  the stop line, due within 30 s at its current speed (taken as at least 3 m/s), or one
-  already in the box. While such a vehicle is due, neither the max-wait guard nor the
-  controller's wish is considered, even when no request is made. It is the only request
-  that doesn't wait for `can_switch`: after 2 s of green it can cut a minimum green
-  short, and with it any WALK or flashing DON'T WALK, which turn to steady DON'T WALK.
-  The yellow and all-red still run in full, and anyone already crossing finishes while
-  vehicles wait for them; `tests/safety.rs` checks all of this on every signalized
-  layout. While it is active, the app adds
-  *EMERGENCY PREEMPTION* to the signal's status line.
+* **Emergency preemption** (`preemption`, on by default) starts as soon as the sensor
+  view lists an emergency vehicle: one on an approach lane within 300 m of the stop
+  line, which is the whole approach, or one already in the box. It lasts until none is
+  listed, and it follows the one the sensor view says will arrive first, by its distance
+  at its current speed taken as at least 3 m/s, with one in the box first. It doesn't
+  wait until that vehicle is due soon: one stopped in a queue isn't, and the green it
+  needs is the one that lets the queue ahead of it move off. While preemption lasts,
+  neither the max-wait guard nor the controller's wish is considered, even when no
+  request is made. It is the only request that doesn't wait for `can_switch`: after 2 s
+  of green it can cut a minimum green short, and with it any WALK or flashing DON'T
+  WALK, which turn to steady DON'T WALK. The yellow and all-red still run in full, and
+  anyone already crossing finishes while vehicles wait for them. `tests/safety.rs`
+  checks all of this on every signalized layout, and that preemption and the green it
+  brings last until an emergency vehicle stopped in a queue has crossed. While
+  preemption is active, the app adds *EMERGENCY PREEMPTION* to the signal's status line.
 * **The max-wait guard** (`max_wait_guard`, 150 s by default, 0 turns it off) applies
   to the adaptive controllers only. It looks at the movements the current stage doesn't
   serve at all, and at their longest sensed waits. Manual control has none: a person
@@ -3577,7 +3582,7 @@ The examples are the studies behind `docs/insights.md` and
 | `fya` | Left-turn phasing: flashing yellow arrow, protected-only or automatic, across demand levels | seeds |
 | `gaps` | Gap acceptance: for each movement that yields at a two-way stop (on the T-intersection and major/minor) and each permissive left turn at a fixed-time signal, cars and heavy vehicles apart, the critical headway by maximum likelihood and the mean follow-up headway beside the Highway Capacity Manual's, and how many vehicles with the right of way braked harder than 3 m/s² for one judging a gap | seeds, minutes |
 | `lpi` | The leading pedestrian interval and the blank-out NO TURN ON RED sign: near misses and delay | seeds |
-| `preempt` | Emergency vehicles, with and without preemption | none |
+| `preempt` | Emergency vehicles with and without preemption: one sent straight through at a moment that varies from run to run, and one sent in behind a queue at a red | none |
 | `satflow` | Calibration: saturation flow and start-up lost time of a queued through lane, against the HCM base of 1,900 vehicles per hour per lane | none |
 | `stress` | Half-hour runs of every layout × control mode × seed with `check_safety` on, with an emergency vehicle sent through every 90 s, four times the pedestrians or heavier traffic. Signals run every automatic controller. For each layout, control mode and controller it reports how many runs locked up (a vehicle standing still in the box for over 300 s) and how many had overlaps, the emergency vehicles that got through and the longest standstill, then lists the runs that locked up or overlapped | first and last seed, layout, demand scale, options (`ev`, `peds`, `both`) |
 | `sweep` | Every layout × control mode × seed with `check_safety` on, reporting in-box overlaps. Signals run the four automatic controllers that don't learn: fixed-time, actuated, max-pressure and predictive | seeds, demand scale, options |
@@ -3593,7 +3598,7 @@ Linux, macOS and Windows, and measures how much of the crate they cover (§11).
 
 | File | Tests | What they require |
 |---|---:|---|
-| `tests/safety.rs` | 10 | Every layout, control mode and automatic controller runs without collisions and serves at least 80% of arrivals at default volumes (65% under two-way stop and under all-way stop on the arterial, which are over capacity); different controllers receive identical arrivals; no gridlock in seeds that used to jam; no collision between a turn finishing late in the yellow and the next stage's traffic; on major/minor, with an emergency vehicle sent through every 90 s and pedestrians arriving far more often than by default, no overlap where two paths merge; on the roundabout, with an emergency vehicle sent through every 90 s and at 1.35× default demand without, no vehicle standing still for five minutes and no overlap; at a two-way stop on the T-intersection and major/minor, with an emergency vehicle sent through every 90 s and in two runs pedestrians arriving far more often than by default, no left-turner from the major road standing across the oncoming lanes for over a minute, no vehicle standing still in the box for five minutes and no overlap; a person choosing stages at random moments on every signal layout, often mid-change and mid-interval, gets no collision, no green shorter than the minimum, and every yellow, all-red, WALK and flashing DON'T WALK in full; at every layout and control mode, with pedestrians arriving far more often than by default, no moving vehicle comes within half a meter of anyone on a crosswalk; emergency vehicles sent toward a red while pedestrians cross on a WALK end greens no sooner than 2 s, leave every yellow and all-red whole and get through, and everyone crossing when their interval is cut short finishes, with no moving vehicle within half a meter of them |
+| `tests/safety.rs` | 11 | Every layout, control mode and automatic controller runs without collisions and serves at least 80% of arrivals at default volumes (65% under two-way stop and under all-way stop on the arterial, which are over capacity); different controllers receive identical arrivals; no gridlock in seeds that used to jam; no collision between a turn finishing late in the yellow and the next stage's traffic; on major/minor, with an emergency vehicle sent through every 90 s and pedestrians arriving far more often than by default, no overlap where two paths merge; on the roundabout, with an emergency vehicle sent through every 90 s and at 1.35× default demand without, no vehicle standing still for five minutes and no overlap; at a two-way stop on the T-intersection and major/minor, with an emergency vehicle sent through every 90 s and in two runs pedestrians arriving far more often than by default, no left-turner from the major road standing across the oncoming lanes for over a minute, no vehicle standing still in the box for five minutes and no overlap; a person choosing stages at random moments on every signal layout, often mid-change and mid-interval, gets no collision, no green shorter than the minimum, and every yellow, all-red, WALK and flashing DON'T WALK in full; at every layout and control mode, with pedestrians arriving far more often than by default, no moving vehicle comes within half a meter of anyone on a crosswalk; emergency vehicles sent toward a red while pedestrians cross on a WALK end greens no sooner than 2 s, leave every yellow and all-red whole and get through, and everyone crossing when their interval is cut short finishes, with no moving vehicle within half a meter of them; on every approach with a through movement, an emergency vehicle standing still in a queue more than 90 m back at a red, under manual control with the person asking for the red again as soon as its green starts, keeps preemption and its green until it has crossed |
 | `tests/gap_acceptance.rs` | 1 | A car turning left from the major road at a two-way stop accepts gaps near the Highway Capacity Manual's: its critical headway, fitted by maximum likelihood to the gaps such drivers let pass and the ones they go in, over half-hour runs of the T-intersection and major/minor without pedestrians, is within 2 s of the Manual's 4.1 s |
 | `tests/cooperative.rs` | 14 | The cooperative crossing: no signals, sensors or crosswalks; its geometry and phase order; every gap policy safe under heavy demand, bursts, heavy vehicles and live switching; about 18,000 vehicles per hour served at the design demand, about 19,000 oversaturated and less with single left lanes or first come, first served; reproducible runs; light traffic barely delayed; emergency vehicles first; hand-placed vehicles crossing every way. Every run, except those of the no-signals, single-left-lane and reproducibility tests, must show no overlap between vehicle bodies, no zone entered while occupied, no box entry without a reservation, no step off a granted trajectory, no crossing inside its required gap and no line or zone time off its reservation (both to within a microsecond), and at least one crossing measured |
 | `tests/failures.rs` | 20 | Failures at the cooperative crossing. When a vehicle stops dead at the worst moment, fail-safe gaps stop crossing traffic short of it under both schedules, mitigated gaps let it arrive at no more than 25 km/h and nominal gaps faster; a vehicle that brakes to a stop is survived; in batches a failure at a random place rarely reaches crossing traffic, though a dead stop is struck from behind; the crossing serves what a disabled vehicle leaves clear and recovers once it is cleared away; a failure outside the box only holds up its lane; a failure can be repeated at the same place on another run, and random failures are the same on runs with the same seed; twenty minutes of failures in heavy traffic leave nothing broken, and with fail-safe gaps no vehicles on crossing paths touch through some two hundred dead stops; a vehicle stopped in the box waits for one that passes it, one stopped behind a failure can fail in turn and one that fails at the edge of the map rolls off it; a failure only holds back the vehicles that leave their crossings for an emergency stop: none at rest is set going, none gets ahead of the trajectory it had, and one standing before its line loses its crossing instead; a vehicle that can't stop behind a dead stop is expected where it ends up, as is one that fails close behind it and one already on an emergency stop when the vehicle ahead stops short, and it stops by itself if the wreck is cleared away first; the log keeps the latest fifty failures; other layouts have none. Every run with a failure in it, except those of the test that repeats one, must show no vehicle off its trajectory, in the box without one, or overlapping another outside a recorded contact |

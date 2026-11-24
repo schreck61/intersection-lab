@@ -676,11 +676,13 @@ impl Sim {
             reward_delay: self.last_reward,
         };
         let wish = self.controller.step(&ctx);
-        // Emergency-vehicle preemption overrides the controller.
+        // Emergency-vehicle preemption overrides the controller while any emergency
+        // vehicle is listed, and serves the one due first. It doesn't wait until that one
+        // is due soon: a vehicle stopped in a queue isn't, and its green is what clears the
+        // queue ahead of it.
         self.preempt_active = false;
         if self.preemption
-            && let Some(&(m, eta)) = self.view.emergency.iter().min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
-            && eta < 30.0
+            && let Some(&(m, _)) = self.view.emergency.iter().min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
         {
             self.preempt_active = true;
             let serves = |st: usize| self.net.stages[st].stat[m].is_some();

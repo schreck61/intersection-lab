@@ -5,7 +5,8 @@
 //! collision-free and serve (nearly) all demand at default volumes, no moving vehicle
 //! may come within half a meter of anyone on a crosswalk, a person choosing stages at
 //! random must never cut an interval short, and emergency preemption may cut a green
-//! short but never a clearance interval or a pedestrian's crossing.
+//! short but never a clearance interval or a pedestrian's crossing, and holds for an
+//! emergency vehicle stopped in a queue until it has crossed.
 
 use intersection_lab::control::CtrlKind;
 use intersection_lab::sim::network::LayoutKind;
@@ -524,7 +525,7 @@ fn no_vehicle_drives_into_anyone_crossing() {
 fn preemption_cuts_a_green_short_but_never_a_clearance_or_a_crossing() {
     use intersection_lab::sim::PedState;
     use intersection_lab::sim::network::Turn;
-    use intersection_lab::sim::signal::{PedSig, Phase};
+    use intersection_lab::sim::signal::PedSig;
     use intersection_lab::sim::vtypes::VKind;
 
     let handles: Vec<_> = (LayoutKind::ALL.into_iter().filter(|k| k.signalized()))
@@ -598,26 +599,8 @@ fn preemption_cuts_a_green_short_but_never_a_clearance_or_a_crossing() {
                             .push(format!("pedestrian {id}, cut off at {t:.1} s, never finished crossing"));
                     }
                 }
-                // Every interval but the one still running.
-                let spans: Vec<_> = sim.signal.history.iter().collect();
-                let mut short_greens = 0;
-                for h in &spans[..spans.len() - 1] {
-                    let len = h.end - h.start;
-                    let ok = match h.phase {
-                        Phase::Green => {
-                            short_greens += usize::from(len < sim.signal.min_green - dt - 1e-6);
-                            len >= 2.0 - 1e-6
-                        }
-                        Phase::Yellow => (len - sim.net.yellow).abs() <= dt + 1e-6,
-                        Phase::AllRed => (len - sim.net.all_red).abs() <= dt + 1e-6,
-                    };
-                    if !ok {
-                        problems.push(format!(
-                            "{:?} of {} lasted {len:.1} s from {:.1} s",
-                            h.phase, sim.net.stages[h.stage].name, h.start
-                        ));
-                    }
-                }
+                let (short_greens, intervals) = interval_problems(&sim);
+                problems.extend(intervals);
                 let delays: Vec<f64> =
                     sim.stats.done.iter().filter(|d| d.kind == VKind::Emergency).map(|d| d.delay).collect();
                 let name = format!("{} seed {seed}", kind.key());
@@ -644,4 +627,144 @@ fn preemption_cuts_a_green_short_but_never_a_clearance_or_a_crossing() {
     // pedestrians still crossing when their interval ended.
     assert!(short_greens > 0 && cut_off > 0, "{short_greens} short greens, {cut_off} pedestrians cut off");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// How many of the signal's finished intervals were greens that ended before their
+/// minimum, and each that broke what even preemption must respect: a green shorter than
+/// 2 s, or a yellow or all-red that didn't run in full.
+fn interval_problems(sim: &Sim) -> (usize, Vec<String>) {
+    use intersection_lab::sim::signal::Phase;
+    let dt = sim.dt;
+    let (mut short_greens, mut problems) = (0, vec![]);
+    // Every interval but the one still running.
+    let spans: Vec<_> = sim.signal.history.iter().collect();
+    for h in &spans[..spans.len() - 1] {
+        let len = h.end - h.start;
+        let ok = match h.phase {
+            Phase::Green => {
+                short_greens += usize::from(len < sim.signal.min_green - dt - 1e-6);
+                len >= 2.0 - 1e-6
+            }
+            Phase::Yellow => (len - sim.net.yellow).abs() <= dt + 1e-6,
+            Phase::AllRed => (len - sim.net.all_red).abs() <= dt + 1e-6,
+        };
+        if !ok {
+            problems.push(format!(
+                "{:?} of {} lasted {len:.1} s from {:.1} s",
+                h.phase, sim.net.stages[h.stage].name, h.start
+            ));
+        }
+    }
+    (short_greens, problems)
+}
+
+/// An emergency vehicle stopped in a queue more than 90 m from the stop line is more than
+/// 30 s away by its predicted arrival, which takes its speed as at least 3 m/s. Preemption
+/// used to wait until one was due within 30 s, so it let go when the vehicle braked into a
+/// queue: the green it had asked for could end while the vehicle still stood in the queue,
+/// and the vehicle then waited out a second change before the queue ahead of it moved
+/// again. On every approach of every signalized layout with a through movement, under
+/// manual control, an emergency vehicle is sent in behind a queue held at a red, and
+/// stands still more than 90 m from the stop line. As soon as its green starts, the person
+/// at the controls asks for the red again. Preemption holds from the moment the vehicle
+/// appears until it has crossed, its green lasts until then, no green ends within 2 s,
+/// every yellow and all-red runs in full, nothing overlaps, and it gets through.
+#[test]
+fn preemption_holds_for_an_emergency_vehicle_stopped_in_a_queue() {
+    let handles: Vec<_> = (LayoutKind::ALL.into_iter().filter(|k| k.signalized()))
+        .flat_map(|kind| (0..4).map(move |leg| (kind, leg)))
+        .map(|(kind, leg)| common::spawn(move || queued_emergency_vehicle(kind, leg)))
+        .collect();
+    let mut failures = vec![];
+    for h in handles {
+        let Some((name, delay, problems)) = h.join().unwrap() else { continue };
+        eprintln!("{name}: delay {delay:.1?} s");
+        failures.extend(problems.into_iter().map(|p| format!("{name}: {p}")));
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Sends an emergency vehicle straight through from approach `leg` of `kind` under manual
+/// control, behind a queue held at a red: 20 cars for each lane it may use, which reach
+/// about 140 m back, and no other traffic. Once its green starts, chooses the stage that
+/// held the queue again. Returns the case's name, the emergency vehicle's delay if it got
+/// through, and what went wrong, or `None` if the approach has no through movement.
+fn queued_emergency_vehicle(kind: LayoutKind, leg: usize) -> Option<(String, Option<f64>, Vec<String>)> {
+    use intersection_lab::sim::network::{LinkKind, Turn};
+    use intersection_lab::sim::signal::Phase;
+    use intersection_lab::sim::vtypes::VKind;
+
+    let mut sim = Sim::new(kind, ControlMode::Signal, CtrlKind::Manual, 7);
+    let m = sim.net.movement_for(leg, Turn::T)?;
+    let name = format!("{} leg {leg}", kind.key());
+    sim.check_safety = true;
+    sim.demand.scale = 0.0;
+    let choose = |sim: &mut Sim, j: usize| {
+        let sig = &sim.signal;
+        sim.controller.as_manual().unwrap().choose(j, sig);
+    };
+    let green = |sim: &Sim| sim.signal.status(&sim.net, m).is_green();
+    let red = (0..sim.net.stages.len()).find(|&st| sim.net.stages[st].stat[m].is_none()).unwrap();
+    choose(&mut sim, red);
+    while !(sim.signal.stage == red && sim.signal.phase == Phase::Green) {
+        sim.step();
+    }
+    let lanes = (sim.net.legs[leg].in_lanes.iter())
+        .filter(|&&lane| sim.net.links[lane].lane_moves.contains(&m))
+        .count();
+    for _ in 0..20 * lanes {
+        assert!(sim.spawn_manual(leg, VKind::Car, Turn::T));
+    }
+    // Until every car has come to a stop in the queue.
+    while sim.vehicles.iter().filter(|v| v.manual && v.v < 0.05).count() < 20 * lanes {
+        sim.step();
+        if sim.t > 300.0 {
+            return Some((name, None, vec!["the queue didn't form in 300 s".into()]));
+        }
+    }
+    assert!(sim.spawn_manual(leg, VKind::Emergency, Turn::T));
+    let sent = sim.t;
+    let mut problems = vec![];
+    let (mut stood_far_back, mut green_since, mut preempted) = (false, None, true);
+    let through = |sim: &Sim| sim.stats.done.iter().find(|d| d.kind == VKind::Emergency).map(|d| d.delay);
+    while through(&sim).is_none() && sim.t < sent + 300.0 {
+        sim.step();
+        let ev = sim.vehicles.iter().find(|v| v.kind == VKind::Emergency);
+        let Some((link, d, v)) = ev.map(|ev| {
+            let link = &sim.net.links[ev.link()];
+            (link.kind, link.length() - ev.s, ev.v)
+        }) else {
+            continue;
+        };
+        if link == LinkKind::Inbound {
+            stood_far_back |= v < 0.05 && d > 90.0;
+            if !green(&sim) {
+                if let Some(t0) = green_since.take() {
+                    problems.push(format!(
+                        "its green from {t0:.1} s ended at {:.1} s, {d:.0} m before it reached the stop line",
+                        sim.t
+                    ));
+                }
+            } else if green_since.is_none() {
+                green_since = Some(sim.t);
+                choose(&mut sim, red);
+            }
+        }
+        if preempted && !sim.preempt_active && (link == LinkKind::Inbound || link.in_box()) {
+            preempted = false;
+            problems.push(format!("preemption let go at {:.1} s, before it had crossed", sim.t));
+        }
+    }
+    let delay = through(&sim);
+    if delay.is_none() {
+        problems.push("it didn't get through in 300 s".into());
+    }
+    if !stood_far_back {
+        problems.push("it never stood still more than 90 m from the stop line".into());
+    }
+    if sim.collisions > 0 {
+        problems.push(format!("{} overlap ticks", sim.collisions));
+    }
+    problems.extend(interval_problems(&sim).1);
+    Some((name, delay, problems))
 }

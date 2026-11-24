@@ -261,6 +261,22 @@ vehicle was made to fail in the box, once per run, 400 runs per case, in batches
   Vehicles now stop for them. Over 30 seeds that changed person delay by 0.6 s at most,
   for any controller on any layout. On six seeds of the town layout it moved predictive
   control from 21.8 to 24.1 s, which shows how far six seeds can swing there.
+- **Preemption has to hold for a vehicle stuck in a queue:** the same test had emergency
+  vehicles waiting more than a minute. Preemption used to wait until one was due within
+  30 s, at its speed taken as at least 3 m/s, which one stopped in a queue more than
+  90 m back never is. So it let go as the vehicle braked into a queue, the controller
+  could then end the green it had asked for while the vehicle still stood there, and the
+  vehicle waited out a second change. Sent in behind 20 cars per lane at a red on the
+  arterial (`examples/preempt.rs`), emergency vehicles were delayed 49.7 s on average,
+  against 117.6 s without preemption. Now preemption lasts while any emergency vehicle
+  is on an approach or in the box, and the delay is 36.8 s. Most of the rest is the
+  queue ahead moving off, since drivers here don't pull over. The two longest waits left
+  in that test, 76 and 78 s, are on the single-lane town layout, behind drivers turning
+  left who wait for gaps in the oncoming traffic that the same green lets through.
+  Default traffic has no emergency vehicles, so the benchmarks are unchanged. In the
+  2,560 stress runs below, 21,610 of 23,040 emergency vehicles got through, against
+  21,599, still with no overlaps and no vehicle standing still in the box for over five
+  minutes.
 - **Frequent emergency vehicles find what ordinary traffic doesn't:** 2,560 half-hour
   runs on every layout and control mode, with and without one sent through every 90 s
   and with and without four times the pedestrians, gave one overlap, in a run with both.
@@ -411,6 +427,7 @@ cargo run --release --example cooperative p2 2 mix 1200 3 2000,4000,6000,8000,10
 cargo run --release --example cooperative p2 1 mix 1200 3 16000                     # section 8 (one left-turn lane)
 cargo run --release --example cooperative p2 2 mix 1200 8 18000 platoons            # section 8 (platoons)
 cargo run --release --example failures 400             # section 8 (failures)
+cargo run --release --example preempt                  # section 9 (emergency vehicles behind a queue)
 cargo run --release --example stress 1 20 all 1 ev,peds,both   # section 9 (emergency vehicles on every layout)
 cargo run --release --example stress 1 500 roundabout 1 ev     # section 9 (the roundabout with emergency vehicles)
 cargo run --release --example stress 1 200 roundabout 1        # section 9 (the roundabout without them)
