@@ -50,11 +50,12 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
-          tool: cargo-llvm-cov@0.9.1
-      # One test at a time: code built for coverage counts what it runs in counters every
-      # thread updates, so threads running the same code at once slow one another down
-      # many times over (tests/common/mod.rs).
-      - run: cargo llvm-cov --locked --release --fail-under-lines 80 -- --test-threads=1
+          tool: cargo-llvm-cov@0.9.1,cargo-nextest@0.9.152
+      # cargo-nextest runs each test in a process of its own, several at once. Code built
+      # for coverage counts what it runs in counters every thread of a process updates, so
+      # threads running the same code at once slow one another down many times over
+      # (tests/common/mod.rs), but each process has counters of its own.
+      - run: cargo llvm-cov nextest --locked --release --fail-under-lines 80
 
   web:
     name: Web (wasm32)
