@@ -4,8 +4,9 @@ This document describes how Intersection Lab is put together. It covers what eac
 source file does, how the code is split into layers, and how those layers work together
 during a simulation step, a corridor run, a cooperative crossing, a benchmark and a
 training run. It describes the code on `main`: version 0.8.2, with the stress example,
-a speedup for simulations running on many threads and a fix for left turns that stopped
-across the oncoming lanes added since.
+a speedup for simulations running on many threads, a fix for left turns that stopped
+across the oncoming lanes and gap acceptance calibrated against the Highway Capacity
+Manual added since.
 Section 9.4 is an illustrated tour of the app's window, and Appendix A says how the
 screenshots were made.
 
@@ -219,18 +220,18 @@ speeds directly, as their own reports would give them.
 src/
   lib.rs            library root: scenario() and run_scenario()
   main.rs           app entry point (native window or browser canvas)
-  sim/              simulation core, including the cooperative crossing (12 files)
+  sim/              simulation core, including the cooperative crossing (13 files)
   control/          signal controllers and weights files (9 files)
   rl/               neural network and Double DQN (3 files)
   gui/              egui front end (5 files)
   bin/bench.rs      headless controller and sensor benchmarks
   bin/train.rs      headless training of the Deep RL and Hybrid networks
   bin/shared/       record.rs: what bench and train record about a run
-examples/           studies: cooperative, corridor, failures, fya, lpi, preempt, satflow,
-                    stress, sweep, plus make_icons
-tests/              safety, cooperative, failures, pedestrian_rule, weights_files,
-                    green_wave, networks, gui, scripted, tools, and common/ (shared by the
-                    tests)
+examples/           studies: cooperative, corridor, failures, fya, gaps, lpi, preempt,
+                    satflow, stress, sweep, plus make_icons
+tests/              safety, gap_acceptance, cooperative, failures, pedestrian_rule,
+                    weights_files, green_wave, networks, gui, scripted, tools, and common/
+                    (shared by the tests)
 fuzz/               cargo-fuzz target for weights files (a workspace of its own)
 weights/            trained networks (JSON), also compiled into the binary
 web/index.html      page that hosts the browser build (Trunk)
@@ -244,14 +245,14 @@ docs/               this document, insights.md, cooperative-intersections.md (wi
 
 | Directory | Files | Lines |
 |---|---:|---:|
-| `src/sim/` | 12 | 10,316 |
+| `src/sim/` | 13 | 10,799 |
 | `src/control/` | 9 | 2,144 |
 | `src/rl/` | 3 | 361 |
 | `src/gui/` | 5 | 5,493 |
 | `src/bin/` | 3 | 1,127 |
 | `src/lib.rs`, `src/main.rs` | 2 | 97 |
-| `examples/` | 10 | 1,305 |
-| `tests/` | 11 | 5,195 |
+| `examples/` | 11 | 1,492 |
+| `tests/` | 12 | 5,257 |
 | `fuzz/fuzz_targets/` | 1 | 61 |
 
 | Target | Built from | Purpose |
@@ -291,16 +292,16 @@ The rest of the code has no platform-specific parts.
 
 ## 4. Module dependencies
 
-Inside `sim`, five files share one type: `sim/mod.rs` defines `Sim`, and `sensors.rs`,
-`stats.rs`, `coop.rs` and its submodule `coop/failures.rs` add `impl Sim` blocks or read
-its vehicles. That keeps each model next to its own data types while giving it the
+Inside `sim`, six files share one type: `sim/mod.rs` defines `Sim`, and `sensors.rs`,
+`stats.rs`, `gaps.rs`, `coop.rs` and its submodule `coop/failures.rs` add `impl Sim`
+blocks or read its vehicles. That keeps each model next to its own data types while giving it the
 engine's private state. The graph below shows how the groups of files depend on each
 other; the table after it lists every dependency between files.
 
 ```mermaid
 flowchart TB
     world["<b>world.rs</b><br/>one signal or a corridor"]
-    ENGINE["<b>The engine</b><br/>sim/mod.rs: Sim, Vehicle, Ped<br/>sensors.rs · stats.rs<br/>coop.rs · coop/failures.rs"]
+    ENGINE["<b>The engine</b><br/>sim/mod.rs: Sim, Vehicle, Ped<br/>sensors.rs · stats.rs · gaps.rs<br/>coop.rs · coop/failures.rs"]
     CONTROL["<b>control/</b><br/>mod.rs: Controller, Ctx, make()<br/>fixed · actuated · maxpressure · predictive<br/>rl · hybrid · manual · weights"]
     RLM["<b>rl/</b><br/>dqn.rs · nn.rs"]
     MODEL["<b>Road and demand</b><br/>network.rs · signal.rs · demand.rs"]
@@ -332,11 +333,12 @@ and fully qualified paths show them.
 
 | File | Uses |
 |---|---|
-| `sim/mod.rs` | `coop`, `coop/failures`, `demand`, `geom`, `network`, `rng`, `sensors`, `signal`, `stats`, `vtypes`; `control/mod.rs` |
+| `sim/mod.rs` | `coop`, `coop/failures`, `demand`, `gaps`, `geom`, `network`, `rng`, `sensors`, `signal`, `stats`, `vtypes`; `control/mod.rs` |
 | `sim/coop.rs` | `sim/mod.rs`, `coop/failures.rs`, `network`, `rng`, `vtypes` |
 | `sim/coop/failures.rs` | `sim/coop.rs`, `sim/mod.rs`, `network`, `rng`, `vtypes` |
 | `sim/sensors.rs` | `sim/mod.rs`, `network`, `signal`, `vtypes` |
 | `sim/stats.rs` | `sim/mod.rs`, `demand`, `network`, `vtypes` |
+| `sim/gaps.rs` | `sim/mod.rs`, `network`, `signal`, `vtypes` |
 | `sim/world.rs` | `sim/mod.rs`, `demand`, `geom`, `network`, `rng`; `control/mod.rs` |
 | `sim/demand.rs` | `network`, `rng`, `vtypes` |
 | `sim/signal.rs` | `network` |
@@ -424,13 +426,14 @@ Three things about this ordering matter:
 
 | File | Lines | What it holds |
 |---|---:|---|
-| `mod.rs` | 2,755 | `Sim`, `Vehicle` and `Ped`: spawning, car following, right of way, lane changes, pedestrians and the safety check |
+| `mod.rs` | 2,898 | `Sim`, `Vehicle` and `Ped`: spawning, car following, right of way, lane changes, pedestrians and the safety check |
 | `coop.rs` | 2,282 | The cooperative crossing's intersection manager |
 | `coop/failures.rs` | 1,607 | What happens when a vehicle of the cooperative crossing fails: the reaction, contacts and recovery |
 | `network.rs` | 1,159 | The layouts: legs, lanes, paths, movements, stages and conflict points, and the lane under a point |
 | `sensors.rs` | 607 | Sensor models and `Sim::sense` |
 | `world.rs` | 438 | One intersection or a corridor |
 | `signal.rs` | 349 | The signal state machine |
+| `gaps.rs` | 340 | Gap acceptance measured as a field study measures it: `GapStudy` and `critical_headway` |
 | `stats.rs` | 319 | Measurement, and 95% confidence intervals |
 | `demand.rs` | 280 | Arrivals |
 | `geom.rs` | 268 | Vectors, paths and curves |
@@ -463,7 +466,7 @@ The file also defines:
     for emergency vehicles and none for automated vehicles;
   * delay, stops, stopped time and fuel;
   * the conflict points it has *committed* to;
-  * its stop-sign and yellow decisions;
+  * its stop-sign and yellow decisions, and whether it went in a gap it judged;
   * the `Reason` it is braking, and the vehicle it is yielding to, both shown in the
     app;
   * lane-change state, and a `Trip` for corridor journeys.
@@ -559,6 +562,7 @@ vehicle has committed to. The labels show each vehicle's delay so far.*
   | Signal: right turn on red, at least 1.0 s after stopping | 0 |
   | All-way stop: served, at least 0.8 s after stopping (ties go by stop order) | 1 |
   | All-way stop, or the minor street of a two-way stop: in the box | 3 |
+  | Two-way stop: major-street left turn whose front has reached the first lane it crosses | 3 |
   | Two-way stop: major-street left turn / other major-street movements | 1 / 2 |
   | Two-way stop: minor street, at least 0.8 s after stopping | 0.5 |
   | Roundabout: entering / circulating | 1 / 2 |
@@ -571,8 +575,12 @@ vehicle has committed to. The labels show each vehicle's delay so far.*
 * **`excluded`:** the vehicle will stop at its line, so it is not a threat to anyone
   downstream.
 * **`hold_line`:** a vehicle turning right on red or already served at a stop sign. It
-  waits at the line, not inside the box, whenever it must yield, and commits to every
-  crossing it takes.
+  waits at the line, not inside the box, whenever it must yield, holding no commitments
+  while it waits, and commits to every crossing it takes.
+* **`gauged`:** the vehicle judges gaps: at a two-way stop it is on the minor street or
+  turning left from the major road, and at a signal it is turning left on a permissive
+  indication or right on red. It stays marked until its rear leaves the box, even once
+  its indication has changed (`Vehicle::gap_judged`).
 
 Then each vehicle runs `decide`, which uses these helpers:
 
@@ -582,18 +590,34 @@ Then each vehicle runs `decide`, which uses these helpers:
   other vehicle has priority if it has committed, is inside the zone, can no longer stop
   or has a higher rank, or else if it wins the tie-break. Vehicles that will stop at
   their line are ignored unless they have committed, are inside the zone or can no
-  longer stop. Stopped vehicles that are themselves waiting are ignored unless they are
-  inside the zone. If the other vehicle has priority, this one may still go first or
-  second if their times in the zone will be at least 0.8 s apart at a crossing. At a
-  merge, where the second then just follows the first, the times compared are those at
-  the merge point, at least 1.2 s apart. The paths already run close together before
-  it, so until this vehicle reaches the start of its zone, the two must also pass that
-  start in the same order, 1.2 s apart, or a fast vehicle could overtake a slow one
-  alongside it. The margins at a crossing and at the merge point become 2.0 s when a
-  vehicle of rank 1 or lower yields to a higher rank. At a roundabout a vehicle ranks
-  itself by where the conflict point is, not where it is now: one still on its entry
-  counts as circulating at the merges farther around the ring, so it doesn't wait there
-  for the vehicles entering. They rank it as entering until it reaches the ring.
+  longer stop. A vehicle inside a crossing's zone that is yielding, to another vehicle
+  or to someone crossing, is expected to stay there until it stops yielding. Stopped
+  vehicles that are themselves waiting are ignored unless they are inside the zone,
+  except by a vehicle waiting at the stop line of a two-way stop: a vehicle with the
+  right of way that waits only for a gap of its own, such as a left turn from the major
+  road waiting for the oncoming lanes, still goes first. If the other vehicle has
+  priority, this one may still go first or second if their times in the zone will be at
+  least 0.8 s apart at a crossing. At a merge, where the second then just follows the
+  first, the times compared are those at the merge point, at least 1.2 s apart. The
+  paths already run close together before it, so until this vehicle reaches the start of
+  its zone, the two must also pass that start in the same order, 1.2 s apart (or as far
+  apart as at the merge point, if that is less), or a fast vehicle could overtake a slow
+  one alongside it. The margins at a crossing and at the merge point become 2.0 s when a
+  vehicle of rank 1 or lower yields to a higher rank and neither judges gaps; two that
+  both judge gaps leave each other the plain margins. A vehicle that judges gaps
+  (`gauged`) and yields to one that doesn't leaves the room calibrated against the
+  Highway Capacity Manual's critical headways instead: 0.8 s going first and 0.4 s going
+  second at a crossing (`GAP_CROSS`), 2.0 s and 0.8 s at the merge point (`GAP_MERGE`).
+  The other vehicle leaves it 0.2 s less each way (`GAP_SLACK`), so the two agree on who
+  goes first right at the limit. Such a vehicle also counts the rest of its reaction
+  time when it is stopped, and expects to clear the zone at 85% of its full
+  acceleration, about what car following gives (`clearing`), where others assume 70%,
+  though while the vehicle ahead of it is in the way it averages no more than its
+  present speed or 3 m/s, whichever is higher. Its rivals reckon its times the same way.
+  At a roundabout a vehicle ranks itself by where the conflict point is, not where it is
+  now: one still on its entry counts as circulating at the merges farther around the
+  ring, so it doesn't wait there for the vehicles entering. They rank it as entering
+  until it reaches the ring.
 * **Commitment:** once a vehicle that need not yield is within v²/6 + 3 m of a
   conflict zone (its stopping distance at 3 m/s², plus 3 m), it *commits* to it, and
   **committed vehicles keep the right of way.** This is what keeps the box free of
@@ -607,7 +631,8 @@ Then each vehicle runs `decide`, which uses these helpers:
   * `stalled_in_zone`: a vehicle stopped inside the zone.
   * `unstoppable_rival`: another vehicle that committed at the same moment, can no
     longer stop and will be in the zone while this one is. One that will have left it
-    0.8 s before this one gets there doesn't count.
+    0.8 s before this one gets there doesn't count, or 0.2 s before when either judges
+    gaps.
   * `rest_blocker`: for vehicles of rank 1 or lower, such as a permissive left turn, a
     later conflict on the same turn that would make the vehicle stop in the middle of
     it, and `rest_ped`, someone crossing or about to cross a later crosswalk on it.
@@ -731,9 +756,11 @@ instead of waiting for it, so none may creep into them.
 Two details of the stop-line check:
 
 * **Dilemma zone:** when a yellow starts, a driver who would need more than 3 m/s² to
-  stop, or is under 1 m or under 2 s from the line, keeps going. The decision is
-  stored with the signal's `change_id`, so the driver doesn't change their mind
-  during that yellow.
+  stop, or is under 1 m or under 2 s from the line, keeps going (`goes_on_yellow`). The
+  decision is stored with the signal's `change_id`, so the driver doesn't change their
+  mind during that yellow. In the step the yellow starts, before the driver has
+  decided, `vstat_of` already ranks it as it will decide, so a permissive left turn
+  doesn't take a driver who will keep going for one about to stop.
 * **Emergency vehicles** ignore the stop line. They have rank 5, so everyone else
   yields to them.
 
@@ -2287,18 +2314,19 @@ In the shipped Hybrid weights (the validation score from training, then the test
 
 | Layout | Best static tuning | Network |
 |---|---|---|
-| Arterial | fairness 0.004, bias +0.08, max green 60 s | Kept: validation 18.5 → 17.3 s, test 17.9 → 17.5 s |
+| Arterial | fairness 0.004, bias +0.08, max green 60 s | Kept: validation 18.5 → 17.3 s, test 14.9 → 15.1 s |
 | Major/minor | fairness 0, bias +0.08, max green 35 s | Not kept, so the Hybrid runs the static tuning |
-| Town | fairness 0.012, bias −0.05, max green 35 s | Kept: validation 25.4 → 25.2 s, test 25.1 → 24.3 s |
+| Town | fairness 0.012, bias −0.05, max green 35 s | Kept: validation 25.4 → 25.2 s, test 21.0 → 21.1 s |
 | T-intersection | fairness 0, bias +0.08, max green 60 s | Not kept |
 
 The two "not kept" files are 61 bytes long: they hold the static tuning and no network.
-On the test set the Hybrid's person delay is 0.5 to 1.3 s lower than predictive
-control's on the arterial, major/minor and town layouts and 0.2 s higher on the
-T-intersection, each difference within its 95% interval over the 24 scenarios. On
-major/minor and the T-intersection it runs the static tuning alone. On the arterial and
-town layouts the network changes the static tuning's person delay by −0.4 ± 0.7 s and
-−0.8 ± 3.0 s, also within noise.
+On the test set the Hybrid's person delay is lower than predictive control's by 1.1 s
+on the T-intersection and 0.1 s on major/minor, and higher by 0.4 s on the arterial and
+1.6 s on the town layout, each difference within its 95% interval over the 24
+scenarios. On major/minor and the T-intersection it runs the static tuning alone. On the
+arterial and town layouts the network changes the static tuning's person delay by
++0.2 ± 0.6 s and +0.1 ± 1.5 s, also within noise. The networks were trained before gap
+acceptance was calibrated (§6.1); the test scores are from the calibrated model.
 
 ### 8.7 `control/weights.rs`: loading and saving
 
@@ -2491,8 +2519,8 @@ Limitations:
   0.3.0's (18.3 s against 17.2 s, measured then).
 * **No refinements beyond Double DQN.** The code has no prioritized replay, multi-step
   returns or dueling heads. Over 30 seeds Deep RL trails predictive control by
-  2.7 ± 0.7 s on the arterial and 4.1 ± 3.3 s on the town layout, is within noise of it
-  on major/minor, and beats it only on the T-intersection, by 1.6 ± 1.0 s.
+  2.6 ± 0.9 s on the arterial, 4.5 ± 1.2 s on major/minor and 3.9 ± 1.7 s on the town
+  layout, and is within noise of it on the T-intersection (−0.4 ± 0.8 s).
 
 ---
 
@@ -3541,6 +3569,7 @@ The examples are the studies behind `docs/insights.md` and
 | `failures` | One vehicle failing in the box in each of many runs, under each gap policy and schedule, at a random place and at the worst moment: contacts and their speeds, emergency stops, the closest stop. Then what a failure costs: the same arrivals with and without it | runs, demand under batches, demand first come, first served, seconds until cleared, part (`safety`, `cost`) |
 | `corridor` | *n* signals along the main road: fixed-time without and with the green wave, the adaptive controllers with the upstream link and the predictive controller without it. Reports end-to-end trips and each intersection's person delay | layout, *n*, minutes, seeds, demand scale |
 | `fya` | Left-turn phasing: flashing yellow arrow, protected-only or automatic, across demand levels | seeds |
+| `gaps` | Gap acceptance: for each movement that yields at a two-way stop (on the T-intersection and major/minor) and each permissive left turn at a fixed-time signal, cars and heavy vehicles apart, the critical headway by maximum likelihood and the mean follow-up headway beside the Highway Capacity Manual's, and how many vehicles with the right of way braked harder than 3 m/s² for one judging a gap | seeds, minutes |
 | `lpi` | The leading pedestrian interval and the blank-out NO TURN ON RED sign: near misses and delay | seeds |
 | `preempt` | Emergency vehicles, with and without preemption | none |
 | `satflow` | Calibration: saturation flow and start-up lost time of a queued through lane, against the HCM base of 1,900 vehicles per hour per lane | none |
@@ -3550,7 +3579,7 @@ The examples are the studies behind `docs/insights.md` and
 
 ### 10.3 Tests
 
-`cargo test` runs ten integration test files and the unit tests in `bin/bench.rs`,
+`cargo test` runs eleven integration test files and the unit tests in `bin/bench.rs`,
 `control/manual.rs`, `control/weights.rs`, `sim/network.rs`, `sim/coop.rs`,
 `sim/coop/failures.rs`, `sim/signal.rs`, `sim/stats.rs`, `gui/mod.rs`, `gui/bench.rs`
 and `gui/render.rs`. CI runs them in release mode on
@@ -3559,6 +3588,7 @@ Linux, macOS and Windows, and measures how much of the crate they cover (§11).
 | File | Tests | What they require |
 |---|---:|---|
 | `tests/safety.rs` | 10 | Every layout, control mode and automatic controller runs without collisions and serves at least 80% of arrivals at default volumes (65% under two-way stop and under all-way stop on the arterial, which are over capacity); different controllers receive identical arrivals; no gridlock in seeds that used to jam; no collision between a turn finishing late in the yellow and the next stage's traffic; on major/minor, with an emergency vehicle sent through every 90 s and pedestrians arriving far more often than by default, no overlap where two paths merge; on the roundabout, with an emergency vehicle sent through every 90 s and at 1.35× default demand without, no vehicle standing still for five minutes and no overlap; at a two-way stop on the T-intersection and major/minor, with an emergency vehicle sent through every 90 s and in two runs pedestrians arriving far more often than by default, no left-turner from the major road standing across the oncoming lanes for over a minute, no vehicle standing still in the box for five minutes and no overlap; a person choosing stages at random moments on every signal layout, often mid-change and mid-interval, gets no collision, no green shorter than the minimum, and every yellow, all-red, WALK and flashing DON'T WALK in full; at every layout and control mode, with pedestrians arriving far more often than by default, no moving vehicle comes within half a meter of anyone on a crosswalk; emergency vehicles sent toward a red while pedestrians cross on a WALK end greens no sooner than 2 s, leave every yellow and all-red whole and get through, and everyone crossing when their interval is cut short finishes, with no moving vehicle within half a meter of them |
+| `tests/gap_acceptance.rs` | 1 | A car turning left from the major road at a two-way stop accepts gaps near the Highway Capacity Manual's: its critical headway, fitted by maximum likelihood to the gaps such drivers let pass and the ones they go in, over half-hour runs of the T-intersection and major/minor without pedestrians, is within 2 s of the Manual's 4.1 s |
 | `tests/cooperative.rs` | 14 | The cooperative crossing: no signals, sensors or crosswalks; its geometry and phase order; every gap policy safe under heavy demand, bursts, heavy vehicles and live switching; about 18,000 vehicles per hour served at the design demand, about 19,000 oversaturated and less with single left lanes or first come, first served; reproducible runs; light traffic barely delayed; emergency vehicles first; hand-placed vehicles crossing every way. Every run, except those of the no-signals, single-left-lane and reproducibility tests, must show no overlap between vehicle bodies, no zone entered while occupied, no box entry without a reservation, no step off a granted trajectory, no crossing inside its required gap and no line or zone time off its reservation (both to within a microsecond), and at least one crossing measured |
 | `tests/failures.rs` | 20 | Failures at the cooperative crossing. When a vehicle stops dead at the worst moment, fail-safe gaps stop crossing traffic short of it under both schedules, mitigated gaps let it arrive at no more than 25 km/h and nominal gaps faster; a vehicle that brakes to a stop is survived; in batches a failure at a random place rarely reaches crossing traffic, though a dead stop is struck from behind; the crossing serves what a disabled vehicle leaves clear and recovers once it is cleared away; a failure outside the box only holds up its lane; a failure can be repeated at the same place on another run, and random failures are the same on runs with the same seed; twenty minutes of failures in heavy traffic leave nothing broken, and with fail-safe gaps no vehicles on crossing paths touch through some two hundred dead stops; a vehicle stopped in the box waits for one that passes it, one stopped behind a failure can fail in turn and one that fails at the edge of the map rolls off it; a failure only holds back the vehicles that leave their crossings for an emergency stop: none at rest is set going, none gets ahead of the trajectory it had, and one standing before its line loses its crossing instead; a vehicle that can't stop behind a dead stop is expected where it ends up, as is one that fails close behind it and one already on an emergency stop when the vehicle ahead stops short, and it stops by itself if the wreck is cleared away first; the log keeps the latest fifty failures; other layouts have none. Every run with a failure in it, except those of the test that repeats one, must show no vehicle off its trajectory, in the box without one, or overlapping another outside a recorded contact |
 | `tests/pedestrian_rule.rs` | 4 | Deep RL's shield serves a crosswalk whose pedestrians have waited longer than `PED_MAX_WAIT`, longest wait first, and leaves shorter waits to the controller; the reward counts waiting pedestrians |

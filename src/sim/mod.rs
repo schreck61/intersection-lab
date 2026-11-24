@@ -17,6 +17,7 @@
 
 pub mod coop;
 pub mod demand;
+pub mod gaps;
 pub mod geom;
 pub mod network;
 pub mod rng;
@@ -135,6 +136,11 @@ pub struct Vehicle {
     pub reaction: f64,
     /// Time spent wanting to move while still stopped.
     go_t: f64,
+    /// Gap from its front to the rear of the vehicle ahead on its route when it last
+    /// decided (m).
+    lead_gap: f64,
+    /// It went, or is about to go, in a gap it judged (see `VStat::gauged`).
+    gap_judged: bool,
     /// Lane change: lateral display offset at the moment of the change (decays), time
     /// since the change, and the lane it left (followers there still see it briefly).
     pub lc_off: V2,
@@ -288,6 +294,10 @@ struct VStat {
     hold_line: bool,
     must_stop: bool,
     reason_stop: u8,
+    /// Yields by judging gaps (or went in one and is still in the box): on the minor
+    /// street or turning left from the major road at a two-way stop, or turning left on
+    /// a permissive indication or right on red.
+    gauged: bool,
 }
 
 const LOOK: f64 = 70.0;
@@ -305,6 +315,21 @@ const HORIZON: f64 = 140.0;
 /// of the environment takes a lock the whole process shares, and reading it for every
 /// vehicle on every step would make simulations running on many threads queue on it.
 static TS_DEBUG: LazyLock<bool> = LazyLock::new(|| std::env::var_os("TS_DEBUG").is_some());
+/// Room (s) a driver judging a gap leaves at a crossing: between its rear clearing the
+/// conflict zone and the front of a vehicle with the right of way reaching it, going
+/// ahead of that vehicle, and between that vehicle's rear clearing it and its own front
+/// reaching it, going behind. With [`CLEAR_ACCEL`] these bring the critical headways the
+/// model's drivers show close to the Highway Capacity Manual's (see `examples/gaps.rs`).
+const GAP_CROSS: (f64, f64) = (0.8, 0.4);
+/// The same at a merge (s), measured at the merge point: going in ahead of a vehicle
+/// with the right of way leaves it room to stay back without braking hard.
+const GAP_MERGE: (f64, f64) = (2.0, 0.8);
+/// How much less room (s) a vehicle with the right of way leaves a driver judging a gap
+/// than that driver leaves it, so that close to the limit the two agree on who goes first.
+const GAP_SLACK: f64 = 0.2;
+/// Share of its full acceleration that a vehicle clearing a conflict zone gets, about
+/// what car following gives it from a standstill.
+const CLEAR_ACCEL: f64 = 0.85;
 
 pub struct Sim {
     pub net: Network,
@@ -838,6 +863,8 @@ impl Sim {
                 0.6 + 0.6 * self.misc.f64()
             },
             go_t: 0.0,
+            lead_gap: f64::INFINITY,
+            gap_judged: false,
             lc_off: V2::default(),
             lc_t: 1e9,
             lc_from: None,
@@ -967,6 +994,11 @@ impl Sim {
         for v in &self.vehicles {
             out.push(self.vstat_of(v));
         }
+        // Remembered so a vehicle that went in a gap it judged is still known for it after
+        // its indication changes or its front leaves the box.
+        for (v, st) in self.vehicles.iter_mut().zip(&out) {
+            v.gap_judged = st.gauged;
+        }
         self.vstat = out;
     }
 
@@ -982,11 +1014,19 @@ impl Sim {
         match self.mode {
             ControlMode::Signal if self.signalized() => {
                 let sig = self.signal.status(&self.net, v.movement);
-                let yellow_go = matches!(v.yellow_dec, Some((id, true)) if id == self.signal.change_id);
+                // A vehicle that has yet to decide on a yellow ranks as it decides this step,
+                // so nobody takes it for one that will stop in the meantime.
+                let yellow_go = match v.yellow_dec {
+                    Some((id, go)) if id == self.signal.change_id => go,
+                    _ => on_approach && sig == Sig::Y && Self::goes_on_yellow(v, d_line),
+                };
                 if on_approach {
                     match sig {
                         Sig::G | Sig::Rt => st.rank = 2.0,
-                        Sig::P => st.rank = 1.0,
+                        Sig::P => {
+                            st.rank = 1.0;
+                            st.gauged = true;
+                        }
                         Sig::Y | Sig::R if yellow_go => st.rank = 2.0,
                         Sig::Y => {
                             st.must_stop = true;
@@ -1001,6 +1041,7 @@ impl Sim {
                             {
                                 st.rank = 0.0;
                                 st.hold_line = true;
+                                st.gauged = true;
                             } else {
                                 st.must_stop = true;
                                 st.excluded = true;
@@ -1014,6 +1055,13 @@ impl Sim {
                         Sig::P => 1.0,
                         _ => 3.0,
                     };
+                    // Turning left on a permissive indication, or right on red, or went in
+                    // the box that way.
+                    st.gauged =
+                        sig == Sig::P || (sig == Sig::R && v.turn == Turn::R && v.stop_done) || v.gap_judged;
+                } else {
+                    // Its rear may still be in the box.
+                    st.gauged = v.gap_judged;
                 }
                 let _ = d_line;
             }
@@ -1035,6 +1083,7 @@ impl Sim {
             ControlMode::TwoWayStop => {
                 let minor = self.net.legs[v.leg].minor;
                 if minor {
+                    st.gauged = true;
                     if on_approach {
                         if v.stop_done && self.t - v.stop_t > 0.8 {
                             st.rank = 0.5;
@@ -1049,6 +1098,20 @@ impl Sim {
                     }
                 } else {
                     st.rank = if v.turn == Turn::L { 1.0 } else { 2.0 };
+                    st.gauged = v.turn == Turn::L;
+                    // A left turn from the major road that has gone into the oncoming
+                    // lanes clears the box like a vehicle from the minor street, instead
+                    // of stopping there to yield.
+                    if v.turn == Turn::L && link.kind.in_box() {
+                        let first = (link.conflicts.iter())
+                            .map(|&cid| &self.net.conflicts[cid])
+                            .filter(|c| !c.merge)
+                            .map(|c| c.side(v.link()).0 - c.zones(v.link()).0.0)
+                            .fold(f64::INFINITY, f64::min);
+                        if v.s > first {
+                            st.rank = 3.0;
+                        }
+                    }
                 }
             }
             ControlMode::Roundabout => {
@@ -1085,6 +1148,23 @@ impl Sim {
         let t1 = (vmax - v) / a;
         let d1 = v * t1 + 0.5 * a * t1 * t1;
         if d <= d1 { (-v + (v * v + 2.0 * a * d).sqrt()) / a } else { t1 + (d - d1) / vmax }
+    }
+
+    /// How long vehicle `w` takes to move `x` meters from its present speed, up to `vm`,
+    /// at the share of its full acceleration that car following gives ([`CLEAR_ACCEL`]).
+    /// While the vehicle ahead of it is in the way, it averages no more than its present
+    /// speed or 3 m/s, whichever is higher.
+    fn clearing(&self, w: &Vehicle, x: f64, vm: f64) -> f64 {
+        let t = Self::eta(x, w.v, w.spec().accel * CLEAR_ACCEL, vm);
+        if w.lead_gap > x + w.spec().min_gap { t } else { t.max(x.max(0.0) / w.v.max(3.0)) }
+    }
+
+    /// Whether a vehicle `d_line` meters from its line goes on when its yellow starts. In
+    /// the dilemma zone, drivers less than ~2 s from the line (or who would need hard
+    /// braking) continue; the all-red covers their clearance.
+    fn goes_on_yellow(v: &Vehicle, d_line: f64) -> bool {
+        let need = v.v * v.v / (2.0 * d_line.max(0.1));
+        need > 3.0 || d_line < 1.0 || (v.v > 2.0 && d_line / v.v < 2.0)
     }
 
     fn vmax_on(&self, v: &Vehicle, link: LinkId) -> f64 {
@@ -1195,23 +1275,28 @@ impl Sim {
         let ((za0, za1), (zv0, zv1)) = c.zones(my_link);
         let spec = a.spec();
         let vm = self.vmax_on(a, my_link);
+        let gauged = sa.gauged;
+        // A driver judging a gap from a standstill reacts before it moves off, as the
+        // vehicles it yields to count on it doing. That delays it only on its way to a
+        // zone `x` meters ahead, not once it is in it.
+        let react_a = if gauged && a.v < 0.1 { (a.reaction - a.go_t).max(0.0) } else { 0.0 };
+        let arrive_a = |x: f64| if x > 0.3 { react_a } else { 0.0 } + Self::eta(x, a.v, spec.accel, vm);
         // Crossings compare occupancy of the whole conflict zone. Merges compare arrival
         // at the merge point (then the follower just follows), but the two paths already
         // run close together before it, over the first part of the zone: the order has to
         // hold from where they come close as well, or a fast vehicle could overtake a slow
         // one alongside it. Until our front gets there, we can still wait short of it.
         let (za0m, za1m, zv0m, zv1m) = if c.merge { (0.0, 0.0, 0.0, 0.0) } else { (za0, za1, zv0, zv1) };
-        let ta_in = Self::eta(d_a - za0m, a.v, spec.accel, vm);
-        // Conservative: our own clearing assumes sluggish acceleration...
-        let ta_out = Self::eta(d_a + za1m + spec.length, a.v, spec.accel * 0.7, vm);
+        let ta_in = arrive_a(d_a - za0m);
+        // Our own clearing: a driver judging a gap counts on the acceleration car following
+        // gives; anyone else conservatively assumes sluggish acceleration...
+        let out = |x: f64| {
+            if gauged { react_a + self.clearing(a, x, vm) } else { Self::eta(x, a.v, spec.accel * 0.7, vm) }
+        };
+        let ta_out = out(d_a + za1m + spec.length);
         // At a merge, when our front reaches the point where the paths come close, and when
         // our rear passes it.
-        let near = (c.merge && d_a > za0).then(|| {
-            (
-                Self::eta(d_a - za0, a.v, spec.accel, vm),
-                Self::eta(d_a - za0 + spec.length, a.v, spec.accel * 0.7, vm),
-            )
-        });
+        let near = (c.merge && d_a > za0).then(|| (arrive_a(d_a - za0), out(d_a - za0 + spec.length)));
         self.threats(other, s_other, zv1, i, buf);
         for &(j, d_v) in buf.iter() {
             let w = &self.vehicles[j];
@@ -1228,20 +1313,40 @@ impl Sim {
             // yielding to someone) is not arriving soon; ignoring it unless it is
             // physically in the zone breaks wait-for cycles.
             let idle = w.v < 0.3 && (w.blocked || w.yield_to.is_some() || w.reason == Reason::Pedestrian);
-            if !occupying && idle {
+            // Except at a two-way stop, for a driver waiting at the stop line: a vehicle
+            // with the right of way that waits only for a gap of its own (a left turn from
+            // the major road waiting for the oncoming lanes) still goes first.
+            let exempt = self.mode == ControlMode::TwoWayStop
+                && sa.hold_line
+                && sw.rank > sa.rank
+                && !w.blocked
+                && w.yield_to != Some(a.id);
+            if !occupying && idle && !exempt {
                 continue;
             }
             let wspec = w.spec();
             let wm = self.vmax_on(w, other);
-            let tv_in = Self::eta(d_v - zv0m, w.v, wspec.accel, wm);
+            let w_gauged = sw.gauged;
             // ...and theirs assumes they may not speed up (they could be held by a leader),
             // must first react if stopped, and won't clear at all while waiting in the zone
-            // (or, at a crossing, still creeping up to wherever it is yielding: going in
-            // behind it would leave us stopped across its path).
+            // (or, at a crossing, still creeping up to wherever it is yielding, to a vehicle
+            // or to someone crossing: going in behind it would leave us stopped across its
+            // path). A driver judging a gap is reckoned as it reckons itself.
             let react = if w.v < 0.1 { (w.reaction - w.go_t).max(0.0) } else { 0.0 };
-            let held = occupying && (idle || (w.yield_to.is_some() && !c.merge));
+            let arrive =
+                |x: f64| if w_gauged && x > 0.3 { react } else { 0.0 } + Self::eta(x, w.v, wspec.accel, wm);
+            let tv_in = arrive(d_v - zv0m);
+            let held =
+                occupying && (idle || ((w.yield_to.is_some() || w.reason == Reason::Pedestrian) && !c.merge));
             // How long it takes to travel `x` meters.
-            let travel = |x: f64| react + Self::eta(x, w.v, wspec.accel, wm).max(x.max(0.0) / w.v.max(3.0));
+            let travel = |x: f64| {
+                react
+                    + if w_gauged {
+                        self.clearing(w, x, wm)
+                    } else {
+                        Self::eta(x, w.v, wspec.accel, wm).max(x.max(0.0) / w.v.max(3.0))
+                    }
+            };
             let tv_out = if held { f64::INFINITY } else { travel(d_v + zv1m + wspec.length) };
             let w_priority = if committed || sw.rank > sa.rank {
                 true
@@ -1259,20 +1364,32 @@ impl Sim {
             if !w_priority {
                 continue;
             }
+            // The room to leave going first and going second. A driver judging a gap
+            // leaves a vehicle with the right of way the calibrated room, and gets a little
+            // less back. Otherwise it is the same both ways, more when a low rank yields
+            // to a higher one.
             let base = if c.merge { 1.2 } else { 0.8 };
-            let mut margin = base;
-            if sa.rank <= 1.0 && sw.rank > sa.rank {
-                margin += if c.merge { 0.8 } else { 1.2 };
-            }
+            let (ahead, behind) = if c.merge { GAP_MERGE } else { GAP_CROSS };
+            let (m_first, m_second) = match (gauged, w_gauged) {
+                (true, false) => (ahead, behind),
+                (false, true) => (behind - GAP_SLACK, ahead - GAP_SLACK),
+                _ => {
+                    let mut margin = base;
+                    if !gauged && sa.rank <= 1.0 && sw.rank > sa.rank {
+                        margin += if c.merge { 0.8 } else { 1.2 };
+                    }
+                    (margin, margin)
+                }
+            };
             // We can go second, once its rear has left, or first, gone before its front
             // arrives.
-            let mut second = ta_in >= tv_out + margin;
-            let mut first = tv_in >= ta_out + margin;
+            let mut second = ta_in >= tv_out + m_second;
+            let mut first = tv_in >= ta_out + m_first;
             if let Some((ta_near, ta_near_out)) = near {
-                // The same order where a merge's paths come close, with the plain margin:
-                // the extra room a lower rank leaves is for the merge point. If its rear is
-                // past that point already, it passed as long ago as its present speed says.
-                let margin = base;
+                // The same order where a merge's paths come close, with no more than the
+                // plain margin: the extra room is for the merge point. If its rear is past
+                // that point already, it passed as long ago as its present speed says.
+                let (nf, ns) = (base.min(m_first), base.min(m_second));
                 let x = d_v - zv0 + wspec.length;
                 let tv_near_out = if x <= 0.0 {
                     x / w.v.max(0.1)
@@ -1281,8 +1398,8 @@ impl Sim {
                 } else {
                     travel(x)
                 };
-                second &= ta_near >= tv_near_out + margin;
-                first &= Self::eta(d_v - zv0, w.v, wspec.accel, wm) >= ta_near_out + margin;
+                second &= ta_near >= tv_near_out + ns;
+                first &= arrive(d_v - zv0) >= ta_near_out + nf;
             }
             if !second && !first {
                 return Some(j);
@@ -1310,7 +1427,8 @@ impl Sim {
 
     /// Another vehicle committed to crossing zone `cid` that can no longer stop before it
     /// and will be in it while we are: it gets there less than 0.8 s after we would be out
-    /// of it, and won't be out of it 0.8 s before we get there.
+    /// of it, and won't be out of it 0.8 s before we get there (0.2 s when either of us
+    /// judges gaps, the least room the two leave each other in [`Sim::must_yield`]).
     fn unstoppable_rival(
         &self,
         i: usize,
@@ -1338,11 +1456,16 @@ impl Sim {
                 // Its rear leaves the zone after `x` more meters, at no less than 3 m/s.
                 let x = d_v + zv1 + wspec.length;
                 let tv_out = Self::eta(x, w.v, wspec.accel, wm).max(x.max(0.0) / w.v.max(3.0));
+                let m = if self.vstat[i].gauged || self.vstat[j].gauged {
+                    GAP_CROSS.0.min(GAP_CROSS.1) - GAP_SLACK
+                } else {
+                    0.8
+                };
                 w.commits.contains(&cid)
                     && w.v > 1.0
                     && w.v * w.v / (2.0 * (d_v - zv0).max(0.1)) > 4.5
-                    && Self::eta(d_v - zv0, w.v, wspec.accel, wm) < ta_out + 0.8
-                    && tv_out + 0.8 > ta_in
+                    && Self::eta(d_v - zv0, w.v, wspec.accel, wm) < ta_out + m
+                    && tv_out + m > ta_in
             })
             .map(|x| x.0)
     }
@@ -1669,13 +1792,15 @@ impl Sim {
         let mut buf = Vec::new();
         let mut accs = vec![0.0; self.vehicles.len()];
         for &(_, i) in &order {
-            let (acc, reason, commits, stop_done, ydec, (blocked, yield_to), drop) = self.decide(i, &mut buf);
+            let (acc, reason, commits, stop_done, ydec, (blocked, yield_to, lead_gap), drop) =
+                self.decide(i, &mut buf);
             accs[i] = acc;
             let v = &mut self.vehicles[i];
             v.commits.retain(|c| !drop.contains(c));
             v.reason = reason;
             v.blocked = blocked;
             v.yield_to = yield_to;
+            v.lead_gap = lead_gap;
             let vid = v.id;
             let mut fresh = vec![];
             for c in commits {
@@ -1822,7 +1947,8 @@ impl Sim {
         &self,
         i: usize,
         buf: &mut Vec<(usize, f64)>,
-    ) -> (f64, Reason, Vec<usize>, Option<bool>, Option<(u64, bool)>, (bool, Option<u64>), Vec<usize>) {
+    ) -> (f64, Reason, Vec<usize>, Option<bool>, Option<(u64, bool)>, (bool, Option<u64>, f64), Vec<usize>)
+    {
         let v = &self.vehicles[i];
         let spec = v.spec();
         let st = self.vstat[i];
@@ -1849,6 +1975,7 @@ impl Sim {
         // (not just slow).
         let mut queue_gap = None;
         let lead = self.leader(i);
+        let lead_gap = lead.map_or(f64::INFINITY, |l| l.0);
         if let Some((gap, vl, j)) = lead {
             let w = &self.vehicles[j];
             let waiting = w.waiting();
@@ -1915,7 +2042,15 @@ impl Sim {
                 acc = a2;
                 reason = Reason::LaneChange;
             }
-            return (acc.clamp(-9.0, spec.accel), reason, commits, stop_done, ydec, (blocked, None), vec![]);
+            return (
+                acc.clamp(-9.0, spec.accel),
+                reason,
+                commits,
+                stop_done,
+                ydec,
+                (blocked, None, lead_gap),
+                vec![],
+            );
         }
 
         // Signal / stop sign at the stop line.
@@ -1924,10 +2059,7 @@ impl Sim {
             if self.signalized() && self.mode == ControlMode::Signal {
                 let sig = self.signal.status(&self.net, v.movement);
                 if sig == Sig::Y && !matches!(v.yellow_dec, Some((id, _)) if id == self.signal.change_id) {
-                    // Dilemma zone: drivers less than ~2 s from the line (or who would
-                    // need hard braking) continue; the all-red covers their clearance.
-                    let need = v.v * v.v / (2.0 * d_line.max(0.1));
-                    let go = need > 3.0 || d_line < 1.0 || (v.v > 2.0 && d_line / v.v < 2.0);
+                    let go = Self::goes_on_yellow(v, d_line);
                     ydec = Some((self.signal.change_id, go));
                     if go {
                         // Decided this step; treat as permitted.
@@ -1973,7 +2105,15 @@ impl Sim {
             if a2 < acc {
                 acc = a2;
             }
-            return (acc.clamp(-9.0, spec.accel), reason, commits, stop_done, ydec, (blocked, None), vec![]);
+            return (
+                acc.clamp(-9.0, spec.accel),
+                reason,
+                commits,
+                stop_done,
+                ydec,
+                (blocked, None, lead_gap),
+                vec![],
+            );
         }
 
         // Conflict points ahead.
@@ -2199,8 +2339,11 @@ impl Sim {
         let mut stop = f64::INFINITY;
         if let Some((mut gap, r)) = stop_gap {
             if hold_line_mode {
-                // Holding at the line: give back commitments made this step.
+                // Holding at the line: give back commitments, those made this step and any
+                // from before, so nobody waits for a vehicle that is itself waiting.
                 commits.clear();
+                let held: Vec<usize> = v.commits.iter().copied().filter(|c| !drop.contains(c)).collect();
+                drop.extend(held);
             } else {
                 gap = unblock(gap, false, &mut drop, buf);
                 commits.retain(|c| !drop.contains(c));
@@ -2241,7 +2384,7 @@ impl Sim {
             commits,
             stop_done,
             ydec,
-            (blocked, if stop_gap.is_some() { yield_to } else { None }),
+            (blocked, if stop_gap.is_some() { yield_to } else { None }, lead_gap),
             drop,
         )
     }
