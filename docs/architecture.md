@@ -3,12 +3,7 @@
 This document describes how Intersection Lab is put together. It covers what each Rust
 source file does, how the code is split into layers, and how those layers work together
 during a simulation step, a corridor run, a cooperative crossing, a benchmark and a
-training run. It describes the code on `main`: version 0.8.2, with the stress example,
-a speedup for simulations running on many threads, a fix for left turns that stopped
-across the oncoming lanes, gap acceptance calibrated against the Highway Capacity
-Manual, a faster, stricter coverage check and preemption that holds for an emergency
-vehicle stopped in a queue added since, and the Deep RL and Hybrid networks retrained
-on the calibrated model.
+training run. It describes the code on `main`: version 0.8.3.
 Section 9.4 is an illustrated tour of the app's window, and Appendix A says how the
 screenshots were made.
 
@@ -1909,7 +1904,7 @@ shield also gained a maximum pedestrian wait, because the reward alone did not p
 pedestrians. Both controllers were retrained this way, and versions 0.4.0 to 0.8.2
 shipped those networks. Version 0.5.1 added the checks on weights files (§8.7). Once
 gap acceptance was calibrated (§6.1), both were retrained the same way on the
-calibrated model.
+calibrated model; version 0.8.3 is the first to ship them.
 
 ### 8.1 At a glance
 
@@ -2646,7 +2641,7 @@ yellow and all-red, were retaken with the code released as 0.6.0. Those of the f
 at the cooperative crossing and of manual control come from the code that added them,
 and those of the *AI (Deep RL)* panel, the Deep RL and Hybrid controller brains and the
 controller comparison window from the code that retrained the networks on the
-calibrated model. The About window comes from version 0.8.2. They were taken with the
+calibrated model. The About window comes from version 0.8.3. They were taken with the
 scripted-screenshot settings of Appendix A, two simulated minutes into the default
 scenario unless a caption says otherwise. The browser version looks the same, without
 the *Save weights* buttons and training commands of the learning panels.
@@ -3528,7 +3523,7 @@ gap policy comparison: batches with fail-safe, mitigated and nominal gaps at 27.
 #### About
 
 <img src="images/architecture/about-window.png" width="618" alt="About window:
-Intersection Lab 0.8.2, its description, copyright, dual MIT and Apache 2.0 license, the
+Intersection Lab 0.8.3, its description, copyright, dual MIT and Apache 2.0 license, the
 repository link and the start of the third-party license notices">
 
 The About window shows:
