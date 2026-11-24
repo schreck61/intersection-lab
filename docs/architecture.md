@@ -5,9 +5,9 @@ source file does, how the code is split into layers, and how those layers work t
 during a simulation step, a corridor run, a cooperative crossing, a benchmark and a
 training run. It describes the code on `main`: version 0.8.2, with the stress example,
 a speedup for simulations running on many threads, a fix for left turns that stopped
-across the oncoming lanes and gap acceptance calibrated against the Highway Capacity
-Manual added since, and the Deep RL and Hybrid networks retrained on the calibrated
-model.
+across the oncoming lanes, gap acceptance calibrated against the Highway Capacity
+Manual and a faster coverage check added since, and the Deep RL and Hybrid networks
+retrained on the calibrated model.
 Section 9.4 is an illustrated tour of the app's window, and Appendix A says how the
 screenshots were made.
 
@@ -3656,7 +3656,7 @@ date:
 | Check | Workflow | What it does |
 |---|---|---|
 | Test (ubuntu-22.04), Test (macos-15), Test (windows-latest) | `ci.yml` | `cargo build --locked --release --all-targets`, then `cargo test --locked --release` |
-| Coverage | `ci.yml` | Runs the tests on Linux with [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) and fails if they run less than 80% of the crate's lines, every file counted (CONTRIBUTING.md says how to measure it locally). They run one at a time, and under `cfg(coverage)` the tests that run many simulations at once run them in turn, because code built for coverage slows down many times over when several threads run it at once |
+| Coverage | `ci.yml` | Runs the tests on Linux with [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) and fails if they run less than 80% of the crate's lines, every file counted (CONTRIBUTING.md says how to measure it locally). [cargo-nextest](https://nexte.st) runs each test in a process of its own, several at once, and under `cfg(coverage)` the tests that run many simulations at once run them in turn, because code built for coverage slows down many times over when several threads of one process run it at once |
 | Web (wasm32) | `ci.yml` | Builds the app for `wasm32-unknown-unknown` |
 | Clippy | `ci.yml` | `cargo fmt --check` on the crate and the fuzz target, then `cargo clippy` with warnings as errors, for the native targets and the browser app |
 | Crate package | `ci.yml` | `cargo package --locked`, which builds the crate from the files crates.io would get |

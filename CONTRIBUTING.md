@@ -66,15 +66,24 @@ tools in `src/bin`, so new code needs tests that reach it. To measure locally:
 
 ```bash
 rustup component add llvm-tools-preview
-cargo install cargo-llvm-cov --locked
-cargo llvm-cov --locked --release --fail-under-lines 80 -- --test-threads=1
+cargo install cargo-llvm-cov cargo-nextest --locked
+cargo llvm-cov nextest --locked --release --fail-under-lines 80
 ```
 
-The tests run one at a time, as in CI: code built for coverage slows down many times
-over when several threads run it at once. For the same reason, a test that runs many
-simulations at once should start them with `spawn` from
+As in CI, [cargo-nextest](https://nexte.st) runs each test in a process of its own,
+several at once. Code built for coverage counts what it runs in counters that every
+thread of a process updates, so it slows down many times over when several threads run
+it at once, but each process has counters of its own. For the same reason, a test that
+runs many simulations at once should start them with `spawn` from
 [tests/common/mod.rs](tests/common/mod.rs), which runs them in turn when measuring
 coverage. Add `--open` to see, file by file, the lines no test runs.
+
+Without cargo-nextest, this runs the tests one at a time instead, which takes several
+times as long:
+
+```bash
+cargo llvm-cov --locked --release --fail-under-lines 80 -- --test-threads=1
+```
 
 If you add or update a dependency, also regenerate the third-party license list with
 `packaging/licenses.sh` (it needs `cargo-about` 0.9.1). CI fails if
