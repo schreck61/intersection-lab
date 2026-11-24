@@ -23,8 +23,8 @@ are listed at the end.
 | Fixed-time (Webster) | 29.9 s | 37.3 s | 22.8 s | 20.6 s |
 | Actuated (NEMA) | 36.7 s | 54.1 s | 22.1 s | 17.3 s |
 | Max-Pressure | 17.4 s | 20.1 s | 23.4 s | 14.0 s |
-| Predictive | 15.3 s | 16.6 s | **18.2 s** | **11.9 s** |
-| Hybrid (RL-tuned predictive) | **14.1 s** | **16.4 s** | **18.2 s** | 12.3 s |
+| Predictive | 15.3 s | 16.6 s | 18.2 s | **11.9 s** |
+| Hybrid (RL-tuned predictive) | **14.7 s** | **15.8 s** | **17.1 s** | 12.4 s |
 
 Six seeds of 20 minutes each (`bench all 20 6`). The comparisons below use 30 seeds
 (`bench all 20 30`), paired with predictive control.
@@ -42,31 +42,33 @@ Six seeds of 20 minutes each (`bench all 20 6`). The comparisons below use 30 se
 
 - **Hybrid:** the predictive controller makes every decision and a neural network
   re-tunes it every 10 s. Over 30 seeds at design demand it is within noise of
-  predictive control on the arterial (+0.1 ± 0.5 s), major/minor (+0.4 ± 1.1 s) and
-  T-intersection (−0.2 ± 0.6 s) layouts, and trails it by 1.3 ± 1.3 s on the town
-  layout, at the edge of the noise. On held-out test scenarios (varied demand, weather
-  and failed loops) its person delay is lower by 1.1 ± 1.2 s on the T-intersection and
-  0.1 ± 1.3 s on major/minor, and higher by 0.4 ± 0.9 s on the arterial and 1.6 ± 4.3 s
-  on the town layout: no difference there is larger than its interval. Before gap
-  acceptance was calibrated (§9) it led predictive control on major/minor by
-  3.7 ± 1.9 s, more than the noise.
+  predictive control on every layout: −0.0 ± 0.4 s on the arterial, −0.2 ± 0.7 s on
+  major/minor, −0.0 ± 1.2 s on the town layout and +0.0 ± 0.7 s on the T-intersection.
+  On held-out test scenarios (varied demand, weather and failed loops) its person delay
+  is higher by 0.1 to 0.4 s on every layout, and no difference there is larger than its
+  interval. Before gap acceptance was calibrated (§9) it led predictive control on
+  major/minor by 3.7 ± 1.9 s, more than the noise.
 - **Where the gain came from:** mostly a better *fixed* tuning of the predictive
   controller, which a one-off search finds. That tuning is all the Hybrid runs on
-  major/minor and the T-intersection, where no network beat it, and on the test set it
-  is now within noise of predictive control's own settings on every layout. On the other
-  two the network changed person delay by +0.2 ± 0.6 s on the arterial (14.9 → 15.1 s)
-  and +0.1 ± 1.5 s on the town layout (21.0 → 21.1 s), both within noise.
+  major/minor, where no network beat it, and on the test set it is within noise of
+  predictive control's own settings on every layout. On the other three the network
+  changed person delay by +0.2 ± 0.7 s on the arterial (15.0 → 15.2 s), −1.2 ± 2.8 s on
+  the town layout (20.9 → 19.8 s) and +0.7 ± 1.3 s on the T-intersection
+  (12.4 → 13.1 s), all within noise.
 - **Pure Deep RL:** on the multi-lane layouts it cuts delay by about 40% against
-  fixed-time (arterial 17.8 s, major/minor 22.0 s over six seeds), but over 30 seeds it
-  trails predictive control by 2.6 ± 0.9 s on the arterial, 4.5 ± 1.2 s on major/minor
-  and 3.9 ± 1.7 s on the single-lane town layout. On the T-intersection it has the
-  lowest delay of any controller over six seeds (11.5 s), but over 30 it is within noise
-  of predictive control (−0.4 ± 0.8 s), where before the calibration it led by
+  fixed-time (arterial 17.7 s, major/minor 21.5 s over six seeds), but over 30 seeds it
+  trails predictive control by 3.2 ± 0.8 s on the arterial, 5.0 ± 1.8 s on major/minor
+  and 4.9 ± 2.9 s on the single-lane town layout. On the T-intersection it is within
+  noise of predictive control (−0.6 ± 0.8 s), where before the calibration it led by
   1.5 ± 1.1 s.
-- **Trained before the calibration:** both networks, and the training experiments below,
-  date from before gap acceptance was calibrated, when drivers who yield needed longer
-  gaps (§9). Whether retraining on the calibrated model brings back their leads is
-  untested.
+- **Retraining on the calibrated model didn't bring the leads back:** both networks were
+  retrained with the same settings as before (`train all 800 900 dqn` and `hybrid`,
+  seed 0). Paired with the networks trained before the calibration on the same 30
+  seeds, neither controller's person delay moved by more than the noise on any layout.
+  Two more training seeds (`SEED=1` and `SEED=2`) give the same answer: on major/minor
+  their Hybrids trail predictive control by 0.2 ± 0.9 and 0.3 ± 1.0 s, and on the
+  T-intersection their Deep RL networks are within noise of it (−0.1 ± 0.7 and
+  +0.3 ± 0.8 s). The training experiments below date from before the calibration.
 - **Network size:** for Deep RL, one hidden layer of 128 units beat two on every layout,
   by 1.8 to 4.5 s on held-out scenarios, and doubling the training didn't close the gap.
   Switching to it cut Deep RL's delay by 10–12 s on the four-way layouts. For the hybrid,
@@ -246,10 +248,10 @@ vehicle was made to fail in the box, once per run, 400 runs per case, in batches
 - **Held-out testing matters:** the earlier hybrid scored 0.9 s better than predictive
   control on the 12 scenarios used to choose it, and 1.0 s worse in the benchmark. Models
   are now chosen on one scenario set and reported on another that no choice uses.
-- **So do intervals:** six seeds put the Hybrid first or tied for first on three
-  layouts. Paired with predictive control over 30 seeds, none of those leads is larger
-  than the noise; before gap acceptance was calibrated, only its lead on major/minor
-  was. `bench` and `train test` now print each difference with its 95% interval.
+- **So do intervals:** six seeds put the Hybrid first on three layouts. Paired with
+  predictive control over 30 seeds, none of those leads is larger than the noise; before
+  gap acceptance was calibrated, only its lead on major/minor was. `bench` and
+  `train test` now print each difference with its 95% interval.
 - **Looking at pedestrians finds what overlap checks miss:** a test of emergency
   preemption while people crossed found vehicles passing within half a meter of
   pedestrians in ordinary traffic too, on every layout with crosswalks. A turning vehicle
@@ -346,14 +348,16 @@ vehicle was made to fail in the box, once per run, 400 runs per case, in batches
   3.8 s on the T-intersection).
 - **Calibrating it changed the comparisons:** over 30 seeds the two-way stop's person
   delay fell from 171.8 to 115.3 s on major/minor and from 40.4 to 27.5 s on the
-  T-intersection. Every signal controller's fell too, by 0.5 to 9.1 s, and by at least
-  4.1 s on the single-lane town layout, where a left turn waiting for a gap holds up the
-  lane behind it. Predictive control gained most on major/minor (23.2 → 16.6 s), so the
-  Hybrid's lead there, its only one larger than the noise, is gone, and so is Deep RL's
-  on the T-intersection. The all-way stop and the roundabout, which the calibration
-  leaves alone, moved by 0.7 s at most. In the 48 hours of `examples/gaps.rs`, a vehicle
-  with the right of way braked harder than 3 m/s² for one judging gaps 11 times, against
-  25 before, 22 of them from the first fault below.
+  T-intersection. Every signal controller's fell too, by 0.5 to 9.1 s with the networks
+  unchanged, and by at least 4.1 s on the single-lane town layout, where a left turn
+  waiting for a gap holds up the lane behind it. Predictive control gained most on
+  major/minor (23.2 → 16.6 s), so the Hybrid's lead there, its only one larger than the
+  noise, is gone, and so is Deep RL's on the T-intersection. Retraining both networks on
+  the calibrated model brought neither lead back (§2). The all-way stop and the
+  roundabout, which the calibration leaves alone, moved by 0.7 s at most. In the 48
+  hours of `examples/gaps.rs`, a vehicle with the right of way braked harder than
+  3 m/s² for one judging gaps 11 times, against 25 before, 22 of them from the first
+  fault below.
 - **Tighter margins bring out older faults:** at the T-intersection's signals, a driver
   who had yet to decide whether to stop for a yellow counted as one that would stop
   until it decided, so a left turn could set off in front of it, and it then braked

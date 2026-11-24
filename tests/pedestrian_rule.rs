@@ -28,12 +28,19 @@ fn signalized_sims() -> Vec<Sim> {
 /// The shield's mask for the simulation's current state, with the given longest
 /// pedestrian waits per crosswalk.
 fn mask_with_waits(sim: &Sim, waits: &[f64]) -> Vec<bool> {
+    mask_in_stage(sim, sim.signal.stage, waits)
+}
+
+/// The same, as if stage `stage` were running.
+fn mask_in_stage(sim: &Sim, stage: usize, waits: &[f64]) -> Vec<bool> {
     let mut view = sim.view.clone();
     view.ped_max_wait = waits.to_vec();
+    let mut sig = sim.signal.clone();
+    sig.stage = stage;
     let ctx = Ctx {
         net: &sim.net,
         view: &view,
-        sig: &sim.signal,
+        sig: &sig,
         demand: &sim.demand,
         sensors: &sim.sensors,
         t: sim.t,
@@ -97,25 +104,29 @@ fn shield_serves_the_longest_wait_first() {
     for sim in signalized_sims() {
         let net = &sim.net;
         let n = net.crosswalks.len();
-        let cur = sim.signal.stage;
-        for a in 0..n {
-            for b in 0..n {
-                let (sa, sb) = (walking(net, a), walking(net, b));
-                // Two late crosswalks that no stage walks together, neither walked now.
-                if a == b
-                    || sa[cur]
-                    || sb[cur]
-                    || !sa.contains(&true)
-                    || !sb.contains(&true)
-                    || sa.iter().zip(&sb).any(|(&x, &y)| x && y)
-                {
-                    continue;
+        // Which stage runs is the network's choice, so try each one instead of relying on
+        // the one it happens to run at this moment.
+        for cur in 0..net.stages.len() {
+            for a in 0..n {
+                for b in 0..n {
+                    let (sa, sb) = (walking(net, a), walking(net, b));
+                    // Two late crosswalks that no stage walks together, neither walked now.
+                    if a == b
+                        || sa[cur]
+                        || sb[cur]
+                        || !sa.contains(&true)
+                        || !sb.contains(&true)
+                        || sa.iter().zip(&sb).any(|(&x, &y)| x && y)
+                    {
+                        continue;
+                    }
+                    let mut waits = vec![0.0; n];
+                    waits[a] = PED_MAX_WAIT + 20.0;
+                    waits[b] = PED_MAX_WAIT + 10.0;
+                    let mask = mask_in_stage(&sim, cur, &waits);
+                    assert_eq!(mask, sa, "{:?} in stage {cur}: crosswalks {a} and {b}", net.kind);
+                    checked += 1;
                 }
-                let mut waits = vec![0.0; n];
-                waits[a] = PED_MAX_WAIT + 20.0;
-                waits[b] = PED_MAX_WAIT + 10.0;
-                assert_eq!(mask_with_waits(&sim, &waits), sa, "{:?}: crosswalks {a} and {b}", net.kind);
-                checked += 1;
             }
         }
     }
