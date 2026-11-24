@@ -6,7 +6,8 @@ during a simulation step, a corridor run, a cooperative crossing, a benchmark an
 training run. It describes the code on `main`: version 0.8.2, with the stress example,
 a speedup for simulations running on many threads, a fix for left turns that stopped
 across the oncoming lanes and gap acceptance calibrated against the Highway Capacity
-Manual added since.
+Manual added since, and the Deep RL and Hybrid networks retrained on the calibrated
+model.
 Section 9.4 is an illustrated tour of the app's window, and Appendix A says how the
 screenshots were made.
 
@@ -252,7 +253,7 @@ docs/               this document, insights.md, cooperative-intersections.md (wi
 | `src/bin/` | 3 | 1,127 |
 | `src/lib.rs`, `src/main.rs` | 2 | 97 |
 | `examples/` | 11 | 1,492 |
-| `tests/` | 12 | 5,257 |
+| `tests/` | 12 | 5,268 |
 | `fuzz/fuzz_targets/` | 1 | 61 |
 
 | Target | Built from | Purpose |
@@ -1885,9 +1886,8 @@ The program ships two learned controllers, and both use the same kind of network
   planner, and the planner picks the stages.
 
 Each signalized layout has a weights file for each controller in `weights/`. The four
-Deep RL files and the Hybrid's arterial and town files hold a trained network; the
-Hybrid's major/minor and T-intersection files hold only its best static tuning
-(§8.5).
+Deep RL files and the Hybrid's arterial, town and T-intersection files hold a trained
+network; the Hybrid's major/minor file holds only its best static tuning (§8.5).
 
 | File | Lines | What it holds |
 |---|---:|---|
@@ -1901,8 +1901,10 @@ trained to lower delay on every layout (§8.6). Version 0.4.0 changed training i
 ways: the reward counts every delayed person; checkpoints are chosen on a validation set
 and must pass a pedestrian check; a separate test set reports the result. Deep RL's
 shield also gained a maximum pedestrian wait, because the reward alone did not protect
-pedestrians. Both controllers were retrained this way, and every version since has
-shipped those networks. Version 0.5.1 added the checks on weights files (§8.7).
+pedestrians. Both controllers were retrained this way, and versions 0.4.0 to 0.8.2
+shipped those networks. Version 0.5.1 added the checks on weights files (§8.7). Once
+gap acceptance was calibrated (§6.1), both were retrained the same way on the
+calibrated model.
 
 ### 8.1 At a glance
 
@@ -1912,9 +1914,9 @@ shipped those networks. Version 0.5.1 added the checks on weights files (§8.7).
 | Layers | Input → 128 ReLU → linear output | Same |
 | Inputs | 6 per movement + 1 per stage + 1 + 4 (45 to 85 values) | The same features |
 | Outputs | One Q-value per stage (4 to 8) | One Q-value per tuning (48) |
-| Parameters | 6,404 (T-intersection) to 12,040 (arterial) | 16,944 (town), 17,200 (arterial) |
-| Network size in memory | About 26 to 48 KB (`f32`) | About 68 KB |
-| Size on disk | 72 to 136 KB of JSON per layout | About 190 KB with a network, 61 bytes without |
+| Parameters | 6,404 (T-intersection) to 12,040 (arterial) | 12,080 (T-intersection) to 17,200 (arterial) |
+| Network size in memory | About 26 to 48 KB (`f32`) | About 48 to 69 KB |
+| Size on disk | 72 to 136 KB of JSON per layout | 137 to 195 KB with a network, 63 bytes without |
 | Decision interval | Every 2 s of green, once the minimum green has run | Every 10 s, whatever the signal is doing |
 | Learning algorithm | Double DQN, experience replay, Polyak-averaged target | Same |
 | Hardware | CPU only, one thread per agent | Same |
@@ -2195,15 +2197,18 @@ The schedules below are fractions of the run, so a longer run stretches them.
   and 30 s with weights of 1, 3 and 5. The weight alone still failed on major/minor;
   every setting with a limit passed everywhere. A 40 s limit with no extra weight had
   the best validation score, and it is the simplest, so that is the shield rule.
-  Retrained with it, all 12 Deep RL runs (four layouts, three seeds) passed. When no
-  checkpoint passes, `train` writes no Deep RL weights for that layout; a Hybrid file
-  is always written, because its static tuning is saved first.
+  Retrained with it, all 12 Deep RL runs (four layouts, three seeds) passed, and all 12
+  passed again when retrained on the calibrated model. That time the check turned down
+  a better-scoring checkpoint on major/minor in two of the three seeds, seed 0 among
+  them. When no checkpoint passes, `train` writes no Deep RL weights for that layout; a
+  Hybrid file is always written, because its static tuning is saved first.
 
 The episode counts in the weights files are the episodes where each best checkpoint
-occurred: 670 to 790 for Deep RL, 300 and 560 for the Hybrid's two networks. With 12 to
-15 agents training at once in several processes, one per core, 800 episodes took 5 to
-11 minutes per Deep RL agent and 14 to 19 minutes per Hybrid agent, which first scores
-all 48 static tunings.
+occurred: 530 to 770 for Deep RL, and 360, 550 and 520 for the Hybrid's networks on the
+arterial, town and T-intersection layouts. With 24 agents training at once in six
+processes on a 16-core machine (three seeds of each controller), 800 episodes took up
+to 14 minutes per Deep RL agent and up to 18 minutes per Hybrid agent, which first
+scores all 48 static tunings.
 
 Three environment variables change a run:
 
@@ -2257,15 +2262,16 @@ networks had the biggest gap between their selection score and their held-out sc
 Version 0.3.0 shipped seed 0 of the one-layer, 800-episode runs. In the README's
 benchmark they cut Deep RL's person delay from 31.1 to 19.4 s on the arterial, 34.3 to
 24.4 s on major/minor, 40.0 to 30.0 s on the town layout and 13.1 to 11.7 s on the
-T-intersection. The current Deep RL networks, retrained with the new reward, selection
-and pedestrian rule, are also seed 0, which `train all 800 900 dqn` reproduces.
+T-intersection. Version 0.4.0's Deep RL networks, retrained with the new reward,
+selection and pedestrian rule, were also seed 0, and so are the current ones, retrained
+the same way on the calibrated model; `train all 800 900 dqn` reproduces them.
 
-In the README's benchmark, these networks looked 0.6 to 1.9 s worse than 0.3.0's on
+In the README's benchmark, 0.4.0's networks looked 0.6 to 1.9 s worse than 0.3.0's on
 three layouts, which suggested the pedestrian rule was costly. A cleaner comparison
 separated the two changes: Deep RL was retrained with the new reward and selection but
 no rule and no pedestrian check, three seeds per layout, and set against 0.3.0's three
-seeds and the current networks' three. On the §8.5 test set, all 24 scenarios, mean of
-three seeds, person delay / pedestrian wait:
+seeds and 0.4.0's three. On the §8.5 test set, all 24 scenarios, mean of three seeds,
+person delay / pedestrian wait:
 
 | | 0.3.0 | New training, no rule | New training + rule | Predictive |
 |---|---|---|---|---|
@@ -2289,9 +2295,10 @@ three seeds, person delay / pedestrian wait:
   waits are 4 to 26 s shorter.
 * **Why the benchmark misled:** it scores one network per layout at design demand, and
   networks trained from different seeds differ by 1 to 3 s. 0.3.0's seed-0 arterial
-  network was its best of three; the current one is in the middle.
-* **The check never bound:** the rule arm, selected without the pedestrian check, chose
-  exactly the shipped networks.
+  network was its best of three; 0.4.0's was in the middle.
+* **The check didn't bind then:** the rule arm, selected without the pedestrian check,
+  chose exactly 0.4.0's networks. In the retraining on the calibrated model it bound
+  once for a shipped network, on major/minor (§8.5).
 
 The Hybrid was then tested separately, with the new reward and selection: one and two
 hidden layers of 128, three seeds each, 800 episodes, on every layout. Mean test-set
@@ -2314,19 +2321,18 @@ In the shipped Hybrid weights (the validation score from training, then the test
 
 | Layout | Best static tuning | Network |
 |---|---|---|
-| Arterial | fairness 0.004, bias +0.08, max green 60 s | Kept: validation 18.5 → 17.3 s, test 14.9 → 15.1 s |
-| Major/minor | fairness 0, bias +0.08, max green 35 s | Not kept, so the Hybrid runs the static tuning |
-| Town | fairness 0.012, bias −0.05, max green 35 s | Kept: validation 25.4 → 25.2 s, test 21.0 → 21.1 s |
-| T-intersection | fairness 0, bias +0.08, max green 60 s | Not kept |
+| Arterial | fairness 0, bias 0, max green 45 s | Kept: validation 15.18 → 15.12 s, test 15.0 → 15.2 s |
+| Major/minor | fairness 0, bias +0.08, max green 90 s | Not kept, so the Hybrid runs the static tuning |
+| Town | fairness 0.004, bias −0.05, max green 90 s | Kept: validation 20.65 → 19.30 s, test 20.9 → 19.8 s |
+| T-intersection | fairness 0, bias +0.20, max green 90 s | Kept: validation 10.92 → 10.89 s, test 12.4 → 13.1 s |
 
-The two "not kept" files are 61 bytes long: they hold the static tuning and no network.
-On the test set the Hybrid's person delay is lower than predictive control's by 1.1 s
-on the T-intersection and 0.1 s on major/minor, and higher by 0.4 s on the arterial and
-1.6 s on the town layout, each difference within its 95% interval over the 24
-scenarios. On major/minor and the T-intersection it runs the static tuning alone. On the
-arterial and town layouts the network changes the static tuning's person delay by
-+0.2 ± 0.6 s and +0.1 ± 1.5 s, also within noise. The networks were trained before gap
-acceptance was calibrated (§6.1); the test scores are from the calibrated model.
+The "not kept" file is 63 bytes long: it holds the static tuning and no network. On the
+test set the Hybrid's person delay is higher than predictive control's by 0.4 s on the
+arterial, 0.2 s on major/minor, 0.3 s on the town layout and 0.1 s on the
+T-intersection, each difference within its 95% interval over the 24 scenarios. On
+major/minor it runs the static tuning alone. On the other three layouts the network
+changes the static tuning's person delay by +0.2 ± 0.7 s on the arterial, −1.2 ± 2.8 s
+on the town layout and +0.7 ± 1.3 s on the T-intersection, also within noise.
 
 ### 8.7 `control/weights.rs`: loading and saving
 
@@ -2392,7 +2398,7 @@ When no copy loads, Deep RL starts a fresh network (seed 7) that learns online w
 planner's default tuning (`DEFAULT_ACTION`: fairness 0.004, no bias, 60 s), so it
 behaves exactly like `Predictive`, and its panel says "running the planner's default
 tuning". A Hybrid that loaded only a base tuning says "no network beat the best static
-tuning" when its file has no network, the same as for the shipped static files, and
+tuning" when its file has no network, as with the shipped major/minor file, and
 "the saved network doesn't fit this layout" when the file's network was left out.
 
 Saving from the app goes through `save_path`. It writes to `weights/` in the working
@@ -2509,7 +2515,7 @@ Why the networks are built this way:
 Limitations:
 
 * **Deep RL and pedestrians.** Pedestrians are protected by a fixed 40 s rule in the
-  shield, not learned. On the arterial, Deep RL's pedestrian waits are still about 5 s
+  shield, not learned. On the arterial, Deep RL's pedestrian waits are still about 6 s
   longer than predictive control's.
 * **Simulated training data only.** Both controllers learn from the simulator alone.
 * **Single-intersection training.** In a corridor, each signal runs its own copy of the
@@ -2519,8 +2525,8 @@ Limitations:
   0.3.0's (18.3 s against 17.2 s, measured then).
 * **No refinements beyond Double DQN.** The code has no prioritized replay, multi-step
   returns or dueling heads. Over 30 seeds Deep RL trails predictive control by
-  2.6 ± 0.9 s on the arterial, 4.5 ± 1.2 s on major/minor and 3.9 ± 1.7 s on the town
-  layout, and is within noise of it on the T-intersection (−0.4 ± 0.8 s).
+  3.2 ± 0.8 s on the arterial, 5.0 ± 1.8 s on major/minor and 4.9 ± 2.9 s on the town
+  layout, and is within noise of it on the T-intersection (−0.6 ± 0.8 s).
 
 ---
 
@@ -2858,7 +2864,7 @@ interval of 0, Protected + permissive (FYA) left turns and a 150 s max-wait guar
 them *AI (Deep RL)* and *AI (RL-tuned predictive)*)
 
 <img src="images/architecture/rl-panel.png" width="300" alt="AI (Deep RL) panel: Keep
-learning online off, exploration 0.05, 10 decisions, an empty replay memory, Save
+learning online off, exploration 0.05, 14 decisions, an empty replay memory, Save
 weights, Reload pretrained and the command for thorough training"> <img
 src="images/architecture/hybrid-panel.png" width="300" alt="AI (RL-tuned predictive)
 panel: Keep learning online off, exploration 0, 12 tuning decisions, Save weights and
@@ -3147,26 +3153,26 @@ shows the evaluation that started the stage. Here that is the switch from EW Thr
 to NS Through.
 
 <img src="images/architecture/brain-rl.png" width="378" alt="Controller brain for
-Deep RL: Q-values for each action, NS Through highest at −11.4, with the notes
-pretrained weights: 740 episodes (dqn_arterial4.json) and online learning off">
+Deep RL: Q-values for each action, holding EW Through highest at −10.8, with the notes
+pretrained weights: 750 episodes (dqn_arterial4.json) and online learning off">
 
 **Deep RL:** each bar is the network's Q-value for an action, the expected future
 reward. Rewards are negative delay, so higher, closer to zero, is better.
 
 * Yellow marks the best action the safety shield allows, and *(shielded)* marks the
   actions it has removed (§8.2).
-* The notes say where the weights came from, here the shipped file, trained for 740
+* The notes say where the weights came from, here the shipped file, trained for 750
   episodes (§8.7), and whether online learning is on.
 
 <img src="images/architecture/brain-hybrid.png" width="378" alt="Controller brain for
 the Hybrid: the planner's predicted person delays with NS Through chosen, then notes on
-the tuning in use, the base tuning of the 560-episode network and the three best tunings
+the tuning in use, the base tuning of the 360-episode network and the three best tunings
 by Q-value">
 
 **Hybrid:** the planner's bars, plus notes on the tuning in use:
 
 * the tuning the network chose for the next 10 s;
-* the network's training (here 560 episodes) and the layout's best static tuning, which
+* the network's training (here 360 episodes) and the layout's best static tuning, which
   the network is measured against;
 * the three tunings with the highest Q-values.
 
@@ -3235,8 +3241,8 @@ results open in a window, with a spinner and "running k/n" until they finish:
 
 <img src="images/architecture/bench-window.png" width="640" alt="Controller comparison
 window for the arterial: person delay including unserved vehicles for the six
-controllers and all-way stop, from 17.4 s for the Hybrid and the predictive controller
-to 126 s for all-way stop, and a table of the other measures">
+controllers and all-way stop, from 15.0 s for the predictive controller to 123 s for
+all-way stop, and a table of the other measures">
 
 The bar chart shows each strategy's person delay, including unserved vehicles, in the
 order of the list rather than ranked, with the best in green. The table gives the other

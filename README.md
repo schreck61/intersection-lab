@@ -356,9 +356,9 @@ those still queued, so a policy can't look good by starving an approach. Lower i
 | Fixed-time (Webster) | 29.9 | 37.3 | 22.8 | 20.6 |
 | Actuated (NEMA) | 36.7 | 54.1 | 22.1 | 17.3 |
 | Max-Pressure | 17.4 | 20.1 | 23.4 | 14.0 |
-| Predictive MPC | 15.3 | 16.6 | **18.2** | 11.9 |
-| Deep RL | 17.8 | 22.0 | 21.5 | **11.5** |
-| Hybrid (RL-tuned predictive) | **14.1** | **16.4** | **18.2** | 12.3 |
+| Predictive MPC | 15.3 | 16.6 | 18.2 | **11.9** |
+| Deep RL | 17.7 | 21.5 | 20.7 | 12.4 |
+| Hybrid (RL-tuned predictive) | **14.7** | **15.8** | **17.1** | 12.4 |
 | All-way stop | 145.4 | 105.3 | 62.2 | 28.9 |
 | Two-way stop | — | 106.7 | — | 29.7 |
 | Roundabout | 16.1 | | | |
@@ -376,14 +376,16 @@ interval. Over 30 seeds (`bench all 20 30`):
 | Fixed-time (Webster) | +14.9 ± 1.0 | +19.9 ± 3.5 | +5.9 ± 1.3 | +9.9 ± 1.2 |
 | Actuated (NEMA) | +20.9 ± 1.4 | +33.1 ± 6.2 | +7.5 ± 2.4 | +4.4 ± 0.9 |
 | Max-Pressure | +3.0 ± 0.7 | +2.9 ± 0.9 | +4.6 ± 1.2 | +1.2 ± 0.7 |
-| Deep RL | +2.6 ± 0.9 | +4.5 ± 1.2 | +3.9 ± 1.7 | −0.4 ± 0.8 |
-| Hybrid (RL-tuned predictive) | +0.1 ± 0.5 | +0.4 ± 1.1 | +1.3 ± 1.3 | −0.2 ± 0.6 |
+| Deep RL | +3.2 ± 0.8 | +5.0 ± 1.8 | +4.9 ± 2.9 | −0.6 ± 0.8 |
+| Hybrid (RL-tuned predictive) | −0.0 ± 0.4 | −0.2 ± 0.7 | −0.0 ± 1.2 | +0.0 ± 0.7 |
 
 No difference favors a strategy over predictive control by more than its interval. The
-Hybrid is within noise of predictive control on three layouts and at the edge of it on
-the town layout, Deep RL trails it on the three four-way layouts, and Max-Pressure
-trails it on all four. Both learning controllers were trained before gap acceptance was
-calibrated (see [notes and limitations](#notes-and-limitations)).
+Hybrid is within noise of predictive control on all four layouts, Deep RL trails it on
+the three four-way layouts, and Max-Pressure trails it on all four. Before gap
+acceptance was calibrated, the Hybrid led predictive control on major/minor by
+3.7 ± 1.9 s and Deep RL led it on the T-intersection by 1.5 ± 1.1 s. Both networks were
+retrained on the calibrated model, and neither lead came back with any of three
+training seeds.
 
 Training rewards every person's delay: people in vehicles on the road, in vehicles held
 at the edge of the map, and pedestrians waiting to cross. Episodes vary demand, weather
@@ -394,32 +396,36 @@ predictive controller's. The chosen weights are then scored on 24 test scenarios
 same kinds that no choice ever uses.
 
 Both networks have one hidden layer of 128 units and were trained this way for 800
-episodes, before gap acceptance was calibrated. For Deep RL, one hidden layer beat two on every layout, by 1.8 to 4.5 s on
-held-out scenarios; for the hybrid, one and two did the same within noise. Held-out test
-set, person delay / pedestrian wait (s):
+episodes, after gap acceptance was calibrated. For Deep RL, one hidden layer beat
+two on every layout, by 1.8 to 4.5 s on held-out scenarios; for the hybrid, one and two
+did the same within noise. Held-out test set, person delay / pedestrian wait (s):
 
 | | Predictive | Best static tuning | Hybrid | Deep RL |
 |---|---|---|---|---|
-| Arterial | **14.8 / 13.6** | 14.9 / 12.6 | 15.1 / 11.2 (network kept) | 17.1 / 16.8 |
-| Major/minor | 18.3 / 10.6 | **18.1 / 11.4** | **18.1 / 11.4** (static tuning) | 20.6 / 14.3 |
-| Town | **19.5 / 9.2** | 21.0 / 9.5 | 21.1 / 8.5 (network kept) | 24.2 / 9.0 |
-| T-intersection | 13.0 / 19.3 | **11.9 / 19.6** | **11.9 / 19.6** (static tuning) | 12.2 / 19.2 |
+| Arterial | **14.8 / 13.6** | 15.0 / 13.0 | 15.2 / 12.4 (network kept) | 17.4 / 17.4 |
+| Major/minor | **18.3 / 10.6** | 18.5 / 10.7 | 18.5 / 10.7 (static tuning) | 21.6 / 16.1 |
+| Town | **19.5 / 9.2** | 20.9 / 9.7 | 19.8 / 8.9 (network kept) | 22.8 / 10.7 |
+| T-intersection | 13.0 / 19.3 | 12.4 / 17.8 | 13.1 / 17.5 (network kept) | **11.8 / 18.4** |
 
 `train test all 900 both` scores the shipped weights this way. Against predictive control
-on the same 24 scenarios, the Hybrid's person delay is lower by 1.1 ± 1.2 s on the
-T-intersection and 0.1 ± 1.3 s on major/minor, and higher by 0.4 ± 0.9 s on the arterial
-and 1.6 ± 4.3 s on the town layout: no difference is larger than its 95% interval. Its
-network, against the static tuning it adjusts, changes person delay by +0.2 ± 0.6 s on
-the arterial and +0.1 ± 1.5 s on the town layout. Deep RL is higher than predictive
-control by 2.3 ± 1.2 s on the arterial, 2.3 ± 1.7 s on major/minor and 4.7 ± 3.2 s on the
-town layout, and within noise of it on the T-intersection (−0.8 ± 1.4 s).
+on the same 24 scenarios, the Hybrid's person delay is higher by 0.4 ± 0.6 s on the
+arterial, 0.2 ± 1.0 s on major/minor, 0.3 ± 1.9 s on the town layout and 0.1 ± 0.8 s on
+the T-intersection: no difference is larger than its 95% interval. Its network, against
+the static tuning it adjusts, changes person delay by +0.2 ± 0.7 s on the arterial,
+−1.2 ± 2.8 s on the town layout and +0.7 ± 1.3 s on the T-intersection. Deep RL is
+higher than predictive control by 2.7 ± 0.6 s on the arterial and 3.4 ± 2.1 s on
+major/minor, and within noise of it on the town layout (+3.4 ± 3.7 s) and the
+T-intersection (−1.2 ± 1.7 s).
 
 Counting each waiting pedestrian like one vehicle occupant wasn't enough to protect
 pedestrians, who are a small share of the people at an intersection: Deep RL trained that
 way found a checkpoint that passed the pedestrian check in only 2 of 9 runs on the
 arterial, major/minor and T-intersection layouts. So Deep RL's safety shield now also
 gives the next walk to any pedestrian who has waited 40 s. With that rule every run
-passed, and the check never had to reject a checkpoint.
+passed, and in version 0.4.0's training the check never had to reject a checkpoint.
+Retrained on the calibrated model, every run passed again, but on major/minor the check
+turned down a checkpoint that scored better than the one kept in two of three seeds, the
+shipped network's seed among them.
 
 The rule costs people in vehicles little, and on most layouts it helps them. Deep RL
 trained three ways, held-out test set, mean of three training seeds, person delay /
@@ -448,8 +454,8 @@ Arterial, person delay\* (s):
 |---|---|---|---|---|---|---|
 | Max-Pressure | 17.1 | 18.7 | 17.8 | 18.1 | 18.4 | 17.5 |
 | Predictive | 18.3 | 15.1 | 15.4 | 15.3 | 13.9 | 13.9 |
-| Hybrid | 17.3 | 15.3 | 14.2 | 14.8 | 14.5 | 15.2 |
-| Deep RL | 26.0 | 19.9 | 18.5 | 17.4 | 17.2 | 16.9 |
+| Hybrid | 17.1 | 15.6 | 15.3 | 15.1 | 14.7 | 13.7 |
+| Deep RL | 21.0 | 17.4 | 17.7 | 17.6 | 18.2 | 18.0 |
 
 Weather and failed loops (loops + camera + radar unless noted), predictive control:
 
@@ -467,10 +473,10 @@ Weather and failed loops (loops + camera + radar unless noted), predictive contr
 | Fixed (coordinated green wave) | 25.8 | 165 s | 1.92 |
 | Actuated | 35.0 | 209 s | 2.12 |
 | Max-Pressure | 17.3 | 141 s | 1.75 |
-| Predictive | **15.3** | **137 s** | 1.51 |
+| Predictive | **15.3** | **137 s** | **1.51** |
 | Predictive + upstream link | 15.8 | 140 s | 1.54 |
-| Hybrid + upstream link | 15.9 | 142 s | 1.68 |
-| Deep RL + upstream link | 16.9 | 138 s | **1.45** |
+| Hybrid + upstream link | 15.5 | 141 s | 1.65 |
+| Deep RL + upstream link | 18.4 | 145 s | 1.57 |
 
 On a 4-signal major/minor corridor the green wave cuts through-trip stops from 3.20 to
 **1.41** (time 250 s → 193 s). Predictive control is best overall (13.1 s); the upstream
@@ -587,15 +593,15 @@ A fuller write-up of every finding, with the commands that reproduce it, is in
   and Max-Pressure cut person delay by 40–55% against an optimized Webster plan on the
   arterial and major/minor layouts, and cut pedestrian waits there by 39–55%.
 * **RL is no reliable gain here, tuning a planner or replacing it.** Over 30 seeds the
-  Hybrid is within noise of predictive control on three layouts and trails it at the
-  edge of the noise on the town layout, and on the held-out test set no difference
-  between them is larger than its 95% interval. Its one reliable gain before gap
-  acceptance was calibrated, on major/minor, came from a better *static* tuning of the
-  planner, which a one-off search finds; the state-dependent network's own effect is
-  within noise. Pure Deep RL cuts person delay by about 40% against fixed-time on the
-  arterial and major/minor layouts, but trails predictive control by 2.6 to 4.5 s on the
-  three four-way layouts and is within noise of it on the T-intersection. Both were
-  trained before that calibration.
+  Hybrid is within noise of predictive control on all four layouts, and on the held-out
+  test set no difference between them is larger than its 95% interval. Its one reliable
+  gain before gap acceptance was calibrated, on major/minor, came from a better *static*
+  tuning of the planner, which a one-off search finds; the state-dependent network's own
+  effect is within noise. Pure Deep RL cuts person delay by about 40% against fixed-time
+  on the arterial and major/minor layouts, but trails predictive control by 3.2 to 5.0 s
+  on the three four-way layouts and is within noise of it on the T-intersection, where
+  it led before the calibration. Retraining both on the calibrated model brought back
+  neither lead.
 * **Pedestrians need a hard rule, not just a share of the reward.** Counting waiting
   pedestrians in Deep RL's reward left their waits long; a 40 s maximum wait in its
   shield fixed that on every layout, and on the three four-way layouts it lowered
@@ -700,9 +706,8 @@ simulation step runs and how to add a controller, layout or sensor.
   plausible values, not fitted to measurements. Among them are the other driving
   parameters, the gaps drivers accept entering the roundabout, reaction times, yellow
   behavior, turn-signal use, walking speeds and every sensor error rate (camera and
-  radar detection in each kind of weather, missed and failed loops). The shipped Deep RL
-  and Hybrid networks were trained before gap acceptance was calibrated. The results
-  compare strategies under the same assumptions; they aren't forecasts for a particular
+  radar detection in each kind of weather, missed and failed loops). The results compare
+  strategies under the same assumptions; they aren't forecasts for a particular
   intersection.
 * Drivers are well-behaved: no red-light running, distraction or crashes, so safety is
   measured with surrogates (overlaps, near-misses). The failures of the cooperative
