@@ -1,11 +1,13 @@
 # Insights from the simulations
 
 What the experiments in this repository have shown so far, using the final model: queue
-discharge calibrated against the Highway Capacity Manual, lane changing, and sensors
-that make the kinds of errors field equipment makes. Only the discharge is calibrated.
-The sensor error rates and the other parameters are plausible values, not measurements
-(see the README's [notes and limitations](../README.md#notes-and-limitations)), so the
-findings compare strategies rather than predict a particular intersection.
+discharge and gap acceptance calibrated against the Highway Capacity Manual, lane
+changing, and sensors that make the kinds of errors field equipment makes. Only those
+two are calibrated, and gap acceptance only at two-way stops and on permissive
+indications. The sensor error rates and the other parameters are plausible values, not
+measurements (see the README's
+[notes and limitations](../README.md#notes-and-limitations)), so the findings compare
+strategies rather than predict a particular intersection.
 
 Delay figures are **person delay**, counting vehicles still queued so that no strategy can
 look good by starving an approach. They are averages over 4–8 random seeds unless a
@@ -18,47 +20,53 @@ are listed at the end.
 
 | Controller | Arterial | Major/minor | Town | T-intersection |
 |---|---|---|---|---|
-| Fixed-time (Webster) | 30.5 s | 38.0 s | 27.2 s | 21.2 s |
-| Actuated (NEMA) | 38.1 s | 56.1 s | 26.0 s | 18.3 s |
-| Max-Pressure | 19.8 s | 22.0 s | 29.3 s | 15.8 s |
-| Predictive | **17.0 s** | 24.5 s | **21.3 s** | 14.7 s |
-| Hybrid (RL-tuned predictive) | 17.2 s | **20.7 s** | 22.3 s | **13.6 s** |
+| Fixed-time (Webster) | 29.9 s | 37.3 s | 22.8 s | 20.6 s |
+| Actuated (NEMA) | 36.7 s | 54.1 s | 22.1 s | 17.3 s |
+| Max-Pressure | 17.4 s | 20.1 s | 23.4 s | 14.0 s |
+| Predictive | 15.3 s | 16.6 s | **18.2 s** | **11.9 s** |
+| Hybrid (RL-tuned predictive) | **14.1 s** | **16.4 s** | **18.2 s** | 12.3 s |
 
 Six seeds of 20 minutes each (`bench all 20 6`). The comparisons below use 30 seeds
 (`bench all 20 30`), paired with predictive control.
 
-- **Multi-lane layouts:** predictive control and Max-Pressure cut person delay by 34–41%
-  against a well-tuned fixed plan, and pedestrian waits by 33–53%. Max-Pressure trails
-  predictive control by 2.2 ± 0.6 s on the arterial and matches it on major/minor
-  (−0.3 ± 1.9 s).
-- **Single-lane town crossing:** the gaps are smaller, but predictive control still
-  leads. Fixed-time trails it by 5.2 ± 2.7 s, actuated control by 6.8 ± 2.6 s and
-  Max-Pressure by 8.5 ± 1.9 s.
+- **Multi-lane layouts:** predictive control and Max-Pressure cut person delay by 40–55%
+  against a well-tuned fixed plan, and pedestrian waits by 39–55%. Max-Pressure trails
+  predictive control by 3.0 ± 0.7 s on the arterial and 2.9 ± 0.9 s on major/minor.
+- **Single-lane town crossing:** fixed-time and actuated control come closer, but
+  predictive control still leads. Fixed-time trails it by 5.9 ± 1.3 s, actuated control
+  by 7.5 ± 2.4 s and Max-Pressure by 4.6 ± 1.2 s.
 - **Actuated on the busier layouts:** it is often worse than fixed-time there, because it
   extends greens for every arriving car without weighing who else is waiting.
 
-## 2. AI is most useful tuning a planner, not replacing it
+## 2. AI: tuning a planner works better than replacing it, but adds nothing reliable
 
 - **Hybrid:** the predictive controller makes every decision and a neural network
-  re-tunes it every 10 s. Over 30 seeds at design demand it is ahead of predictive
-  control by more than the noise only on major/minor (3.7 ± 1.9 s); on the arterial
-  (+0.6 ± 0.8 s), town (+0.9 ± 2.5 s) and T-intersection (−0.5 ± 0.6 s) layouts the two
-  are within noise. On held-out test scenarios (varied demand, weather and failed loops)
-  its person delay is lower on three layouts, by 0.4 ± 1.1 s on the arterial,
-  1.4 ± 2.2 s on major/minor and 3.2 ± 3.3 s on the town layout, and 0.5 ± 0.8 s higher
-  on the T-intersection: no difference there is larger than its interval.
-- **Where the gain comes from:** mostly a better *fixed* tuning of the predictive
+  re-tunes it every 10 s. Over 30 seeds at design demand it is within noise of
+  predictive control on the arterial (+0.1 ± 0.5 s), major/minor (+0.4 ± 1.1 s) and
+  T-intersection (−0.2 ± 0.6 s) layouts, and trails it by 1.3 ± 1.3 s on the town
+  layout, at the edge of the noise. On held-out test scenarios (varied demand, weather
+  and failed loops) its person delay is lower by 1.1 ± 1.2 s on the T-intersection and
+  0.1 ± 1.3 s on major/minor, and higher by 0.4 ± 0.9 s on the arterial and 1.6 ± 4.3 s
+  on the town layout: no difference there is larger than its interval. Before gap
+  acceptance was calibrated (§9) it led predictive control on major/minor by
+  3.7 ± 1.9 s, more than the noise.
+- **Where the gain came from:** mostly a better *fixed* tuning of the predictive
   controller, which a one-off search finds. That tuning is all the Hybrid runs on
-  major/minor, its one reliable gain. On the test set the network changed person delay
-  by −0.2 ± 0.8 s on the arterial (17.6 → 17.4 s) and −1.6 ± 2.5 s on the town layout
-  (24.4 → 22.9 s), both within noise, and nothing on the other two, where no network
-  beat the fixed tuning.
-- **Pure Deep RL:** on the multi-lane layouts it cuts delay by about 30% against
-  fixed-time (arterial 20.3 s, major/minor 25.7 s over six seeds), but over 30 seeds it
-  trails predictive control by 2.1 ± 1.0 s on the arterial and is within noise of it on
-  major/minor (+0.7 ± 2.3 s). It is ahead of predictive control only on the
-  T-intersection, by 1.5 ± 1.1 s (12.5 s over six seeds, the lowest of any controller),
-  and trails it on the single-lane town layout by 2.7 ± 2.2 s.
+  major/minor and the T-intersection, where no network beat it, and on the test set it
+  is now within noise of predictive control's own settings on every layout. On the other
+  two the network changed person delay by +0.2 ± 0.6 s on the arterial (14.9 → 15.1 s)
+  and +0.1 ± 1.5 s on the town layout (21.0 → 21.1 s), both within noise.
+- **Pure Deep RL:** on the multi-lane layouts it cuts delay by about 40% against
+  fixed-time (arterial 17.8 s, major/minor 22.0 s over six seeds), but over 30 seeds it
+  trails predictive control by 2.6 ± 0.9 s on the arterial, 4.5 ± 1.2 s on major/minor
+  and 3.9 ± 1.7 s on the single-lane town layout. On the T-intersection it has the
+  lowest delay of any controller over six seeds (11.5 s), but over 30 it is within noise
+  of predictive control (−0.4 ± 0.8 s), where before the calibration it led by
+  1.5 ± 1.1 s.
+- **Trained before the calibration:** both networks, and the training experiments below,
+  date from before gap acceptance was calibrated, when drivers who yield needed longer
+  gaps (§9). Whether retraining on the calibrated model brings back their leads is
+  untested.
 - **Network size:** for Deep RL, one hidden layer of 128 units beat two on every layout,
   by 1.8 to 4.5 s on held-out scenarios, and doubling the training didn't close the gap.
   Switching to it cut Deep RL's delay by 10–12 s on the four-way layouts. For the hybrid,
@@ -88,56 +96,54 @@ Six seeds of 20 minutes each (`bench all 20 6`). The comparisons below use 30 se
 ## 3. Sensors: coverage matters more than accuracy
 
 - **Cameras:** with realistic errors they are still the best single upgrade, because they
-  see turn intent and queues. On the town layout, predictive control goes from 44.2 s
-  with loops only to 20.8 s with a camera.
+  see turn intent and queues. On the town layout, predictive control goes from 22.1 s
+  with loops only to 16.6 s with a camera.
 - **Realistic vs perfect sensors:** within noise. Weather (night, rain, fog, snow) costs
-  adaptive control at most 2.8 s on the multi-lane layouts, because radar backs up the
-  camera. On the single-lane town layout four seeds can't separate the conditions:
-  predictive control's person delay ranges from 21.6 s in fog to 27.9 s in heavy rain,
-  against 22.4 s in clear weather.
+  adaptive control at most 3.3 s on the multi-lane layouts, because radar backs up the
+  camera. On the single-lane town layout predictive control's person delay ranges from
+  16.6 s at night to 18.4 s in heavy rain and in snow, against 18.0 s in clear weather.
 - **Failed loops:** they matter a great deal when loops are the only sensor. Without
   failure detection, a quarter of the loops failing pushed delay to about 200 s. With
   standard failure detection and a fallback to historical volumes, it degrades gracefully
-  to 22–44 s, depending on the layout.
+  to 18–23 s, depending on the layout.
 - **Connected vehicles:** at 30% of vehicles they add little on top of camera and radar.
   With every vehicle connected they could replace the other sensors for adaptive control,
   but not for actuated control, which depends on loops.
 
 ## 4. Corridors
 
-- **Green wave:** a coordinated plan is clearly worth it for fixed-time signals. Stops per
-  through-trip fell 14% on the arterial and 57% on the major/minor road (3.23 → 1.38).
-- **Adaptive control:** it beats the green wave even without coordinating anything
-  (3 arterials: 17.5 s vs 26.7 s).
+- **Green wave:** a coordinated plan is clearly worth it for fixed-time signals. Stops
+  per through-trip fell 14% on the arterial and 56% on the major/minor road
+  (3.20 → 1.41).
+- **Adaptive control:** it beats the green wave even without coordinating anything (3
+  arterials: 15.3 s vs 25.8 s).
 - **Sharing upstream information:** telling each signal what its upstream neighbor just
-  released didn't help consistently on the arterial (17.5 → 18.6 s at normal traffic,
-  36.2 → 34.2 s at 1.3×) and hurt on the major/minor road (14.9 → 16.2 s). More
+  released didn't help consistently on the arterial (15.3 → 15.8 s at normal traffic,
+  25.0 → 24.2 s at 1.3×) and hurt on the major/minor road (13.1 → 14.7 s). More
   lookahead alone isn't enough; the real gains need coordinated plans, as in SURTRAC.
 
 ## 5. Pedestrian safety
 
-- **The sign does the work:** with predictive control at busy arterial crosswalks
-  (240 pedestrians/h), a "no turn on red while pedestrians are present" sign cut
-  near-misses from 1.5 to 0.7 per hour alone and to 0.3 with a leading pedestrian
-  interval, for 2–3 s more person delay. About half the near-misses came from right
-  turns on red.
-- **Leading interval alone:** it helped little (1.5 → 1.3 per hour).
-- **Too rare to rank:** with fixed-time signals near-misses were already rare, 0.8 per
-  hour untreated, about five in the six simulated hours, and on the single-lane town
-  layout they were about as rare. At those counts the treatments showed no clear effect.
+- **The two treatments work together:** with predictive control at busy arterial
+  crosswalks (240 pedestrians/h), a "no turn on red while pedestrians are present" sign
+  and a 4 s leading pedestrian interval together cut near-misses from 1.0 to 0.2 per
+  hour, for 1.7 s more person delay. Either alone cut them only to 0.8. Untreated, that
+  is about six near-misses in the six simulated hours, so the counts are small.
+- **Too rare to rank:** with fixed-time signals near-misses were as rare, 1.0 per hour
+  untreated, and on the single-lane town layout there were 1.5 to 1.8 per hour. At those
+  counts the treatments showed no clear effect.
 
 ## 6. Left turns
 
-- **Permissive with a flashing yellow arrow:** it gives the least delay at normal traffic.
-  Protected-only costs 23–69% more on the arterial. On the major/minor road predictive
-  control is the exception: it does better protected-only (25.8 vs 27.6 s).
-- **Under heavy traffic:** permissive lefts can collapse. Left-turners can't find gaps, the
-  bay fills and blocks the through lane (fixed-time on major/minor at 1.3×: 172 s vs 98 s
-  protected-only).
-- **Automatic switching by volume:** it lands in between, except with predictive control
-  at 1.3×: on major/minor it does worse than either (106.3 s, against 91.7 s permissive
-  and 104.1 s protected-only), and on the arterial better than either (54.9 s, against
-  58.2 s and 100.7 s).
+- **Permissive with a flashing yellow arrow:** it gives the least delay at normal
+  traffic, with every controller tested on both layouts. Protected-only costs 28–109%
+  more on the arterial and 15–43% more on the major/minor road (17.1 vs 24.5 s with
+  predictive control).
+- **Under heavy traffic:** permissive lefts can collapse. Left-turners can't find gaps,
+  the bay fills and blocks the through lane (fixed-time on major/minor at 1.3×: 163 s vs
+  86 s protected-only).
+- **Automatic switching by volume:** it lands in between, with every controller at every
+  demand tested (fixed-time on major/minor at 1.3×: 121 s).
 
 ## 7. Choosing the intersection type
 
@@ -147,10 +153,11 @@ Six seeds of 20 minutes each (`bench all 20 6`). The comparisons below use 30 se
   entering vehicles waited for room on the ring (§9), five seeds gave 35–43 s and one
   74 s, for a mean of 23.4 s.
 - **Two-way stop:** fails once the major road is busy, because side-street drivers can't
-  find gaps.
-- **All-way stop:** only competitive at low traffic once drivers take a realistic moment to
-  pull away. Even at 0.6× traffic on the town layout it averaged 15.0 s against 10.3 s for
-  actuated signals, which reverses an earlier finding.
+  find gaps: over 30 seeds its person delay is 115.3 s on major/minor, against 16.6 s
+  with predictive signals, and 27.5 s on the T-intersection, against 12.3 s.
+- **All-way stop:** only competitive at low traffic once drivers take a realistic moment
+  to pull away. Even at 0.6× traffic on the town layout it averaged 15.0 s against 9.8 s
+  for actuated signals, which reverses an earlier finding.
 
 ## 8. A signal-free crossing for automated vehicles
 
@@ -227,20 +234,22 @@ vehicle was made to fail in the box, once per run, 400 runs per case, in batches
   and real turn bays changed several results. All-way stops lost their low-traffic
   advantage, protected-left capacity had been badly understated, and bay spillback became
   visible.
-- **Stress testing finds bugs:** multi-seed runs at high traffic exposed right-of-way bugs
-  that normal traffic never triggered: overlaps, and gridlocks in which vehicles waiting
-  inside the box each blocked another's path. Overlaps are now zero at 1×, 1.35× and 1.6×
-  traffic, and 960 long runs (6 controllers × 16 seeds on every signalized layout, at
-  1×–1.6× traffic for 5–20 simulated hours) finish with no gridlock and no overlaps.
+- **Stress testing finds bugs:** multi-seed runs at high traffic exposed right-of-way
+  bugs that normal traffic never triggered: overlaps, and gridlocks in which vehicles
+  waiting inside the box each blocked another's path. Overlaps are now zero at 1×, 1.35×
+  and 1.6× traffic, and 960 long runs (6 controllers × 16 seeds on every signalized
+  layout, at 1×–1.6× traffic for 5–20 simulated hours) finished with no gridlock and no
+  overlaps before gap acceptance was calibrated. Since then, 960 half-hour runs of the
+  same controllers at 1.35× and 1.6× traffic have had none either.
 - **Honest baselines matter:** without comparing against the best fixed tuning, the hybrid
   would have looked like a 5–10% AI win when most of that gain was simply better settings.
 - **Held-out testing matters:** the earlier hybrid scored 0.9 s better than predictive
   control on the 12 scenarios used to choose it, and 1.0 s worse in the benchmark. Models
   are now chosen on one scenario set and reported on another that no choice uses.
-- **So do intervals:** six seeds once put the Hybrid first or tied for first on three
-  layouts. Paired with predictive control over 30 seeds, only its lead on major/minor is
-  larger than the noise. `bench` and `train test` now print each difference with its 95%
-  interval.
+- **So do intervals:** six seeds put the Hybrid first or tied for first on three
+  layouts. Paired with predictive control over 30 seeds, none of those leads is larger
+  than the noise; before gap acceptance was calibrated, only its lead on major/minor
+  was. `bench` and `train test` now print each difference with its 95% interval.
 - **Looking at pedestrians finds what overlap checks miss:** a test of emergency
   preemption while people crossed found vehicles passing within half a meter of
   pedestrians in ordinary traffic too, on every layout with crosswalks. A turning vehicle
@@ -285,29 +294,74 @@ vehicle was made to fail in the box, once per run, 400 runs per case, in batches
   were trucks stranded across the oncoming lanes. Each had accepted a gap long enough
   for its whole turn but committed only to the first lane it crossed, so a vehicle that
   came into view after it set off made it stop in that lane, where a truck needs a
-  longer gap in the far lane than its 140 m view can show. A vehicle that yields as it turns now
-  commits to the rest of the turn once it accepts a gap for all of it, and before it
-  sets off it also waits for anyone crossing, or about to cross, the street it turns
-  into. In the 160 of those runs with a two-way stop, no left turn from the major road
-  now stands across the oncoming lanes for more than 84 s, against 305 s before; the
-  shorter stops there have other causes. The other five waited short of the oncoming
-  lanes for a gap the model's drivers accept: at least 6.8 s before the near lane, 7.6 s
-  before the far one and 9.3 s before an oncoming right turn joins their street, plus a
-  reaction time of 0.6–1.2 s, and about 12 to 14 s in a truck. The Highway Capacity
-  Manual's critical headway for the turn is 4.1 s, or about 6 s for a heavy vehicle. One
-  car waited 320 s while 76 vehicles came the other way: 20 of the gaps between them
-  were 6 s or longer and three over 14 s, but side-street left turns, oncoming right
-  turns and pedestrians used up the long ones. The model also lets a side-street left
-  turn take a gap ahead of a major-road left turn that is waiting for one, though the
-  Manual ranks the major-road turn first. So these waits come from the model's caution,
-  not a deadlock, and drivers who accepted the Manual's gaps would have gone long
-  before. Seven runs, all on the T-intersection with four times the pedestrians, still
-  have such a wait, of five to seven and a half minutes. Two of them are new: on seed 9
-  a left turn used to stand across the oncoming lanes for 210 s, and now a truck waits
-  short of them for 444 s. Over 30 seeds the two-way stop's person delay fell from 172.7
-  to 171.8 s on major/minor and from 41.2 to 40.4 s on the T-intersection. Signal
-  controllers, whose permissive left turns follow the same rules, moved by 0.8 s at
-  most, except on the single-lane town layout, where all of them fell, by 0.3 to 2.3 s.
+  longer gap in the far lane than its 140 m view can show. A vehicle that yields as it
+  turns now commits to the rest of the turn once it accepts a gap for all of it, and
+  before it sets off it also waits for anyone crossing, or about to cross, the street it
+  turns into. The other five waited short of the oncoming lanes for a gap the model's
+  drivers then accepted: at least 6.8 s before the near lane, 7.6 s before the far one
+  and 9.3 s before an oncoming right turn joins their street, plus a reaction time of
+  0.6–1.2 s, and about 12 to 14 s in a truck, where the Highway Capacity Manual's
+  critical headway for the turn is 4.1 s, or about 6 s for a heavy vehicle. One car
+  waited 320 s while 76 vehicles came the other way: 20 of the gaps between them were
+  6 s or longer and three over 14 s, but side-street left turns, oncoming right turns
+  and pedestrians used up the long ones, and the model let a side-street left turn take
+  a gap ahead of a major-road left turn waiting for one, though the Manual ranks the
+  major-road turn first. Those waits came from the model's caution, not a deadlock, and
+  calibrating gap acceptance (below) removed them: none of the 2,560 runs now has a
+  vehicle standing still in the box for over five minutes. The longest standstill,
+  241 s, is a truck waiting short of the oncoming lanes to turn left from the major road
+  of the T-intersection, in a run with four times the pedestrians. In the 160 runs with a
+  two-way stop, no left turn from the major road stands across the oncoming lanes for
+  more than 17 s, against 84 s with only the change to its commitments and 305 s before
+  that. Heavier traffic still finds long waits of the same kind: at 1.6× traffic, 5 of
+  the 40 half-hour runs with a two-way stop (`stress 1 20 all 1.6`) have a bus or truck
+  that waits five to ten minutes short of the oncoming lanes to turn left from the major
+  road, where it needs a gap of 8 to 9 s, against 28 runs before the calibration. None
+  of them is a deadlock.
+- **Gap acceptance is now measured and calibrated:** a maximum-likelihood fit to the
+  gaps drivers let pass and the ones they take gives their critical headway, the gap
+  they are as likely to take as to let pass, as in a field study (`examples/gaps.rs`,
+  eight hour-long runs per layout and control mode, without pedestrians). Drivers who
+  yielded to traffic with the right of way used to leave 2 s both ways and expect to
+  pull away sluggishly, so a car turning left from the major road at a two-way stop
+  needed 7.6 s on the T-intersection and 8.5 s on major/minor, where the Manual says
+  4.1 s, side-street drivers needed 8.5 to 9.1 s, against 6.5 to 7.5 s, and left turns
+  on a permissive indication 6.8 to 8.5 s (10.9 s from major/minor's minor street),
+  against 4.5 s. Drivers who judge gaps (at a two-way stop, or turning left on a
+  permissive indication or right on red) now leave 0.8 s going ahead of a vehicle with
+  the right of way at a crossing and 0.4 s going behind it (2.0 and 0.8 s where paths
+  merge), and count on 85% of their acceleration, about what car following gives, and on
+  reacting before they move off. The vehicle with the right of way leaves them 0.2 s
+  less, so near the limit the two agree on who goes first. Two drivers who both judge
+  gaps, such as a side-street driver and a major-road left turn, leave each other the
+  plain 0.8 s (1.2 s at a merge) both ways, where they used to leave 2 s. A left turn
+  from the major road that is waiting for a gap now goes before the side street, as the
+  Manual has it, and once in the oncoming lanes it clears them instead of stopping to
+  yield. It now needs 5.5 s on both layouts, side-street drivers 5.9 to 7.5 s and
+  permissive left turns 5.7 to 7.5 s (9.7 s from major/minor's minor street); a test
+  keeps the major-road left within 2 s of the Manual. The difference left comes mostly
+  from the 3.4 s a car takes here to cross the near oncoming lane from a standstill.
+  Queued drivers still follow each other into a gap at 1.6 to 3.8 times the Manual's
+  follow-up headway, and for the major-road left more slowly than before (5.0 against
+  3.8 s on the T-intersection).
+- **Calibrating it changed the comparisons:** over 30 seeds the two-way stop's person
+  delay fell from 171.8 to 115.3 s on major/minor and from 40.4 to 27.5 s on the
+  T-intersection. Every signal controller's fell too, by 0.5 to 9.1 s, and by at least
+  4.1 s on the single-lane town layout, where a left turn waiting for a gap holds up the
+  lane behind it. Predictive control gained most on major/minor (23.2 → 16.6 s), so the
+  Hybrid's lead there, its only one larger than the noise, is gone, and so is Deep RL's
+  on the T-intersection. The all-way stop and the roundabout, which the calibration
+  leaves alone, moved by 0.7 s at most. In the 48 hours of `examples/gaps.rs`, a vehicle
+  with the right of way braked harder than 3 m/s² for one judging gaps 11 times, against
+  25 before, 22 of them from the first fault below.
+- **Tighter margins bring out older faults:** at the T-intersection's signals, a driver
+  who had yet to decide whether to stop for a yellow counted as one that would stop
+  until it decided, so a left turn could set off in front of it, and it then braked
+  hard: 22 times in eight hours before, 53 with the tighter margins, and never now that
+  such a driver ranks as it is about to decide. And a vehicle slowing in a crossing zone
+  for someone on the crosswalk ahead was expected to clear the zone at its usual pace,
+  so in one stress run a vehicle went in behind it and the two overlapped. It now counts
+  as one that won't clear, as a vehicle waiting for another already did.
 - **Making things fail finds what normal running hides:** the cooperative crossing's
   monitors read zero through every failure-free run, and so could not show that the
   fail-safe gap falls a few decimeters short for a vehicle that is still slowing down.
@@ -319,11 +373,15 @@ vehicle was made to fail in the box, once per run, 400 runs per case, in batches
   near-misses and overlaps, not crashes.
 - **Corridors:** they run east–west only.
 - **Training data:** the RL agents were trained on simulated traffic only.
-- **Gap acceptance:** it isn't calibrated, and it is cautious. A car turning left from the
-  major road at a two-way stop waits for a gap of about 7 to 10 s, where the Highway
-  Capacity Manual's critical headway is 4.1 s, and permissive left turns at signals follow
-  the same rule, so two-way stops in particular look worse than they would in the field
-  (§9).
+- **Gap acceptance:** it is calibrated at two-way stops and on permissive indications,
+  but still cautious. A car turning left from the major road at a two-way stop needs
+  about 5.5 s, where the Highway Capacity Manual's critical headway is 4.1 s, left turns
+  on a permissive indication need 5.7 to 7.5 s (9.7 s from the minor street of
+  major/minor), against 4.5 s, and queued drivers follow each other into a gap at 1.6 to
+  3.8 times the Manual's follow-up headway, so two-way stops and permissive left turns
+  still look somewhat worse than they would in the field (§9). Right turns on red use
+  the same margins but aren't measured, and the gaps drivers accept entering the
+  roundabout aren't calibrated.
 - **Cooperative crossing:** every vehicle is automated and connected, and human drivers,
   lost messages and a failed manager are not modeled. A vehicle that is made to fail
   stops on its path and reports it at once; vehicles that touch stop where they touch,
@@ -333,7 +391,7 @@ vehicle was made to fail in the box, once per run, 400 runs per case, in batches
 
 ```bash
 cargo run --release --bin bench all 20 6               # sections 1 and 7
-cargo run --release --bin bench all 20 30              # sections 1 and 2 (paired differences)
+cargo run --release --bin bench all 20 30              # sections 1, 2, 7 and 9 (paired differences)
 cargo run --release --bin train test all 900 both      # section 2 (held-out test of the shipped weights)
 cargo run --release --bin train all 800 900 dqn        # section 2 (Deep RL)
 cargo run --release --bin train all 800 900 hybrid     # section 2 (hybrid vs best static tuning)
@@ -354,6 +412,9 @@ cargo run --release --example stress 1 500 roundabout 1 ev     # section 9 (the 
 cargo run --release --example stress 1 200 roundabout 1        # section 9 (the roundabout without them)
 cargo run --release --example stress 1 200 roundabout 1.35     # section 9 (the roundabout at 1.35× traffic)
 cargo run --release --example stress 1 200 roundabout 1.6      # section 9 (the roundabout at 1.6× traffic)
+cargo run --release --example stress 1 20 all 1.35             # section 9 (every layout at 1.35× traffic)
+cargo run --release --example stress 1 20 all 1.6              # section 9 (every layout at 1.6× traffic)
 cargo run --release --example satflow                  # calibration
+cargo run --release --example gaps                     # calibration (gap acceptance, section 9)
 cargo run --release --example sweep 4 1.35             # safety sweep
 ```

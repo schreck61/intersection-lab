@@ -34,8 +34,8 @@ Last reviewed: November 2026, after version 0.8.0.
   on US arterials. The [corridor study](docs/insights.md#4-corridors) found that telling
   each signal what its upstream neighbor released isn't enough, and that the real gains
   need coordinated plans. This will also test whether tuning the planner with
-  reinforcement learning, which helps at a single intersection, helps along a corridor
-  too.
+  reinforcement learning helps along a corridor; at a single intersection it is within
+  noise of the planner alone.
 * **Mixed traffic and more failures at the cooperative crossing.** Human drivers mixed
   in with automated vehicles at different shares, lost messages and a failed
   intersection manager: the crossing's main assumptions still untested. A vehicle that
