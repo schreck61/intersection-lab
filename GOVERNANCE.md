@@ -22,7 +22,7 @@ This document describes how decisions are made and who does what.
   speed.
 * **Through pull requests.** Every change to `main`, including the maintainer's own,
   goes through a pull request whose required checks pass: the tests on Linux, macOS and
-  Windows, test coverage of at least 80% of lines, the browser build, rustfmt and
+  Windows, test coverage of at least 96% of lines, the browser build, rustfmt and
   Clippy, the crate package, the license and advisory checks, a minute of fuzzing the
   weights loader, CodeQL, and DCO sign-off. Nobody can push to `main` directly.
 * **With reasons.** The maintainer reviews contributions and decides whether to merge
